@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"os/user"
 	"strings"
 	"sync"
 
@@ -110,6 +111,9 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 		root = filepath.Clean(strings.TrimSpace(root))
 		if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n") {
 			return errors.New("static site root must be an absolute path")
+		}
+		if err := prepareStaticRoot(ctx, root); err != nil {
+			return err
 		}
 	} else {
 		kind = "proxy"
@@ -384,6 +388,32 @@ func (m *Manager) restoreConfig(oldManaged []byte, hadManaged bool, oldRoot []by
 	} else {
 		_ = os.Remove(m.configFile)
 	}
+}
+
+func prepareStaticRoot(ctx context.Context, root string) error {
+	if _, err := exec.LookPath("setfacl"); err != nil {
+		return errors.New("static sites require the acl package (setfacl)")
+	}
+	if _, err := user.Lookup("caddy"); err != nil {
+		return errors.New("Caddy system user is not available")
+	}
+
+	parents := []string{filepath.Dir(root), filepath.Dir(filepath.Dir(root))}
+	for _, path := range parents {
+		if path == "." || path == "/" {
+			continue
+		}
+		if out, err := exec.CommandContext(ctx, "setfacl", "-m", "u:caddy:--x", path).CombinedOutput(); err != nil {
+			return fmt.Errorf("grant Caddy directory traversal on %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", "u:caddy:rX", root).CombinedOutput(); err != nil {
+		return fmt.Errorf("grant Caddy read access on %s: %w: %s", root, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, "setfacl", "-m", "d:u:caddy:rX", root).CombinedOutput(); err != nil {
+		return fmt.Errorf("set default Caddy ACL on %s: %w: %s", root, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func renderSite(template string, site Site) string {
