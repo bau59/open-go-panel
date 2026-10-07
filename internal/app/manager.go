@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bau59/open-go-panel/internal/journal"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/state"
 )
@@ -709,6 +710,18 @@ func (m *Manager) Unit(id int64) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+func (m *Manager) QueryLogs(ctx context.Context, id int64, query journal.Query) (journal.Result, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return journal.Result{}, err
+	}
+	query.Service = serviceName(id)
+	if app.Service.Mode != "raw" && app.Service.LogRetentionDays > 0 {
+		query.Namespace = journalNamespace(id)
+	}
+	return journal.Read(ctx, query)
 }
 
 func (m *Manager) Logs(ctx context.Context, id int64, lines int) (string, error) {
