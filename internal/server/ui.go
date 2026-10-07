@@ -156,7 +156,7 @@ func pageHead(title string) string {
 	<style>` + baseStyles + `</style>
 </head>`
 }
-
+`
 func appHeader(active string) string {
 	nav := []struct {
 		key   string
