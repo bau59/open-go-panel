@@ -14,6 +14,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/app"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/dbmanager"
 	"github.com/bau59/open-go-panel/internal/security"
 	"github.com/bau59/open-go-panel/internal/systeminfo"
 )
@@ -31,6 +32,7 @@ type Config struct {
 	Apps          *app.Manager
 	Caddy         *panelcaddy.Manager
 	Security      *security.Manager
+	Databases     *dbmanager.Manager
 }
 
 type sessionStore struct {
@@ -152,6 +154,9 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Security != nil {
 		registerSecurityRoutes(mux, store, cfg)
+	}
+	if cfg.Databases != nil {
+		registerDatabaseRoutes(mux, store, cfg)
 	}
 
 	return mux
