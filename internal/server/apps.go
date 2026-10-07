@@ -30,7 +30,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", databaseBlock(cfg, app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appDomainBlock(cfg, app), databaseBlock(cfg, app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -408,23 +408,6 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		port = fmt.Sprintf("%d", app.Port)
 	}
 
-	domainBlock := ""
-	if app.Port > 0 {
-		domainBlock = `
-			<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-				<label>Domain</label>
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="compact-form">
-					<input name="domain" placeholder="example.com" required>
-					<button class="button">Connect</button>
-				</form>
-				<div class="actions" style="justify-content:flex-start;margin-top:8px">
-					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain/delete"><button class="secondary">Remove domain</button></form>
-					<a class="secondary" href="/caddy">Open Caddy</a>
-				</div>
-				<p class="note" style="margin:8px 0 0">DNS must point to this server. Caddy will request TLS automatically.</p>
-			</div>`
-	}
-
 	extraBlock := ""
 	if len(extras) > 0 {
 		extraBlock = strings.Join(extras, "")
@@ -584,7 +567,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 					<span>Port</span><code>` + port + `</code>
 					<span>Root</span><code>` + html.EscapeString(app.Root) + `</code>
 					<span>Service</span><code>open-go-panel-app-` + fmt.Sprintf("%d", app.ID) + `.service</code>
-				</div>` + domainBlock + extraBlock + `
+				</div>` + extraBlock + `
 			</section>
 			<section class="panel panel-pad">` + serviceBlock + `</section>
 		</div>
