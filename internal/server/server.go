@@ -8,6 +8,7 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/dbmanager"
 	"github.com/bau59/open-go-panel/internal/security"
 	"github.com/bau59/open-go-panel/internal/systeminfo"
+	"github.com/bau59/open-go-panel/internal/state"
 )
 
 const (
@@ -35,6 +37,7 @@ type Config struct {
 	Security      *security.Manager
 	Databases     *dbmanager.Manager
 	Adminer       *adminer.Manager
+	State         *state.Store
 }
 
 type sessionStore struct {
@@ -163,8 +166,59 @@ func New(cfg Config) http.Handler {
 	if cfg.Adminer != nil {
 		registerAdminerRoutes(mux, store, cfg)
 	}
+	if cfg.State != nil {
+		registerActivityRoutes(mux, store, cfg)
+	}
 
+	if cfg.State != nil {
+		return auditMutations(cfg.State, mux)
+	}
 	return mux
+}
+
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func auditMutations(store *state.Store, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+
+		if r.Method != http.MethodPost {
+			return
+		}
+		if r.URL.Path == "/login" || r.URL.Path == "/logout" || strings.HasPrefix(r.URL.Path, "/db-admin/") {
+			return
+		}
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status >= 400 {
+			return
+		}
+
+		action := r.Pattern
+		if action == "" {
+			action = r.Method + " " + r.URL.Path
+		}
+		store.Audit(r.Context(), action, r.URL.Path, "remote="+r.RemoteAddr)
+	})
 }
 
 func requireAuth(store *sessionStore, next http.Handler) http.Handler {
