@@ -522,60 +522,72 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		extraBlock = strings.Join(extras, "")
 	}
 
-	statusClass := ""
-	if status == "active" {
+	statusClass := " warn"
+	statusLabel := strings.TrimSpace(status)
+	switch status {
+	case "active":
 		statusClass = " ok"
-	} else if status == "failed" {
-		statusClass = " warn"
+		statusLabel = "Running"
+	case "activating":
+		statusLabel = "Starting"
+	case "failed":
+		statusLabel = "Failed"
+	case "inactive", "":
+		statusLabel = "Stopped"
+	default:
+		if statusLabel == "" {
+			statusLabel = "Unknown"
+		}
 	}
 
-	serviceBlock := `<div class="section-title"><div><h2>Service</h2><p class="note" style="margin:6px 0 0">Static applications are served directly by Caddy and do not use systemd.</p></div></div>`
+	svc := app.Service
+	if svc.Mode == "" {
+		svc.Mode = "form"
+		svc.AutoStart = true
+	}
+	if svc.RunMode == "" {
+		svc.RunMode = defaultRunMode(app.Type)
+	}
+	if svc.Restart == "" {
+		svc.Restart = "on-failure"
+	}
+	if svc.RestartSec == 0 {
+		svc.RestartSec = 3
+	}
+	if svc.TimeoutStopSec == 0 {
+		svc.TimeoutStopSec = 15
+	}
+	if svc.WorkingDirectory == "" {
+		svc.WorkingDirectory = app.Root
+	}
+	if svc.Path == "" {
+		svc.Path = defaultServicePath(app)
+	}
+	if svc.LimitNOFILE == 0 {
+		svc.LimitNOFILE = 65535
+	}
+	if svc.TasksMax == 0 {
+		svc.TasksMax = 256
+	}
+	if svc.LogRetentionDays == 0 {
+		svc.LogRetentionDays = 7
+	}
+
+	runMode := "Caddy static"
+	resourceLimit := "not applicable"
+	autoStart := "not applicable"
+	serviceName := "served directly by Caddy"
+	runtimeActions := ""
+	serviceBlock := ""
 	if app.Type != "static" {
-		svc := app.Service
-		if svc.Mode == "" {
-			svc.Mode = "form"
-			svc.AutoStart = true
-		}
-		if svc.RunMode == "" {
-			svc.RunMode = defaultRunMode(app.Type)
-		}
-		if svc.Restart == "" {
-			svc.Restart = "on-failure"
-		}
-		if svc.RestartSec == 0 {
-			svc.RestartSec = 3
-		}
-		if svc.TimeoutStopSec == 0 {
-			svc.TimeoutStopSec = 15
-		}
-		if svc.WorkingDirectory == "" {
-			svc.WorkingDirectory = app.Root
-		}
-		if svc.Path == "" {
-			svc.Path = defaultServicePath(app)
-		}
-		if svc.LimitNOFILE == 0 {
-			svc.LimitNOFILE = 65535
-		}
-		if svc.TasksMax == 0 {
-			svc.TasksMax = 256
-		}
-		if svc.LogRetentionDays == 0 {
-			svc.LogRetentionDays = 7
-		}
-
-		rawUnit := svc.RawUnit
-		if rawUnit == "" {
-			rawUnit = unit
-		}
-
-		autoStart := "disabled"
+		runMode = svc.RunMode
+		autoStart = "disabled"
 		if svc.AutoStart {
 			autoStart = "enabled"
 		}
-		resourceLimit := "server defaults"
+		resourceLimit = "server defaults"
 		if svc.CPUQuota != "" || svc.MemoryMax != "" {
-			parts := make([]string, 0, 2)
+			var parts []string
 			if svc.CPUQuota != "" {
 				parts = append(parts, "CPU "+svc.CPUQuota)
 			}
@@ -584,34 +596,51 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			}
 			resourceLimit = strings.Join(parts, " · ")
 		}
+		serviceName = "open-go-panel-app-" + fmt.Sprintf("%d", app.ID) + ".service"
 
-		serviceBlock = `
-			<div class="section-title">
-				<div><h2>Service</h2><p class="note" style="margin:6px 0 0">Runtime controls and systemd configuration.</p></div>
-				<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
-			</div>
-
-			<div class="service-summary">
-				<div><span>Run mode</span><strong>` + html.EscapeString(svc.RunMode) + `</strong></div>
-				<div><span>Restart</span><strong>` + html.EscapeString(svc.Restart) + `</strong></div>
-				<div><span>Autostart</span><strong>` + autoStart + `</strong></div>
-				<div><span>Resources</span><strong>` + html.EscapeString(resourceLimit) + `</strong></div>
-			</div>
-
-			<div class="actions" style="justify-content:flex-start;margin-top:14px">
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/start"><button class="button">Start</button></form>
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><button class="secondary">Restart</button></form>
+		primaryAction := `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/start"><button class="button">Start</button></form>`
+		if status == "active" {
+			primaryAction = `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><button class="button">Restart</button></form>`
+		}
+		runtimeActions = `
+			<div class="actions runtime-actions">
+				` + primaryAction + `
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/stop"><button class="secondary">Stop</button></form>
 				<a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">Logs</a>
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service/auto"><button class="secondary">Apply server defaults</button></form>
-			</div>
+				<a class="secondary" href="#service-settings">Service settings</a>
+			</div>`
 
-			<details class="advanced-block service-editor" style="margin-top:16px">
-				<summary class="secondary">Edit service settings</summary>
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service" style="margin-top:16px">
+		rawUnit := svc.RawUnit
+		if rawUnit == "" {
+			rawUnit = unit
+		}
+		serviceBlock = `
+		<details id="service-settings" class="panel panel-pad advanced-block app-card-wide service-settings-card" style="margin-top:16px">
+			<summary class="section-title" style="margin:0;cursor:pointer">
+				<div>
+					<h2>Service settings</h2>
+					<p class="note" style="margin:6px 0 0">systemd runtime, limits, environment and advanced unit configuration.</p>
+				</div>
+				<span class="secondary">Configure</span>
+			</summary>
+
+			<div class="service-settings-body">
+				<div class="service-summary">
+					<div><span>Restart policy</span><strong>` + html.EscapeString(svc.Restart) + `</strong></div>
+					<div><span>Autostart</span><strong>` + autoStart + `</strong></div>
+					<div><span>Stop timeout</span><strong>` + fmt.Sprintf("%ds", svc.TimeoutStopSec) + `</strong></div>
+					<div><span>Log retention</span><strong>` + fmt.Sprintf("%d days", svc.LogRetentionDays) + `</strong></div>
+				</div>
+
+				<div class="actions" style="justify-content:flex-start;margin:14px 0 18px">
+					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service/auto">
+						<button class="secondary">Apply server defaults</button>
+					</form>
+				</div>
+
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service">
 					<input type="hidden" name="mode" value="form">
 					<input type="hidden" name="auto_start" value="0">
-
 					<div class="service-form-grid">
 						<div>
 							<label>Run mode</label>
@@ -651,13 +680,12 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 							<textarea class="codearea" style="min-height:150px" name="environment" placeholder="APP_ENV=production&#10;DATABASE_URL=...">` + html.EscapeString(svc.Environment) + `</textarea>
 						</div>
 					</div>
-
 					<div class="actions" style="justify-content:flex-start;margin-top:14px">
 						<button class="button">Save service settings</button>
 					</div>
 				</form>
 
-				<details class="advanced-block" style="margin-top:14px">
+				<details class="advanced-block" style="margin-top:16px">
 					<summary class="secondary">Advanced: raw systemd unit</summary>
 					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service" style="margin-top:14px">
 						<input type="hidden" name="mode" value="raw">
@@ -666,43 +694,68 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 						<div class="actions" style="justify-content:flex-start;margin-top:12px"><button class="button">Save raw unit</button></div>
 					</form>
 				</details>
-			</details>`
+			</div>
+		</details>`
 	}
 
 	return pageHead(app.Name) + `<body>` + appHeader("apps") + `
-	<main class="shell">
-		<div class="page-head">
+	<main class="shell app-shell">
+		<div class="app-page-head">
 			<div>
-				<p class="eyebrow">Application #` + fmt.Sprintf("%d", app.ID) + `</p>
-				<h1>` + html.EscapeString(app.Name) + `</h1>
-				<p class="sub">` + html.EscapeString(app.User) + ` · ` + html.EscapeString(app.Type) + `</p>
+				<a class="app-breadcrumb" href="/apps">Applications</a>
+				<p class="eyebrow" style="margin-top:10px">Application #` + fmt.Sprintf("%d", app.ID) + `</p>
+				<div class="app-title-row">
+					<h1>` + html.EscapeString(app.Name) + `</h1>
+					<span class="badge">` + html.EscapeString(app.Type) + `</span>
+				</div>
+				<p class="sub">` + html.EscapeString(app.User) + ` · ` + html.EscapeString(app.Root) + `</p>
 			</div>
-			<div class="actions">
-				<a class="secondary" href="/apps">Back to apps</a>
+			<a class="secondary" href="/apps">Back to apps</a>
+		</div>
+
+		` + alert + `
+
+		<section class="panel panel-pad app-runtime-card">
+			<div class="runtime-head">
+				<div>
+					<p class="eyebrow">Runtime</p>
+					<div class="runtime-state"><strong>` + html.EscapeString(statusLabel) + `</strong><span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span></div>
+					<p class="note" style="margin:7px 0 0"><code>` + html.EscapeString(serviceName) + `</code></p>
+				</div>
+				` + runtimeActions + `
+			</div>
+			<div class="runtime-facts">
+				<div><span>Owner</span><strong>` + html.EscapeString(app.User) + `</strong></div>
+				<div><span>Port</span><code>` + port + `</code></div>
+				<div><span>Run mode</span><strong>` + html.EscapeString(runMode) + `</strong></div>
+				<div><span>Autostart</span><strong>` + html.EscapeString(autoStart) + `</strong></div>
+				<div><span>Resources</span><strong>` + html.EscapeString(resourceLimit) + `</strong></div>
+			</div>
+		</section>
+
+		<div class="app-dashboard-grid">
+			` + extraBlock + `
+		</div>
+
+		` + serviceBlock + `
+
+		<details class="panel panel-pad advanced-block danger-zone" style="margin-top:16px">
+			<summary class="section-title" style="margin:0;cursor:pointer">
+				<div><h2>Danger zone</h2><p class="note" style="margin:6px 0 0">Destructive panel actions are kept out of the normal workflow.</p></div>
+				<span class="danger">Open</span>
+			</summary>
+			<div class="danger-zone-body">
+				<div>
+					<strong>Remove application from Open Go Panel</strong>
+					<p class="note" style="margin:5px 0 0">The systemd unit and panel state are removed. Project files in <code>` + html.EscapeString(app.Root) + `</code> are preserved.</p>
+				</div>
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/delete" onsubmit="return confirm('Remove this app from Open Go Panel? Application files will be preserved.')">
 					<button class="danger">Remove app</button>
 				</form>
 			</div>
-		</div>
-		` + alert + `
-		<section class="panel panel-pad" style="margin-bottom:16px">
-			<div class="section-title"><h2>Overview</h2><span class="badge">` + html.EscapeString(app.Type) + `</span></div>
-			<div class="app-overview-grid">
-				<div><span>Owner</span><strong>` + html.EscapeString(app.User) + `</strong></div>
-				<div><span>Port</span><code>` + port + `</code></div>
-				<div><span>Root</span><code>` + html.EscapeString(app.Root) + `</code></div>
-				<div><span>Service</span><code>open-go-panel-app-` + fmt.Sprintf("%d", app.ID) + `.service</code></div>
-			</div>
-		</section>
-
-		<section class="panel panel-pad app-sections" style="margin-bottom:16px">
-			` + extraBlock + `
-		</section>
-
-		<section class="panel panel-pad">` + serviceBlock + `</section>
+		</details>
 	</main>
-</body>
-</html>`
+</body></html>`
 }
 
 func appLogsPage(app panelapp.App, filters logFilters, lines []string, hasNext bool, message string) string {
