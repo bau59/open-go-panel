@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,15 +33,22 @@ var (
 )
 
 type ServiceConfig struct {
-	Mode        string `json:"mode,omitempty"`
-	RunMode     string `json:"run_mode,omitempty"`
-	Command     string `json:"command,omitempty"`
-	Restart     string `json:"restart,omitempty"`
-	RestartSec  int    `json:"restart_sec,omitempty"`
-	CPUQuota    string `json:"cpu_quota,omitempty"`
-	MemoryMax   string `json:"memory_max,omitempty"`
-	Environment string `json:"environment,omitempty"`
-	RawUnit     string `json:"raw_unit,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	RunMode          string `json:"run_mode,omitempty"`
+	Command          string `json:"command,omitempty"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Restart          string `json:"restart,omitempty"`
+	RestartSec       int    `json:"restart_sec,omitempty"`
+	TimeoutStopSec   int    `json:"timeout_stop_sec,omitempty"`
+	CPUQuota         string `json:"cpu_quota,omitempty"`
+	MemoryMax        string `json:"memory_max,omitempty"`
+	LimitNOFILE      int    `json:"limit_nofile,omitempty"`
+	TasksMax         int    `json:"tasks_max,omitempty"`
+	LogRetentionDays int    `json:"log_retention_days,omitempty"`
+	AutoStart        bool   `json:"auto_start,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	RawUnit          string `json:"raw_unit,omitempty"`
 }
 
 type App struct {
@@ -61,6 +69,7 @@ type Manager struct {
 	serviceDir string
 	runnerDir  string
 	envDir     string
+	journalDir string
 	users      *linuxuser.Manager
 }
 
@@ -70,6 +79,7 @@ func New(stateFile string, users *linuxuser.Manager) *Manager {
 		serviceDir: "/etc/systemd/system",
 		runnerDir:  "/var/lib/open-go-panel/runners",
 		envDir:     "/var/lib/open-go-panel/env",
+		journalDir: "/etc/systemd",
 		users:      users,
 	}
 }
@@ -198,7 +208,12 @@ func (m *Manager) SetCommand(ctx context.Context, id int64, command string) erro
 		RunMode:    "custom",
 		Command:    command,
 		Restart:    "on-failure",
-		RestartSec: 3,
+		RestartSec:       3,
+		TimeoutStopSec:   15,
+		LimitNOFILE:      65535,
+		TasksMax:         256,
+		LogRetentionDays: 7,
+		AutoStart:        true,
 	})
 }
 
@@ -245,9 +260,19 @@ func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceCon
 			return err
 		}
 
+		if cfg.WorkingDirectory == "" {
+			cfg.WorkingDirectory = apps[index].Root
+		}
+		if cfg.Path == "" {
+			cfg.Path = defaultPath(apps[index])
+		}
+
 		apps[index].Service = cfg
 		apps[index].Command = cfg.Command
 
+		if err := m.ensureStorage(); err != nil {
+			return err
+		}
 		if err := m.writeEnvironment(apps[index]); err != nil {
 			return err
 		}
@@ -257,13 +282,25 @@ func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceCon
 		if err := m.writeUnit(apps[index]); err != nil {
 			return err
 		}
+		if err := m.writeJournalConfig(apps[index]); err != nil {
+			return err
+		}
 	}
 
 	if err := systemctl(ctx, "daemon-reload"); err != nil {
 		return err
 	}
-	if err := systemctl(ctx, "enable", serviceName(id)); err != nil {
-		return err
+	if cfg.Mode == "raw" || cfg.AutoStart {
+		if err := systemctl(ctx, "enable", serviceName(id)); err != nil {
+			return err
+		}
+	} else {
+		if err := systemctl(ctx, "disable", serviceName(id)); err != nil {
+			return err
+		}
+	}
+	if cfg.Mode != "raw" && cfg.LogRetentionDays > 0 {
+		_ = exec.CommandContext(ctx, "systemctl", "try-restart", journalServiceName(id)).Run()
 	}
 
 	return m.save(apps)
@@ -289,18 +326,16 @@ func (m *Manager) Logs(ctx context.Context, id int64, lines int) (string, error)
 	if lines <= 0 || lines > 1000 {
 		lines = 200
 	}
-	if _, err := m.Get(id); err != nil {
+	app, err := m.Get(id)
+	if err != nil {
 		return "", err
 	}
 
-	cmd := exec.CommandContext(
-		ctx,
-		"journalctl",
-		"-u", serviceName(id),
-		"-n", strconv.Itoa(lines),
-		"--no-pager",
-		"-o", "short-iso",
-	)
+	args := []string{"-u", serviceName(id), "-n", strconv.Itoa(lines), "--no-pager", "-o", "short-iso"}
+	if app.Service.Mode != "raw" && app.Service.LogRetentionDays > 0 {
+		args = append([]string{"--namespace=" + journalNamespace(id)}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "journalctl", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("read app logs: %w: %s", err, strings.TrimSpace(string(out)))
@@ -370,6 +405,9 @@ func (m *Manager) Status(ctx context.Context, id int64) string {
 }
 
 func (m *Manager) writeRunner(app App) error {
+	if err := m.ensureStorage(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(m.runnerDir, 0755); err != nil {
 		return fmt.Errorf("create runner directory: %w", err)
 	}
@@ -408,7 +446,17 @@ func (m *Manager) writeUnit(app App) error {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "[Unit]\nDescription=Open Go Panel app %d (%s/%s)\nAfter=network-online.target\nWants=network-online.target\n\n", app.ID, app.User, app.Name)
-	fmt.Fprintf(&b, "[Service]\nType=simple\nUser=%s\nWorkingDirectory=%s\n", app.User, app.Root)
+	workingDir := app.Service.WorkingDirectory
+	if workingDir == "" {
+		workingDir = app.Root
+	}
+	fmt.Fprintf(&b, "[Service]\nType=simple\nUser=%s\nWorkingDirectory=%s\n", app.User, workingDir)
+
+	pathValue := app.Service.Path
+	if pathValue == "" {
+		pathValue = defaultPath(app)
+	}
+	fmt.Fprintf(&b, "Environment=PATH=%s\n", pathValue)
 
 	if app.Port > 0 {
 		fmt.Fprintf(&b, "Environment=PORT=%d\n", app.Port)
@@ -422,6 +470,18 @@ func (m *Manager) writeUnit(app App) error {
 		restart = "on-failure"
 	}
 	fmt.Fprintf(&b, "Restart=%s\nRestartSec=%d\n", restart, app.Service.RestartSec)
+	if app.Service.TimeoutStopSec > 0 {
+		fmt.Fprintf(&b, "TimeoutStopSec=%d\n", app.Service.TimeoutStopSec)
+	}
+	if app.Service.LimitNOFILE > 0 {
+		fmt.Fprintf(&b, "LimitNOFILE=%d\n", app.Service.LimitNOFILE)
+	}
+	if app.Service.TasksMax > 0 {
+		fmt.Fprintf(&b, "TasksMax=%d\n", app.Service.TasksMax)
+	}
+	if app.Service.LogRetentionDays > 0 {
+		fmt.Fprintf(&b, "LogNamespace=%s\n", journalNamespace(app.ID))
+	}
 
 	if app.Service.CPUQuota != "" {
 		fmt.Fprintf(&b, "CPUQuota=%s\n", app.Service.CPUQuota)
@@ -486,16 +546,28 @@ func validateServiceConfig(appType string, cfg *ServiceConfig) error {
 	if cfg.RestartSec < 0 || cfg.RestartSec > 300 {
 		return errors.New("restart delay must be between 0 and 300 seconds")
 	}
+	if cfg.TimeoutStopSec < 0 || cfg.TimeoutStopSec > 3600 {
+		return errors.New("stop timeout must be between 0 and 3600 seconds")
+	}
+	if cfg.LimitNOFILE < 0 || cfg.LimitNOFILE > 1048576 {
+		return errors.New("LimitNOFILE is out of range")
+	}
+	if cfg.TasksMax < 0 || cfg.TasksMax > 1048576 {
+		return errors.New("TasksMax is out of range")
+	}
+	if cfg.LogRetentionDays < 0 || cfg.LogRetentionDays > 3650 {
+		return errors.New("log retention must be between 0 and 3650 days")
+	}
 
 	switch cfg.RunMode {
 	case "":
 		cfg.RunMode = "custom"
-	case "custom", "go-air", "go-build", "node-npm":
+	case "custom", "go-air", "go-build", "go-run", "node-npm":
 	default:
 		return errors.New("unsupported run mode")
 	}
 
-	if (cfg.RunMode == "go-air" || cfg.RunMode == "go-build") && appType != "go" {
+	if (cfg.RunMode == "go-air" || cfg.RunMode == "go-build" || cfg.RunMode == "go-run") && appType != "go" {
 		return errors.New("selected run mode is only available for Go apps")
 	}
 	if cfg.RunMode == "node-npm" && appType != "node" {
@@ -536,6 +608,8 @@ func runnerCommand(app App) string {
 		return "exec air"
 	case "go-build":
 		return "go build -o .ogp-app . && exec ./.ogp-app"
+	case "go-run":
+		return "exec go run ."
 	case "node-npm":
 		return "exec npm start"
 	default:
@@ -544,6 +618,112 @@ func runnerCommand(app App) string {
 		}
 		return app.Command
 	}
+}
+
+
+func (m *Manager) ensureStorage() error {
+	root := filepath.Dir(m.stateFile)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return fmt.Errorf("create state directory: %w", err)
+	}
+	if err := os.Chmod(root, 0755); err != nil {
+		return fmt.Errorf("chmod state directory: %w", err)
+	}
+	if err := os.MkdirAll(m.runnerDir, 0755); err != nil {
+		return fmt.Errorf("create runner directory: %w", err)
+	}
+	if err := os.Chmod(m.runnerDir, 0755); err != nil {
+		return fmt.Errorf("chmod runner directory: %w", err)
+	}
+	if err := os.MkdirAll(m.envDir, 0700); err != nil {
+		return fmt.Errorf("create environment directory: %w", err)
+	}
+	if err := os.Chmod(m.envDir, 0700); err != nil {
+		return fmt.Errorf("chmod environment directory: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) EnsureStorage() error {
+	return m.ensureStorage()
+}
+
+func (m *Manager) writeJournalConfig(app App) error {
+	if app.Service.LogRetentionDays <= 0 {
+		return nil
+	}
+	dir := filepath.Join(m.journalDir, "journald@"+journalNamespace(app.ID)+".conf.d")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create journald config directory: %w", err)
+	}
+	content := fmt.Sprintf("[Journal]\nMaxRetentionSec=%dday\n", app.Service.LogRetentionDays)
+	if err := os.WriteFile(filepath.Join(dir, "open-go-panel.conf"), []byte(content), 0644); err != nil {
+		return fmt.Errorf("write journald config: %w", err)
+	}
+	return nil
+}
+
+func defaultPath(app App) string {
+	if app.Type == "go" {
+		return filepath.Join("/home", app.User, "go", "bin") + ":/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+	}
+	return "/usr/local/bin:/usr/bin:/bin"
+}
+
+func journalNamespace(id int64) string {
+	return fmt.Sprintf("ogp-app-%d", id)
+}
+
+func journalServiceName(id int64) string {
+	return fmt.Sprintf("systemd-journald@%s.service", journalNamespace(id))
+}
+
+func (m *Manager) StreamLogs(ctx context.Context, id int64, lines int, fn func(string) error) error {
+	if lines <= 0 || lines > 1000 {
+		lines = 100
+	}
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+
+	args := []string{"-u", serviceName(id), "-n", strconv.Itoa(lines), "-f", "--no-pager", "-o", "short-iso"}
+	if app.Service.Mode != "raw" && app.Service.LogRetentionDays > 0 {
+		args = append([]string{"--namespace=" + journalNamespace(id)}, args...)
+	}
+
+	cmd := exec.CommandContext(ctx, "journalctl", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("open journal stream: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("open journal error stream: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start journal stream: %w", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		if err := fn(scanner.Text()); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return fmt.Errorf("read journal stream: %w", err)
+	}
+
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		errText, _ := bufio.NewReader(stderr).ReadString('\n')
+		return fmt.Errorf("journal stream stopped: %w: %s", err, strings.TrimSpace(errText))
+	}
+	return ctx.Err()
 }
 
 func validateRunnable(app App) error {
@@ -621,7 +801,7 @@ func (m *Manager) load() ([]App, error) {
 }
 
 func (m *Manager) save(apps []App) error {
-	if err := os.MkdirAll(filepath.Dir(m.stateFile), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(m.stateFile), 0755); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
 	}
 
