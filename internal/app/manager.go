@@ -272,7 +272,7 @@ func (m *Manager) Status(ctx context.Context, id int64) string {
 }
 
 func (m *Manager) writeRunner(app App) error {
-	if err := os.MkdirAll(m.runnerDir, 0700); err != nil {
+	if err := os.MkdirAll(m.runnerDir, 0755); err != nil {
 		return fmt.Errorf("create runner directory: %w", err)
 	}
 
