@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bau59/open-go-panel/internal/app"
+	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/systeminfo"
 )
@@ -27,6 +28,7 @@ type Config struct {
 	AdminPassword string
 	Users         *linuxuser.Manager
 	Apps          *app.Manager
+	Caddy         *panelcaddy.Manager
 }
 
 type sessionStore struct {
