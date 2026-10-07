@@ -36,12 +36,16 @@ type Status struct {
 }
 
 type Manager struct {
-	mu        sync.Mutex
-	stateFile string
+	mu              sync.Mutex
+	stateFile       string
+	mysqlConfigFile string
 }
 
 func New(stateFile string) *Manager {
-	return &Manager{stateFile: stateFile}
+	return &Manager{
+		stateFile: stateFile,
+		mysqlConfigFile: "/etc/mysql/mysql.conf.d/99-open-go-panel.cnf",
+	}
 }
 
 func (m *Manager) Status(ctx context.Context) Status {
@@ -53,6 +57,147 @@ func (m *Manager) Status(ctx context.Context) Status {
 		PostgresInstalled: psqlErr == nil,
 		PostgresActive:    serviceActive(ctx, "postgresql.service"),
 	}
+}
+
+
+func (m *Manager) MySQLConfig() (string, error) {
+	data, err := os.ReadFile(m.mysqlConfigFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read MySQL config: %w", err)
+	}
+	return string(data), nil
+}
+
+func (m *Manager) RecommendedMySQLConfig(memoryTotal uint64, cpus int) string {
+	const gib = uint64(1024 * 1024 * 1024)
+	bufferPool := "256M"
+	tmpSize := "32M"
+	maxConnections := 100
+	threadCache := 32
+
+	switch {
+	case memoryTotal >= 16*gib:
+		bufferPool = "4G"
+		tmpSize = "128M"
+		maxConnections = 300
+		threadCache = 100
+	case memoryTotal >= 8*gib:
+		bufferPool = "2G"
+		tmpSize = "64M"
+		maxConnections = 250
+		threadCache = 80
+	case memoryTotal >= 4*gib:
+		bufferPool = "1G"
+		tmpSize = "64M"
+		maxConnections = 200
+		threadCache = 64
+	case memoryTotal >= 2*gib:
+		bufferPool = "512M"
+		tmpSize = "32M"
+		maxConnections = 150
+		threadCache = 48
+	}
+	if cpus <= 1 && maxConnections > 100 {
+		maxConnections = 100
+	}
+
+	return fmt.Sprintf(`# Managed by Open Go Panel
+# Conservative shared-server preset. Review before applying.
+[mysqld]
+bind-address = 127.0.0.1
+
+# InnoDB
+innodb_buffer_pool_size = %s
+innodb_flush_method = O_DIRECT
+innodb_flush_log_at_trx_commit = 1
+
+# Connections and caches
+max_connections = %d
+thread_cache_size = %d
+table_open_cache = 2000
+table_definition_cache = 1400
+
+# Temporary tables
+tmp_table_size = %s
+max_heap_table_size = %s
+
+# Safety / diagnostics
+max_allowed_packet = 64M
+slow_query_log = ON
+long_query_time = 1
+log_queries_not_using_indexes = OFF
+`, bufferPool, maxConnections, threadCache, tmpSize, tmpSize)
+}
+
+func (m *Manager) ApplyMySQLConfig(ctx context.Context, config string) error {
+	if _, err := exec.LookPath("mysqld"); err != nil {
+		return errors.New("MySQL server is not installed")
+	}
+	config = strings.TrimSpace(config)
+	if config == "" {
+		return errors.New("MySQL config cannot be empty")
+	}
+	if !strings.Contains(config, "[mysqld]") {
+		return errors.New("MySQL config must contain [mysqld]")
+	}
+	config += "\n"
+
+	if err := os.MkdirAll(filepath.Dir(m.mysqlConfigFile), 0755); err != nil {
+		return fmt.Errorf("create MySQL config directory: %w", err)
+	}
+
+	var previous []byte
+	hadPrevious := false
+	if data, err := os.ReadFile(m.mysqlConfigFile); err == nil {
+		previous = data
+		hadPrevious = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(m.mysqlConfigFile), ".open-go-panel-mysql-*.cnf")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.WriteString(config); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, m.mysqlConfigFile); err != nil {
+		return err
+	}
+
+	restore := func() {
+		if hadPrevious {
+			_ = os.WriteFile(m.mysqlConfigFile, previous, 0644)
+		} else {
+			_ = os.Remove(m.mysqlConfigFile)
+		}
+	}
+
+	if out, err := exec.CommandContext(ctx, "mysqld", "--validate-config").CombinedOutput(); err != nil {
+		restore()
+		return fmt.Errorf("invalid MySQL config: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, "systemctl", "restart", "mysql.service").CombinedOutput(); err != nil {
+		restore()
+		_ = exec.CommandContext(ctx, "systemctl", "restart", "mysql.service").Run()
+		return fmt.Errorf("restart MySQL: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (m *Manager) Install(ctx context.Context, engine string) error {
