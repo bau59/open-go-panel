@@ -24,28 +24,26 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 	mux.Handle("GET /caddy/logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sites, _ := cfg.Caddy.Sites()
-		filters, query := parseLogFilters(r)
+		filters, journalQuery := parseLogFilters(r)
 		domain := strings.TrimSpace(r.URL.Query().Get("domain"))
-		userSearch := filters.Search
-		if domain != "" {
-			query.Search = domain
+		kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+		if kind != "access" && kind != "error" {
+			kind = "all"
 		}
-		result, err := cfg.Caddy.QueryLogs(r.Context(), query)
+		result, err := cfg.Caddy.QueryStructuredLogs(r.Context(), panelcaddy.LogQuery{
+			Domain:  domain,
+			Search:  filters.Search,
+			Kind:    kind,
+			Since:   journalQuery.Since,
+			Until:   journalQuery.Until,
+			Page:    filters.Page,
+			PerPage: filters.PerPage,
+		})
 		message := ""
 		if err != nil {
 			message = err.Error()
 		}
-		lines := result.Lines
-		if domain != "" && userSearch != "" {
-			filtered := lines[:0]
-			for _, line := range lines {
-				if strings.Contains(strings.ToLower(line), strings.ToLower(userSearch)) {
-					filtered = append(filtered, line)
-				}
-			}
-			lines = filtered
-		}
-		writeHTML(w, cfg.Logger, http.StatusOK, caddyLogsPage(sites, domain, filters, lines, result.HasNext, message))
+		writeHTML(w, cfg.Logger, http.StatusOK, caddyLogsPage(sites, domain, kind, filters, result.Entries, result.HasNext, message))
 	})))
 
 	mux.Handle("POST /caddy/settings", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -417,26 +415,115 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 }
 
 
-func caddyLogsPage(sites []panelcaddy.Site, domain string, filters logFilters, lines []string, hasNext bool, message string) string {
+func caddyLogsPage(sites []panelcaddy.Site, domain, kind string, filters logFilters, entries []panelcaddy.LogEntry, hasNext bool, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
 	}
 
-	var options strings.Builder
-	options.WriteString(`<option value="">All Caddy logs</option>`)
+	var domainOptions strings.Builder
+	domainOptions.WriteString(`<option value="">All domains</option>`)
 	for _, site := range sites {
 		selectedAttr := ""
 		if site.Domain == domain {
 			selectedAttr = " selected"
 		}
-		fmt.Fprintf(&options, `<option value="%s"%s>%s</option>`, html.EscapeString(site.Domain), selectedAttr, html.EscapeString(site.Domain))
+		fmt.Fprintf(&domainOptions, `<option value="%s"%s>%s</option>`,
+			html.EscapeString(site.Domain),
+			selectedAttr,
+			html.EscapeString(site.Domain),
+		)
+	}
+
+	kindOption := func(value, label string) string {
+		selectedAttr := ""
+		if kind == value {
+			selectedAttr = " selected"
+		}
+		return `<option value="` + value + `"` + selectedAttr + `>` + label + `</option>`
+	}
+
+	var rows strings.Builder
+	for _, entry := range entries {
+		when := "—"
+		if !entry.Time.IsZero() {
+			when = entry.Time.Local().Format("2006-01-02 15:04:05")
+		}
+		request := html.EscapeString(entry.Method+" "+entry.URI)
+		if strings.TrimSpace(entry.Method) == "" {
+			request = html.EscapeString(entry.URI)
+		}
+		statusClass := ""
+		if entry.Status >= 500 {
+			statusClass = " danger"
+		} else if entry.Status >= 400 {
+			statusClass = " warn"
+		} else if entry.Status >= 200 && entry.Status < 400 {
+			statusClass = " ok"
+		}
+		statusText := "—"
+		if entry.Status > 0 {
+			statusText = strconv.Itoa(entry.Status)
+		}
+		kindClass := ""
+		if entry.Kind == "error" {
+			kindClass = " warn"
+		}
+
+		details := ""
+		if entry.Message != "" || entry.Raw != "" {
+			details = `
+				<details class="log-details">
+					<summary class="secondary">Details</summary>
+					<div class="inline-popover wide log-popover">
+						` + func() string {
+							if entry.Message == "" {
+								return ""
+							}
+							return `<p class="log-error-message">` + html.EscapeString(entry.Message) + `</p>`
+						}() + `
+						<pre class="security-output" style="max-height:260px">` + html.EscapeString(entry.Raw) + `</pre>
+					</div>
+				</details>`
+		}
+
+		fmt.Fprintf(&rows, `
+			<tr>
+				<td><code>%s</code></td>
+				<td><strong>%s</strong><div class="muted">%s</div></td>
+				<td><code>%s</code></td>
+				<td><span class="status-badge%s">%s</span></td>
+				<td><code>%s</code></td>
+				<td>%s ms<div class="muted">%s</div></td>
+				<td><span class="badge%s">%s</span></td>
+				<td>%s</td>
+			</tr>`,
+			html.EscapeString(when),
+			html.EscapeString(entry.Domain),
+			html.EscapeString(entry.Protocol),
+			request,
+			statusClass,
+			html.EscapeString(statusText),
+			html.EscapeString(entry.ClientIP),
+			html.EscapeString(fmt.Sprintf("%.2f", entry.DurationMS)),
+			html.EscapeString(formatBytes(uint64(maxInt64(entry.Size, 0)))),
+			kindClass,
+			html.EscapeString(entry.Kind),
+			details,
+		)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<tr><td colspan="8" class="empty">No Caddy HTTP events for this filter.</td></tr>`)
 	}
 
 	extra := make(url.Values)
 	if domain != "" {
 		extra.Set("domain", domain)
 	}
+	if kind != "" && kind != "all" {
+		extra.Set("kind", kind)
+	}
+
 	filterValues := cloneValues(extra)
 	if filters.Search != "" {
 		filterValues.Set("q", filters.Search)
@@ -452,7 +539,7 @@ func caddyLogsPage(sites []panelcaddy.Site, domain string, filters logFilters, l
 
 	var hidden strings.Builder
 	for key, values := range filterValues {
-		if key == "domain" {
+		if key == "domain" || key == "kind" {
 			continue
 		}
 		for _, value := range values {
@@ -464,22 +551,46 @@ func caddyLogsPage(sites []panelcaddy.Site, domain string, filters logFilters, l
 	<main class="shell">
 		<div class="page-head">
 			<div>
-				<p class="eyebrow">HTTP access</p>
+				<p class="eyebrow">HTTP traffic</p>
 				<h1>Caddy logs</h1>
-				<p class="sub">Search Caddy's systemd journal by domain, text and time period.</p>
+				<p class="sub">Structured HTTP access and reverse-proxy errors from the Caddy journal.</p>
 			</div>
 			<a class="secondary" href="/caddy">Caddy settings</a>
 		</div>
 		` + alert + `
-		<section class="panel panel-pad">
-			<form method="get" action="/caddy/logs" class="list-toolbar" style="padding-left:0;padding-right:0;border:0">
-				` + hidden.String() + `
-				<select name="domain" onchange="this.form.submit()">` + options.String() + `</select>
-			</form>
-			` + logToolbar("/caddy/logs", filters, extra) + `
-			<div class="logbox">` + logLinesHTML(lines) + `</div>
+		<section class="panel">
+			<div class="panel-pad" style="padding-bottom:0">
+				<form method="get" action="/caddy/logs" class="caddy-log-filters">
+					` + hidden.String() + `
+					<div>
+						<label>Domain</label>
+						<select name="domain">` + domainOptions.String() + `</select>
+					</div>
+					<div>
+						<label>Event type</label>
+						<select name="kind">
+							` + kindOption("all", "Access + errors") + kindOption("access", "Access only") + kindOption("error", "Errors only") + `
+						</select>
+					</div>
+					<div class="filter-submit"><button class="secondary">Apply</button></div>
+				</form>
+				` + logToolbar("/caddy/logs", filters, extra) + `
+			</div>
+			<div class="table-scroll">
+				<table data-no-pager="1">
+					<thead><tr><th>Time</th><th>Domain</th><th>Request</th><th>Status</th><th>Client IP</th><th>Duration / size</th><th>Type</th><th></th></tr></thead>
+					<tbody>` + rows.String() + `</tbody>
+				</table>
+			</div>
 			` + logPagerHTML("/caddy/logs", filters, extra, hasNext) + `
 		</section>
 	</main>
 </body></html>`
+}
+
+func maxInt64(value, fallback int64) int64 {
+	if value < fallback {
+		return fallback
+	}
+	return value
 }
