@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"net"
+	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -63,6 +65,15 @@ type App struct {
 	Service   ServiceConfig `json:"service,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
 }
+
+type RuntimeHealth struct {
+	ProcessStatus string
+	PortListening bool
+	HTTPReachable bool
+	HTTPStatus    int
+	Error         string
+}
+
 
 type Manager struct {
 	mu              sync.Mutex
@@ -203,6 +214,42 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 	}
 
 	return app, nil
+}
+
+func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
+	app, err := m.Get(id)
+	if err != nil {
+		return RuntimeHealth{Error: err.Error()}
+	}
+	health := RuntimeHealth{ProcessStatus: m.Status(ctx, id)}
+	if app.Port <= 0 {
+		return health
+	}
+
+	dialer := net.Dialer{Timeout: time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(app.Port)))
+	if err == nil {
+		health.PortListening = true
+		_ = conn.Close()
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(app.Port)+"/", nil)
+	if err != nil {
+		health.Error = err.Error()
+		return health
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if health.Error == "" {
+			health.Error = err.Error()
+		}
+		return health
+	}
+	health.HTTPReachable = true
+	health.HTTPStatus = resp.StatusCode
+	_ = resp.Body.Close()
+	return health
 }
 
 func (m *Manager) SetCommand(ctx context.Context, id int64, command string) error {
