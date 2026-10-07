@@ -177,6 +177,7 @@ func appHeader(active string) string {
 		{"databases", "/databases", "Databases"},
 		{"caddy", "/caddy", "Caddy"},
 		{"security", "/security", "Security"},
+		{"activity", "/activity", "Activity"},
 	}
 
 	var items strings.Builder
