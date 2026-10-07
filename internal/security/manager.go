@@ -396,7 +396,16 @@ func (m *Manager) DecisionsData(ctx context.Context) ([]Decision, error) {
 }
 
 func (m *Manager) AlertsData(ctx context.Context) ([]Alert, error) {
-	raw, err := cliJSON(ctx, "alerts", "list", "--since", "24h")
+	return m.AlertsDataSince(ctx, "24h")
+}
+
+func (m *Manager) AlertsDataSince(ctx context.Context, since string) ([]Alert, error) {
+	switch since {
+	case "24h", "7d", "30d":
+	default:
+		since = "24h"
+	}
+	raw, err := cliJSON(ctx, "alerts", "list", "--since", since)
 	if err != nil {
 		return nil, err
 	}
