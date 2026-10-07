@@ -1096,7 +1096,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 		<section class="panel panel-pad app-card">
 			<div class="section-title" style="margin-bottom:10px">
 				<div>
-					<label style="margin:0">Databases</label>
+					<h2>Databases</h2>
 					<p class="note" style="margin:5px 0 0">Attachments are tracked by Open Go Panel and written into the app environment.</p>
 				</div>
 				<a class="secondary" href="/databases">Manage databases</a>
