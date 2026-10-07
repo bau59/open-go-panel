@@ -211,6 +211,12 @@ const baseStyles = `
 	.log-details{position:relative}
 	.log-popover{top:100%;right:0}
 	.log-error-message{margin:0 0 10px;color:#ff9aa5;font-size:12px;line-height:1.5}
+	.app-runtime-card .runtime-facts>div{padding:2px 14px;border:0;border-left:1px solid var(--border);border-radius:0;background:transparent}
+	.app-runtime-card .runtime-facts>div:first-child{padding-left:0;border-left:0}
+	.app-card .domain-summary>div{padding:3px 0 10px;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent}
+	.app-card-health .health-grid{gap:0}
+	.app-card-health .metric{border:0;border-right:1px solid var(--border);border-radius:0;background:transparent}
+	.app-card-health .metric:last-child{border-right:0}
 	.statline{display:flex;align-items:center;gap:8px;margin-top:22px;color:#89e8bb;font-size:12px;font-weight:750}
 	.statline i{display:block;width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 5px var(--success-soft)}
 	details{position:relative}
@@ -249,6 +255,9 @@ const baseStyles = `
 		.app-page-head{align-items:flex-start;flex-direction:column}
 		.runtime-state>strong{font-size:24px}
 		.runtime-facts{grid-template-columns:1fr 1fr}
+		.app-runtime-card .runtime-facts>div{padding:8px 0;border-left:0;border-bottom:1px solid var(--border)}
+		.app-card-health .metric{border-right:0;border-bottom:1px solid var(--border)}
+		.app-card-health .metric:last-child{border-bottom:0}
 		.app-card .domain-summary{grid-template-columns:1fr}
 		.danger-zone-body{align-items:flex-start;flex-direction:column}
 		.caddy-log-filters{grid-template-columns:1fr}
