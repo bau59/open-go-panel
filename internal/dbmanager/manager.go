@@ -79,6 +79,19 @@ func (m *Manager) List() ([]Database, error) {
 	return items, nil
 }
 
+func (m *Manager) Get(id int64) (Database, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items, err := m.load()
+	if err != nil { return Database{}, err }
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Database{}, fmt.Errorf("database %d not found", id)
+}
+
 func (m *Manager) Create(ctx context.Context, engine, name, username string) (Database, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
