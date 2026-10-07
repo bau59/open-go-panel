@@ -66,6 +66,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			backupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+			ran, err := databaseManager.RunScheduledBackupIfDue(backupCtx, time.Now())
+			cancel()
+			if err != nil {
+				logger.Error("scheduled database backup failed", "err", err)
+			} else if ran {
+				logger.Info("scheduled database backup completed")
+			}
+			<-ticker.C
+		}
+	}()
+
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.New(server.Config{
