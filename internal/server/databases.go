@@ -7,13 +7,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/dbmanager"
 )
 
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	mux.Handle("GET /databases", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		items, _ := cfg.Databases.List()
-		writeHTML(w, cfg.Logger, http.StatusOK, databasesPage(cfg.Databases.Status(r.Context()), items, ""))
+		writeHTML(w, cfg.Logger, http.StatusOK, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, ""))
 	})))
 
 	mux.Handle("POST /databases/install", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +25,7 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		engine := strings.TrimSpace(r.FormValue("engine"))
 		if err := cfg.Databases.Install(r.Context(), engine); err != nil {
 			items, _ := cfg.Databases.List()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), items, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
@@ -43,7 +44,7 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		)
 		if err != nil {
 			items, _ := cfg.Databases.List()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), items, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
@@ -57,14 +58,14 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		if err := cfg.Databases.Delete(r.Context(), id); err != nil {
 			items, _ := cfg.Databases.List()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), items, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 }
 
-func databasesPage(status dbmanager.Status, items []dbmanager.Database, message string) string {
+func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items []dbmanager.Database, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -84,6 +85,18 @@ func databasesPage(status dbmanager.Status, items []dbmanager.Database, message 
 	installPostgres := ""
 	if !status.PostgresInstalled {
 		installPostgres = `<form method="post" action="/databases/install"><input type="hidden" name="engine" value="postgres"><button class="secondary">Install PostgreSQL</button></form>`
+	}
+
+	adminerControls := ""
+	if !adminerStatus.Installed {
+		adminerControls = `<form method="post" action="/adminer/install"><button class="button">Install Adminer</button></form>`
+	} else if adminerStatus.Active {
+		adminerControls = `<a class="button" href="/db-admin/" target="_blank" rel="noopener">Open Adminer</a>
+			<form method="post" action="/adminer/update"><button class="secondary">Update</button></form>
+			<form method="post" action="/adminer/stop"><button class="secondary">Stop</button></form>`
+	} else {
+		adminerControls = `<form method="post" action="/adminer/start"><button class="button">Start Adminer</button></form>
+			<form method="post" action="/adminer/update"><button class="secondary">Update</button></form>`
 	}
 
 	var rows strings.Builder
@@ -136,6 +149,17 @@ func databasesPage(status dbmanager.Status, items []dbmanager.Database, message 
 			<div class="metric"><span>PostgreSQL</span><strong>5432</strong><small>` + badge(status.PostgresActive) + `</small>` + installPostgres + `</div>
 			<div class="metric"><span>Managed databases</span><strong>` + fmt.Sprintf("%d", len(items)) + `</strong><small>Created by Open Go Panel</small></div>
 			<div class="metric"><span>Network</span><strong>localhost</strong><small>Not exposed publicly by default</small></div>
+		</section>
+
+		<section class="panel panel-pad" style="margin-bottom:16px">
+			<div class="section-title">
+				<div>
+					<h2>Adminer</h2>
+					<p class="note" style="margin:6px 0 0">Database GUI runs only on 127.0.0.1:8787 and is proxied through the authenticated panel route.</p>
+				</div>
+				` + badge(adminerStatus.Active) + `
+			</div>
+			<div class="actions" style="justify-content:flex-start">` + adminerControls + `</div>
 		</section>
 
 		<section class="panel" style="margin-bottom:16px">
