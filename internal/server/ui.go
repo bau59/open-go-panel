@@ -95,6 +95,17 @@ const baseStyles = `
 	.meta-grid{display:grid;grid-template-columns:130px 1fr;gap:12px 18px;font-size:13px}
 	.meta-grid>span{color:var(--muted-2)}
 	.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+	.metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+	.metric{padding:18px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,var(--surface-2),var(--surface))}
+	.metric span{display:block;color:var(--muted-2);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+	.metric strong{display:block;margin-top:8px;font-size:18px;letter-spacing:-.02em}
+	.metric small{display:block;margin-top:7px;color:var(--muted);font-size:11px}
+	.meter{height:6px;margin-top:11px;overflow:hidden;border-radius:999px;background:#0b1018}
+	.meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--primary),#8d82ff)}
+	.tabs{display:flex;gap:6px;margin-bottom:18px}
+	.tab{padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:#0d131d;color:var(--muted);font-size:12px;font-weight:700}
+	.codearea{min-height:320px;font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;line-height:1.55}
+	.logbox{min-height:420px;max-height:65vh;overflow:auto;margin:0;padding:18px;border:1px solid var(--border);border-radius:14px;background:#080c12;color:#c6cfdd;font:12px/1.6 "SFMono-Regular",Consolas,monospace;white-space:pre-wrap}
 	.statline{display:flex;align-items:center;gap:8px;margin-top:22px;color:#89e8bb;font-size:12px;font-weight:750}
 	.statline i{display:block;width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 5px var(--success-soft)}
 	details{position:relative}
@@ -112,6 +123,8 @@ const baseStyles = `
 		h1{font-size:28px}
 		table{display:block;overflow-x:auto}
 		.inline-popover.wide{width:min(460px,82vw)}
+		.metrics-grid{grid-template-columns:1fr 1fr}
+		@media(max-width:520px){.metrics-grid{grid-template-columns:1fr}}
 	}
 `
 
