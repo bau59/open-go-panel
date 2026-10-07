@@ -76,6 +76,13 @@ type Backup struct {
 	CreatedAt time.Time
 }
 
+type BackupSchedule struct {
+	Enabled bool
+	HourUTC int
+	Keep    int
+}
+
+
 
 type Manager struct {
 	mu              sync.Mutex
@@ -366,6 +373,89 @@ func (m *Manager) AttachmentsForDatabase(databaseID int64) ([]Attachment, error)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (m *Manager) BackupSchedule() BackupSchedule {
+	schedule := BackupSchedule{Enabled: false, HourUTC: 2, Keep: 7}
+	rows, err := m.store.DB().Query(`
+		SELECT key, value FROM settings
+		WHERE key IN ('db.backup_enabled','db.backup_hour_utc','db.backup_keep')
+	`)
+	if err != nil {
+		return schedule
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if rows.Scan(&key, &value) != nil {
+			continue
+		}
+		switch key {
+		case "db.backup_enabled":
+			schedule.Enabled = value == "1"
+		case "db.backup_hour_utc":
+			if v, err := strconv.Atoi(value); err == nil && v >= 0 && v <= 23 {
+				schedule.HourUTC = v
+			}
+		case "db.backup_keep":
+			if v, err := strconv.Atoi(value); err == nil && v >= 1 && v <= 100 {
+				schedule.Keep = v
+			}
+		}
+	}
+	return schedule
+}
+
+func (m *Manager) SetBackupSchedule(enabled bool, hourUTC, keep int) error {
+	if hourUTC < 0 || hourUTC > 23 {
+		return errors.New("backup hour must be between 0 and 23 UTC")
+	}
+	if keep < 1 || keep > 100 {
+		return errors.New("backup retention must be between 1 and 100 copies")
+	}
+	tx, err := m.store.DB().Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	values := map[string]string{
+		"db.backup_enabled":  "0",
+		"db.backup_hour_utc": strconv.Itoa(hourUTC),
+		"db.backup_keep":     strconv.Itoa(keep),
+	}
+	if enabled {
+		values["db.backup_enabled"] = "1"
+	}
+	for key, value := range values {
+		if _, err := tx.Exec(`
+			INSERT INTO settings(key, value) VALUES(?, ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value
+		`, key, value); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (m *Manager) BackupAll(ctx context.Context, keep int) error {
+	items, err := m.List()
+	if err != nil {
+		return err
+	}
+	var errs []string
+	for _, item := range items {
+		if _, err := m.Backup(ctx, item.ID); err != nil {
+			errs = append(errs, item.Name+": "+err.Error())
+			continue
+		}
+		if err := m.PruneBackups(item.ID, keep); err != nil {
+			errs = append(errs, item.Name+" prune: "+err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func (m *Manager) MySQLMetrics(ctx context.Context) (MySQLMetrics, error) {
