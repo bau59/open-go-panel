@@ -513,7 +513,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		statusClass = " warn"
 	}
 
-	serviceBlock := `<p class="note">Static applications are served directly and do not need a systemd service.</p>`
+	serviceBlock := `<div class="section-title"><div><h2>Service</h2><p class="note" style="margin:6px 0 0">Static applications are served directly by Caddy and do not use systemd.</p></div></div>`
 	if app.Type != "static" {
 		svc := app.Service
 		if svc.Mode == "" {
@@ -553,92 +553,104 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			rawUnit = unit
 		}
 
+		autoStart := "disabled"
+		if svc.AutoStart {
+			autoStart = "enabled"
+		}
+		resourceLimit := "server defaults"
+		if svc.CPUQuota != "" || svc.MemoryMax != "" {
+			parts := make([]string, 0, 2)
+			if svc.CPUQuota != "" {
+				parts = append(parts, "CPU "+svc.CPUQuota)
+			}
+			if svc.MemoryMax != "" {
+				parts = append(parts, "RAM "+svc.MemoryMax)
+			}
+			resourceLimit = strings.Join(parts, " · ")
+		}
+
 		serviceBlock = `
 			<div class="section-title">
-				<div><h2>Systemd service</h2><p class="note" style="margin:6px 0 0">Visual configuration or full raw unit.</p></div>
+				<div><h2>Service</h2><p class="note" style="margin:6px 0 0">Runtime controls and systemd configuration.</p></div>
 				<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
 			</div>
 
-			<div class="actions" style="justify-content:flex-start;margin-bottom:16px">
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service/auto"><button class="secondary">Apply server defaults</button></form>
+			<div class="service-summary">
+				<div><span>Run mode</span><strong>` + html.EscapeString(svc.RunMode) + `</strong></div>
+				<div><span>Restart</span><strong>` + html.EscapeString(svc.Restart) + `</strong></div>
+				<div><span>Autostart</span><strong>` + autoStart + `</strong></div>
+				<div><span>Resources</span><strong>` + html.EscapeString(resourceLimit) + `</strong></div>
 			</div>
 
-			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service">
-				<input type="hidden" name="mode" value="form">
-				<input type="hidden" name="auto_start" value="0">
-				<div class="grid" style="grid-template-columns:1fr 1fr">
-					<div>
-						<label>Run mode</label>
-						<select name="run_mode">` + runModeOptions(app.Type, svc.RunMode) + `</select>
-					</div>
-					<div>
-						<label>Restart policy</label>
-						<select name="restart">
-							<option value="on-failure"` + selected(svc.Restart, "on-failure") + `>On failure</option>
-							<option value="always"` + selected(svc.Restart, "always") + `>Always</option>
-							<option value="no"` + selected(svc.Restart, "no") + `>No restart</option>
-						</select>
-					</div>
-				</div>
-
-				<div class="grid" style="grid-template-columns:1fr 1fr;margin-top:14px">
-					<div>
-						<label>Working directory</label>
-						<input name="working_directory" value="` + html.EscapeString(svc.WorkingDirectory) + `">
-					</div>
-					<div>
-						<label>PATH</label>
-						<input name="path" value="` + html.EscapeString(svc.Path) + `">
-					</div>
-				</div>
-
-				<div style="margin-top:14px">
-					<label>Custom command</label>
-					<input name="command" value="` + html.EscapeString(svc.Command) + `" placeholder="./app, go run ., npm run dev">
-					<p class="note" style="margin:6px 0 0">Used only when Run mode = Custom.</p>
-				</div>
-
-				<div class="grid service-grid-3" style="margin-top:14px">
-					<div><label>CPU quota</label><input name="cpu_quota" value="` + html.EscapeString(svc.CPUQuota) + `" placeholder="100%"></div>
-					<div><label>Memory max</label><input name="memory_max" value="` + html.EscapeString(svc.MemoryMax) + `" placeholder="512M"></div>
-					<div><label>Restart delay</label><input name="restart_sec" type="number" min="0" max="300" value="` + fmt.Sprintf("%d", svc.RestartSec) + `"></div>
-				</div>
-
-				<div class="grid service-grid-4" style="margin-top:14px">
-					<div><label>LimitNOFILE</label><input name="limit_nofile" type="number" min="0" value="` + fmt.Sprintf("%d", svc.LimitNOFILE) + `"></div>
-					<div><label>TasksMax</label><input name="tasks_max" type="number" min="0" value="` + fmt.Sprintf("%d", svc.TasksMax) + `"></div>
-					<div><label>Stop timeout</label><input name="timeout_stop_sec" type="number" min="0" max="3600" value="` + fmt.Sprintf("%d", svc.TimeoutStopSec) + `"></div>
-					<div><label>Log retention, days</label><input name="log_retention_days" type="number" min="0" max="3650" value="` + fmt.Sprintf("%d", svc.LogRetentionDays) + `"></div>
-				</div>
-
-				<label class="check-row" style="margin-top:14px"><input type="checkbox" name="auto_start" value="1"` + checked(svc.AutoStart) + `><span>Start automatically on boot</span></label>
-
-				<div style="margin-top:14px">
-					<label>Environment</label>
-					<textarea class="codearea" style="min-height:130px" name="environment" placeholder="APP_ENV=production&#10;DATABASE_URL=...">` + html.EscapeString(svc.Environment) + `</textarea>
-				</div>
-
-				<div class="actions" style="justify-content:flex-start;margin-top:14px">
-					<button class="button">Save visual config</button>
-				</div>
-			</form>
-
-			<details style="margin-top:22px">
-				<summary class="secondary">Advanced: edit raw systemd unit</summary>
-				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service" style="margin-top:14px">
-					<input type="hidden" name="mode" value="raw">
-					<textarea class="codearea" name="raw_unit" spellcheck="false">` + html.EscapeString(rawUnit) + `</textarea>
-					<p class="note" style="margin:8px 0 0">Advanced mode writes the complete unit after systemd-analyze verify.</p>
-					<div class="actions" style="justify-content:flex-start;margin-top:12px"><button class="button">Save raw unit</button></div>
-				</form>
-			</details>
-
-			<div class="actions" style="justify-content:flex-start;margin-top:20px">
+			<div class="actions" style="justify-content:flex-start;margin-top:14px">
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/start"><button class="button">Start</button></form>
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><button class="secondary">Restart</button></form>
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/stop"><button class="secondary">Stop</button></form>
-				<a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">View logs</a>
-			</div>`
+				<a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">Logs</a>
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service/auto"><button class="secondary">Apply server defaults</button></form>
+			</div>
+
+			<details class="advanced-block service-editor" style="margin-top:16px">
+				<summary class="secondary">Edit service settings</summary>
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service" style="margin-top:16px">
+					<input type="hidden" name="mode" value="form">
+					<input type="hidden" name="auto_start" value="0">
+
+					<div class="service-form-grid">
+						<div>
+							<label>Run mode</label>
+							<select name="run_mode">` + runModeOptions(app.Type, svc.RunMode) + `</select>
+						</div>
+						<div>
+							<label>Restart policy</label>
+							<select name="restart">
+								<option value="on-failure"` + selected(svc.Restart, "on-failure") + `>On failure</option>
+								<option value="always"` + selected(svc.Restart, "always") + `>Always</option>
+								<option value="no"` + selected(svc.Restart, "no") + `>No restart</option>
+							</select>
+						</div>
+						<div class="span-2">
+							<label>Working directory</label>
+							<input name="working_directory" value="` + html.EscapeString(svc.WorkingDirectory) + `">
+						</div>
+						<div class="span-2">
+							<label>PATH</label>
+							<input name="path" value="` + html.EscapeString(svc.Path) + `">
+						</div>
+						<div class="span-2">
+							<label>Custom command</label>
+							<input name="command" value="` + html.EscapeString(svc.Command) + `" placeholder="./app, go run ., npm run dev">
+							<p class="note" style="margin:6px 0 0">Used only when Run mode = Custom.</p>
+						</div>
+						<div><label>CPU quota</label><input name="cpu_quota" value="` + html.EscapeString(svc.CPUQuota) + `" placeholder="100%"></div>
+						<div><label>Memory max</label><input name="memory_max" value="` + html.EscapeString(svc.MemoryMax) + `" placeholder="512M"></div>
+						<div><label>Restart delay</label><input name="restart_sec" type="number" min="0" max="300" value="` + fmt.Sprintf("%d", svc.RestartSec) + `"></div>
+						<div><label>Stop timeout</label><input name="timeout_stop_sec" type="number" min="0" max="3600" value="` + fmt.Sprintf("%d", svc.TimeoutStopSec) + `"></div>
+						<div><label>LimitNOFILE</label><input name="limit_nofile" type="number" min="0" value="` + fmt.Sprintf("%d", svc.LimitNOFILE) + `"></div>
+						<div><label>TasksMax</label><input name="tasks_max" type="number" min="0" value="` + fmt.Sprintf("%d", svc.TasksMax) + `"></div>
+						<div><label>Log retention, days</label><input name="log_retention_days" type="number" min="0" max="3650" value="` + fmt.Sprintf("%d", svc.LogRetentionDays) + `"></div>
+						<div style="display:flex;align-items:end"><label class="check-row" style="margin:0;width:100%"><input type="checkbox" name="auto_start" value="1"` + checked(svc.AutoStart) + `><span>Start automatically on boot</span></label></div>
+						<div class="span-2">
+							<label>Environment</label>
+							<textarea class="codearea" style="min-height:150px" name="environment" placeholder="APP_ENV=production&#10;DATABASE_URL=...">` + html.EscapeString(svc.Environment) + `</textarea>
+						</div>
+					</div>
+
+					<div class="actions" style="justify-content:flex-start;margin-top:14px">
+						<button class="button">Save service settings</button>
+					</div>
+				</form>
+
+				<details class="advanced-block" style="margin-top:14px">
+					<summary class="secondary">Advanced: raw systemd unit</summary>
+					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service" style="margin-top:14px">
+						<input type="hidden" name="mode" value="raw">
+						<textarea class="codearea" name="raw_unit" spellcheck="false">` + html.EscapeString(rawUnit) + `</textarea>
+						<p class="note" style="margin:8px 0 0">The complete unit is validated with systemd-analyze before replacing the active unit.</p>
+						<div class="actions" style="justify-content:flex-start;margin-top:12px"><button class="button">Save raw unit</button></div>
+					</form>
+				</details>
+			</details>`
 	}
 
 	return pageHead(app.Name) + `<body>` + appHeader("apps") + `
