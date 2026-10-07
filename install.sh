@@ -27,6 +27,20 @@ fi
 
 systemctl enable --now ssh
 
+if ! command -v caddy >/dev/null 2>&1; then
+  echo "Installing Caddy..."
+  apt-get update
+  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' -o /etc/apt/sources.list.d/caddy-stable.list
+  chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update
+  apt-get install -y caddy
+fi
+
+systemctl enable --now caddy
+
+
 ARCH="$(uname -m)"
 case "${ARCH}" in
   x86_64|amd64)
