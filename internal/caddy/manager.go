@@ -247,35 +247,49 @@ func (m *Manager) SetGlobalSettings(ctx context.Context, settings GlobalSettings
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tx, err := m.store.DB().Begin()
+	previousSettings, err := m.GlobalSettings()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-
-	values := map[string]string{
-		"caddy.https":       boolSetting(settings.HTTPS),
-		"caddy.compression": boolSetting(settings.Compression),
-		"caddy.access_log":  boolSetting(settings.AccessLog),
-		"caddy.site_template": managedProxyTemplate(settings),
+	previousTemplate, err := m.Template()
+	if err != nil {
+		return err
 	}
-	for key, value := range values {
-		if _, err := tx.Exec(`
-			INSERT INTO settings(key, value) VALUES(?, ?)
-			ON CONFLICT(key) DO UPDATE SET value=excluded.value
-		`, key, value); err != nil {
+
+	writeSettings := func(s GlobalSettings, template string) error {
+		tx, err := m.store.DB().Begin()
+		if err != nil {
 			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
+		defer tx.Rollback()
+		values := map[string]string{
+			"caddy.https":        boolSetting(s.HTTPS),
+			"caddy.compression":  boolSetting(s.Compression),
+			"caddy.access_log":   boolSetting(s.AccessLog),
+			"caddy.site_template": template,
+		}
+		for key, value := range values {
+			if _, err := tx.Exec(`
+				INSERT INTO settings(key, value) VALUES(?, ?)
+				ON CONFLICT(key) DO UPDATE SET value=excluded.value
+			`, key, value); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
 	}
 
-	sites, err := m.load()
-	if err != nil {
+	newTemplate := managedProxyTemplate(settings)
+	if err := writeSettings(settings, newTemplate); err != nil {
 		return err
 	}
-	if err := m.applyLocked(ctx, sites, managedProxyTemplate(settings)); err != nil {
+	sites, err := m.load()
+	if err != nil {
+		_ = writeSettings(previousSettings, previousTemplate)
+		return err
+	}
+	if err := m.applyLocked(ctx, sites, newTemplate); err != nil {
+		_ = writeSettings(previousSettings, previousTemplate)
 		return err
 	}
 	return nil
@@ -576,17 +590,6 @@ func validateSiteTemplate(value string, site Site) error {
 		return errors.New("proxy Caddy template must contain {port}")
 	}
 	return nil
-}
-
-func (m *Manager) DefaultTemplateForSite(site Site) string {
-	if site.Kind == "static" || site.Port == 0 {
-		return recommendedStaticSiteTemplate
-	}
-	value, err := m.Template()
-	if err != nil {
-		return recommendedSiteTemplate
-	}
-	return value
 }
 
 func (m *Manager) validateRendered(ctx context.Context, config string) error {
