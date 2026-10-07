@@ -5,6 +5,7 @@ REPO="bau59/open-go-panel"
 INSTALL_DIR="/usr/local/bin"
 BIN_PATH="${INSTALL_DIR}/open-go-panel"
 CONFIG_DIR="/etc/open-go-panel"
+STATE_DIR="/var/lib/open-go-panel"
 ENV_FILE="${CONFIG_DIR}/open-go-panel.env"
 SERVICE_FILE="/etc/systemd/system/open-go-panel.service"
 
@@ -56,8 +57,8 @@ chmod 0755 "${TMP_BIN}"
 mv -f "${TMP_BIN}" "${BIN_PATH}"
 trap - EXIT
 
-mkdir -p "${CONFIG_DIR}"
-chmod 0700 "${CONFIG_DIR}"
+mkdir -p "${CONFIG_DIR}" "${STATE_DIR}"
+chmod 0700 "${CONFIG_DIR}" "${STATE_DIR}"
 
 if [ ! -f "${ENV_FILE}" ]; then
   ADMIN_PASSWORD="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
