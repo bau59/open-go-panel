@@ -15,6 +15,12 @@ import (
 	"sync"
 )
 
+const recommendedSiteTemplate = `{domain} {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:{port}
+	log
+}`
+
 var domainRE = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
 
 type Site struct {
@@ -24,15 +30,17 @@ type Site struct {
 }
 
 type Manager struct {
-	mu        sync.Mutex
-	stateFile string
-	configFile string
+	mu           sync.Mutex
+	stateFile    string
+	configFile   string
+	templateFile string
 }
 
 func New(stateFile string) *Manager {
 	return &Manager{
-		stateFile: stateFile,
-		configFile: "/etc/caddy/Caddyfile",
+		stateFile:    stateFile,
+		configFile:   "/etc/caddy/Caddyfile",
+		templateFile: filepath.Join(filepath.Dir(stateFile), "caddy-site-template.txt"),
 	}
 }
 
@@ -114,6 +122,57 @@ func (m *Manager) RemoveSite(ctx context.Context, appID int64) error {
 	return m.apply(ctx, filtered)
 }
 
+
+func (m *Manager) Template() (string, error) {
+	data, err := os.ReadFile(m.templateFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return recommendedSiteTemplate, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return recommendedSiteTemplate, nil
+	}
+	return value, nil
+}
+
+func (m *Manager) RecommendedTemplate() string {
+	return recommendedSiteTemplate
+}
+
+func (m *Manager) SetTemplate(ctx context.Context, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("Caddy site template cannot be empty")
+	}
+	if !strings.Contains(value, "{domain}") || !strings.Contains(value, "{port}") {
+		return errors.New("Caddy template must contain {domain} and {port}")
+	}
+	if err := m.validateRendered(ctx, renderSite(value, Site{Domain: "example.com", Port: 8100})); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(m.templateFile), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(m.templateFile, []byte(value+"\n"), 0600); err != nil {
+		return err
+	}
+	sites, err := m.load()
+	if err != nil {
+		return err
+	}
+	return m.applyLocked(ctx, sites, value)
+}
+
+func (m *Manager) ResetTemplate(ctx context.Context) error {
+	return m.SetTemplate(ctx, recommendedSiteTemplate)
+}
+
 func (m *Manager) Config() (string, error) {
 	data, err := os.ReadFile(m.configFile)
 	if errors.Is(err, os.ErrNotExist) { return "", nil }
@@ -122,6 +181,14 @@ func (m *Manager) Config() (string, error) {
 }
 
 func (m *Manager) apply(ctx context.Context, sites []Site) error {
+	template, err := m.Template()
+	if err != nil {
+		return err
+	}
+	return m.applyLocked(ctx, sites, template)
+}
+
+func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string) error {
 	if _, err := exec.LookPath("caddy"); err != nil {
 		return errors.New("Caddy is not installed")
 	}
@@ -132,7 +199,12 @@ func (m *Manager) apply(ctx context.Context, sites []Site) error {
 	var b strings.Builder
 	b.WriteString("# Managed by Open Go Panel\n\n")
 	for _, site := range sites {
-		fmt.Fprintf(&b, "%s {\n\treverse_proxy 127.0.0.1:%d\n}\n\n", site.Domain, site.Port)
+		b.WriteString(renderSite(template, site))
+		b.WriteString("\n\n")
+	}
+
+	if err := m.validateRendered(ctx, b.String()); err != nil {
+		return err
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(m.configFile), ".Caddyfile-*")
@@ -143,10 +215,6 @@ func (m *Manager) apply(ctx context.Context, sites []Site) error {
 	if _, err := tmp.WriteString(b.String()); err != nil { _ = tmp.Close(); return err }
 	if err := tmp.Close(); err != nil { return err }
 
-	if out, err := exec.CommandContext(ctx, "caddy", "validate", "--config", tmpName, "--adapter", "caddyfile").CombinedOutput(); err != nil {
-		return fmt.Errorf("caddy validate: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-
 	if err := os.Rename(tmpName, m.configFile); err != nil { return err }
 	if err := os.Chmod(m.configFile, 0644); err != nil { return err }
 
@@ -154,6 +222,32 @@ func (m *Manager) apply(ctx context.Context, sites []Site) error {
 		return fmt.Errorf("reload caddy: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return m.save(sites)
+}
+
+func renderSite(template string, site Site) string {
+	value := strings.ReplaceAll(template, "{domain}", site.Domain)
+	value = strings.ReplaceAll(value, "{port}", strconv.Itoa(site.Port))
+	return strings.TrimSpace(value)
+}
+
+func (m *Manager) validateRendered(ctx context.Context, config string) error {
+	tmp, err := os.CreateTemp("", "open-go-panel-caddy-*.Caddyfile")
+	if err != nil {
+		return err
+	}
+	path := tmp.Name()
+	defer os.Remove(path)
+	if _, err := tmp.WriteString(config + "\n"); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if out, err := exec.CommandContext(ctx, "caddy", "validate", "--config", path, "--adapter", "caddyfile").CombinedOutput(); err != nil {
+		return fmt.Errorf("caddy validate: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (m *Manager) load() ([]Site, error) {
