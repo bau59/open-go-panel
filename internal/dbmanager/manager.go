@@ -15,9 +15,78 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bau59/open-go-panel/internal/state"
 )
 
-var nameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,62}$`)
+var (
+	databaseNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,62}package dbmanager
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bau59/open-go-panel/internal/state"
+)
+
+)
+	mysqlUserRE    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,31}package dbmanager
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bau59/open-go-panel/internal/state"
+)
+
+)
+	postgresUserRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,62}package dbmanager
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bau59/open-go-panel/internal/state"
+)
+
+)
+)
 
 type Database struct {
 	ID        int64     `json:"id"`
@@ -37,13 +106,15 @@ type Status struct {
 
 type Manager struct {
 	mu              sync.Mutex
-	stateFile       string
+	store           *state.Store
+	legacyStateFile string
 	mysqlConfigFile string
 }
 
-func New(stateFile string) *Manager {
+func New(store *state.Store, legacyStateFile string) *Manager {
 	return &Manager{
-		stateFile: stateFile,
+		store:           store,
+		legacyStateFile: legacyStateFile,
 		mysqlConfigFile: "/etc/mysql/mysql.conf.d/99-open-go-panel.cnf",
 	}
 }
@@ -245,15 +316,22 @@ func (m *Manager) Create(ctx context.Context, engine, name, username string) (Da
 	name = strings.TrimSpace(name)
 	username = strings.TrimSpace(username)
 
-	if !nameRE.MatchString(name) {
+	if !databaseNameRE.MatchString(name) {
 		return Database{}, errors.New("database name must contain only letters, digits and underscore")
 	}
 	if username == "" {
 		username = "ogp_" + strings.ToLower(name)
 		if len(username) > 63 { username = username[:63] }
 	}
-	if !nameRE.MatchString(username) {
-		return Database{}, errors.New("database user must contain only letters, digits and underscore")
+	userRE := postgresUserRE
+	if engine == "mysql" {
+		userRE = mysqlUserRE
+	}
+	if !userRE.MatchString(username) {
+		if engine == "mysql" {
+			return Database{}, errors.New("MySQL user must be 1-32 characters and contain only letters, digits and underscore")
+		}
+		return Database{}, errors.New("PostgreSQL user must contain only letters, digits and underscore")
 	}
 
 	items, err := m.load()
@@ -392,28 +470,120 @@ func nextID(items []Database) int64 {
 }
 
 func (m *Manager) load() ([]Database, error) {
-	data, err := os.ReadFile(m.stateFile)
-	if errors.Is(err, os.ErrNotExist) { return []Database{}, nil }
-	if err != nil { return nil, err }
-	if len(strings.TrimSpace(string(data))) == 0 { return []Database{}, nil }
+	rows, err := m.store.DB().Query(`
+		SELECT id, engine, name, username, password, created_at
+		FROM databases
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query databases state: %w", err)
+	}
+	defer rows.Close()
+
 	var items []Database
-	if err := json.Unmarshal(data, &items); err != nil { return nil, err }
+	for rows.Next() {
+		var item Database
+		var createdAt string
+		if err := rows.Scan(&item.ID, &item.Engine, &item.Name, &item.User, &item.Password, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan database state: %w", err)
+		}
+		if createdAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+				item.CreatedAt = t
+			}
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate databases state: %w", err)
+	}
+
+	if len(items) == 0 {
+		legacy, err := m.loadLegacy()
+		if err != nil {
+			return nil, err
+		}
+		if len(legacy) > 0 {
+			if err := m.save(legacy); err != nil {
+				return nil, fmt.Errorf("migrate legacy databases state: %w", err)
+			}
+			return legacy, nil
+		}
+	}
+
+	return items, nil
+}
+
+func (m *Manager) loadLegacy() ([]Database, error) {
+	data, err := os.ReadFile(m.legacyStateFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, nil
+	}
+	var items []Database
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, err
+	}
 	return items, nil
 }
 
 func (m *Manager) save(items []Database) error {
-	if err := os.MkdirAll(filepath.Dir(m.stateFile), 0755); err != nil { return err }
-	data, err := json.MarshalIndent(items, "", "  ")
-	if err != nil { return err }
-	data = append(data, '\n')
+	tx, err := m.store.DB().Begin()
+	if err != nil {
+		return fmt.Errorf("begin databases state transaction: %w", err)
+	}
+	defer tx.Rollback()
 
-	tmp, err := os.CreateTemp(filepath.Dir(m.stateFile), ".databases-*")
-	if err != nil { return err }
-	path := tmp.Name()
-	defer os.Remove(path)
+	keep := make(map[int64]struct{}, len(items))
+	for _, item := range items {
+		createdAt := item.CreatedAt.UTC().Format(time.RFC3339Nano)
+		if item.CreatedAt.IsZero() {
+			createdAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO databases(id, engine, name, username, password, created_at)
+			VALUES(?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				engine=excluded.engine,
+				name=excluded.name,
+				username=excluded.username,
+				password=excluded.password,
+				created_at=excluded.created_at
+		`, item.ID, item.Engine, item.Name, item.User, item.Password, createdAt); err != nil {
+			return fmt.Errorf("save database %d state: %w", item.ID, err)
+		}
+		keep[item.ID] = struct{}{}
+	}
 
-	if _, err := tmp.Write(data); err != nil { _ = tmp.Close(); return err }
-	if err := tmp.Chmod(0600); err != nil { _ = tmp.Close(); return err }
-	if err := tmp.Close(); err != nil { return err }
-	return os.Rename(path, m.stateFile)
+	rows, err := tx.Query(`SELECT id FROM databases`)
+	if err != nil {
+		return fmt.Errorf("query existing database ids: %w", err)
+	}
+	var stale []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, ok := keep[id]; !ok {
+			stale = append(stale, id)
+		}
+	}
+	rows.Close()
+	for _, id := range stale {
+		if _, err := tx.Exec(`DELETE FROM databases WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete stale database %d state: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit databases state: %w", err)
+	}
+	return nil
 }
