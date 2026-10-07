@@ -30,7 +30,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), deployBlock(cfg, app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +112,52 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			}
 			app, _ := cfg.Apps.Get(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/deploy/config", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Apps.SetDeployConfig(id, r.FormValue("repository"), r.FormValue("branch")); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/deploy", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Apps.Deploy(r.Context(), id); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/rollback", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Apps.Rollback(r.Context(), id); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
 			return
 		}
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
@@ -724,6 +770,55 @@ func recommendedServiceConfig(app panelapp.App, info systeminfo.Info) panelapp.S
 	}
 }
 
+
+func deployBlock(cfg Config, app panelapp.App) string {
+	deploy, err := cfg.Apps.DeployConfig(app.ID)
+	if err != nil {
+		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
+	}
+	deployed := "never"
+	if !deploy.DeployedAt.IsZero() {
+		deployed = deploy.DeployedAt.Local().Format("2006-01-02 15:04")
+	}
+	current := deploy.CurrentCommit
+	if len(current) > 12 {
+		current = current[:12]
+	}
+	previous := deploy.PreviousCommit
+	if len(previous) > 12 {
+		previous = previous[:12]
+	}
+	rollbackDisabled := ""
+	if deploy.PreviousCommit == "" {
+		rollbackDisabled = " disabled"
+	}
+	return `
+		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+			<div class="section-title">
+				<div><h2>Deploy</h2><p class="note" style="margin:6px 0 0">Pull a Git branch into the app directory, prepare dependencies and restart the service.</p></div>
+				<span class="badge">` + html.EscapeString(deployed) + `</span>
+			</div>
+			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy/config">
+				<div class="grid" style="grid-template-columns:1fr 180px auto;gap:8px">
+					<input name="repository" value="` + html.EscapeString(deploy.Repository) + `" placeholder="git@github.com:org/repo.git or https://..." required>
+					<input name="branch" value="` + html.EscapeString(defaultString(deploy.Branch, "main")) + `" placeholder="main" required>
+					<button class="secondary">Save Git settings</button>
+				</div>
+			</form>
+			<div class="actions" style="justify-content:flex-start;margin-top:10px">
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy"><button class="button">Deploy now</button></form>
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/rollback" onsubmit="return confirm('Rollback to the previous deployed commit?')"><button class="secondary"` + rollbackDisabled + `>Rollback</button></form>
+			</div>
+			<p class="note" style="margin:10px 0 0">Current: <code>` + html.EscapeString(defaultString(current, "—")) + `</code> · Previous: <code>` + html.EscapeString(defaultString(previous, "—")) + `</code></p>
+		</div>`
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
 
 func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 	health := cfg.Apps.RuntimeHealth(r.Context(), app.ID)
