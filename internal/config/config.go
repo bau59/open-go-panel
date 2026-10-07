@@ -1,20 +1,40 @@
 package config
 
-import "os"
+import (
+	"errors"
+	"os"
+)
 
-const defaultListenAddr = ":8443"
+const (
+	defaultListenAddr = ":8443"
+	defaultAdminUser  = "admin"
+)
 
 type Config struct {
-	ListenAddr string
+	ListenAddr    string
+	AdminUser     string
+	AdminPassword string
 }
 
-func Load() Config {
-	listenAddr := os.Getenv("OGP_LISTEN_ADDR")
-	if listenAddr == "" {
-		listenAddr = defaultListenAddr
+func Load() (Config, error) {
+	cfg := Config{
+		ListenAddr:    envOrDefault("OGP_LISTEN_ADDR", defaultListenAddr),
+		AdminUser:     envOrDefault("OGP_ADMIN_USER", defaultAdminUser),
+		AdminPassword: os.Getenv("OGP_ADMIN_PASSWORD"),
 	}
 
-	return Config{
-		ListenAddr: listenAddr,
+	if cfg.AdminPassword == "" {
+		return Config{}, errors.New("OGP_ADMIN_PASSWORD is required")
 	}
+
+	return cfg, nil
+}
+
+func envOrDefault(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	return value
 }
