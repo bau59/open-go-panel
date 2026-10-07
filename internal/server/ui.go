@@ -144,7 +144,7 @@ const baseStyles = `
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4{grid-template-columns:1fr}
 	}
-
+`
 
 func pageHead(title string) string {
 	return `<!doctype html>
