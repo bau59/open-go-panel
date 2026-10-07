@@ -122,6 +122,22 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 
+	mux.Handle("GET /databases/{id}/backup/download", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid database id", http.StatusBadRequest)
+			return
+		}
+		path, err := cfg.Databases.BackupFile(id, r.URL.Query().Get("path"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filepath.Base(path)+`"`)
+		w.Header().Set("Content-Type", "application/gzip")
+		http.ServeFile(w, r, path)
+	})))
+
 	mux.Handle("POST /databases/{id}/restore", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -259,13 +275,18 @@ func databasesPage(data databasePageData) string {
 			fmt.Fprintf(&backupRows, `
 				<div class="backup-row">
 					<div><strong>%s</strong><div class="note">%s</div></div>
-					<form method="post" action="/databases/%d/restore" onsubmit="return confirm('Restore this backup over the current database?')">
-						<input type="hidden" name="path" value="%s">
-						<button class="secondary">Restore</button>
-					</form>
+					<div class="actions">
+						<a class="secondary" href="/databases/%d/backup/download?path=%s">Download</a>
+						<form method="post" action="/databases/%d/restore" onsubmit="return confirm('Restore this backup over the current database?')">
+							<input type="hidden" name="path" value="%s">
+							<button class="secondary">Restore</button>
+						</form>
+					</div>
 				</div>`,
 				html.EscapeString(filepath.Base(backup.Path)),
 				html.EscapeString(formatBytes(uint64(backup.Size))),
+				item.ID,
+				url.QueryEscape(backup.Path),
 				item.ID,
 				html.EscapeString(backup.Path),
 			)
