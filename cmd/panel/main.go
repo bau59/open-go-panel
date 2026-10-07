@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bau59/open-go-panel/internal/app"
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/server"
@@ -30,6 +31,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	apps := app.New("/var/lib/open-go-panel/apps.json", users)
+
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.New(server.Config{
@@ -37,6 +40,7 @@ func main() {
 			AdminUser:     cfg.AdminUser,
 			AdminPassword: cfg.AdminPassword,
 			Users:         users,
+			Apps:          apps,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
