@@ -34,10 +34,12 @@ type Site struct {
 }
 
 type Manager struct {
-	mu              sync.Mutex
-	store           *state.Store
-	legacyStateFile string
-	configFile      string
+	mu                 sync.Mutex
+	store              *state.Store
+	legacyStateFile    string
+	configFile         string
+	managedDir         string
+	managedFile        string
 	legacyTemplateFile string
 }
 
@@ -46,6 +48,8 @@ func New(store *state.Store, legacyStateFile string) *Manager {
 		store:              store,
 		legacyStateFile:    legacyStateFile,
 		configFile:         "/etc/caddy/Caddyfile",
+		managedDir:         "/etc/caddy/open-go-panel",
+		managedFile:        "/etc/caddy/open-go-panel/sites.caddy",
 		legacyTemplateFile: filepath.Join(filepath.Dir(legacyStateFile), "caddy-site-template.txt"),
 	}
 }
@@ -234,9 +238,19 @@ func (m *Manager) ResetTemplate(ctx context.Context) error {
 }
 
 func (m *Manager) Config() (string, error) {
-	data, err := os.ReadFile(m.configFile)
-	if errors.Is(err, os.ErrNotExist) { return "", nil }
-	if err != nil { return "", err }
+	data, err := os.ReadFile(m.managedFile)
+	if errors.Is(err, os.ErrNotExist) {
+		data, err = os.ReadFile(m.configFile)
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	if err != nil {
+		return "", err
+	}
 	return string(data), nil
 }
 
@@ -252,7 +266,9 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	if _, err := exec.LookPath("caddy"); err != nil {
 		return errors.New("Caddy is not installed")
 	}
-	if err := os.MkdirAll(filepath.Dir(m.configFile), 0755); err != nil { return err }
+	if err := os.MkdirAll(m.managedDir, 0755); err != nil {
+		return err
+	}
 
 	sort.Slice(sites, func(i, j int) bool { return sites[i].Domain < sites[j].Domain })
 
@@ -266,26 +282,63 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 		b.WriteString(renderSite(siteTemplate, site))
 		b.WriteString("\n\n")
 	}
-
-	if err := m.validateRendered(ctx, b.String()); err != nil {
+	managedContent := b.String()
+	if err := m.validateRendered(ctx, managedContent); err != nil {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(m.configFile), ".Caddyfile-*")
-	if err != nil { return err }
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	oldManaged, managedErr := os.ReadFile(m.managedFile)
+	hadManaged := managedErr == nil
+	if managedErr != nil && !errors.Is(managedErr, os.ErrNotExist) {
+		return managedErr
+	}
 
-	if _, err := tmp.WriteString(b.String()); err != nil { _ = tmp.Close(); return err }
-	if err := tmp.Close(); err != nil { return err }
+	oldRoot, rootErr := os.ReadFile(m.configFile)
+	hadRoot := rootErr == nil
+	if rootErr != nil && !errors.Is(rootErr, os.ErrNotExist) {
+		return rootErr
+	}
 
-	if err := os.Rename(tmpName, m.configFile); err != nil { return err }
-	if err := os.Chmod(m.configFile, 0644); err != nil { return err }
+	if err := os.WriteFile(m.managedFile, []byte(managedContent), 0644); err != nil {
+		return fmt.Errorf("write managed Caddy config: %w", err)
+	}
+
+	rootContent := string(oldRoot)
+	importLine := "import /etc/caddy/open-go-panel/*.caddy"
+	if !hadRoot || strings.TrimSpace(rootContent) == "" || strings.HasPrefix(strings.TrimSpace(rootContent), "# Managed by Open Go Panel") {
+		rootContent = "# Open Go Panel keeps its sites in /etc/caddy/open-go-panel/*.caddy\n" + importLine + "\n"
+	} else if !strings.Contains(rootContent, importLine) {
+		rootContent = strings.TrimRight(rootContent, "\n") + "\n\n# Open Go Panel managed sites\n" + importLine + "\n"
+	}
+	if err := os.WriteFile(m.configFile, []byte(rootContent), 0644); err != nil {
+		m.restoreConfig(oldManaged, hadManaged, oldRoot, hadRoot)
+		return fmt.Errorf("write Caddy root config: %w", err)
+	}
+
+	if out, err := exec.CommandContext(ctx, "caddy", "validate", "--config", m.configFile, "--adapter", "caddyfile").CombinedOutput(); err != nil {
+		m.restoreConfig(oldManaged, hadManaged, oldRoot, hadRoot)
+		return fmt.Errorf("caddy validate: %w: %s", err, strings.TrimSpace(string(out)))
+	}
 
 	if out, err := exec.CommandContext(ctx, "systemctl", "reload", "caddy.service").CombinedOutput(); err != nil {
+		m.restoreConfig(oldManaged, hadManaged, oldRoot, hadRoot)
+		_ = exec.CommandContext(ctx, "systemctl", "reload", "caddy.service").Run()
 		return fmt.Errorf("reload caddy: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return m.save(sites)
+}
+
+func (m *Manager) restoreConfig(oldManaged []byte, hadManaged bool, oldRoot []byte, hadRoot bool) {
+	if hadManaged {
+		_ = os.WriteFile(m.managedFile, oldManaged, 0644)
+	} else {
+		_ = os.Remove(m.managedFile)
+	}
+	if hadRoot {
+		_ = os.WriteFile(m.configFile, oldRoot, 0644)
+	} else {
+		_ = os.Remove(m.configFile)
+	}
 }
 
 func renderSite(template string, site Site) string {
