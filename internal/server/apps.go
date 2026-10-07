@@ -117,6 +117,27 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /apps/{id}/delete", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if cfg.Caddy != nil {
+			if _, ok, _ := cfg.Caddy.SiteForApp(id); ok {
+				if err := cfg.Caddy.RemoveSite(r.Context(), id); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		if err := cfg.Apps.Delete(r.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/apps", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /apps/{id}/deploy/config", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -628,7 +649,12 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				<h1>` + html.EscapeString(app.Name) + `</h1>
 				<p class="sub">` + html.EscapeString(app.User) + ` · ` + html.EscapeString(app.Type) + `</p>
 			</div>
-			<a class="secondary" href="/apps">Back to apps</a>
+			<div class="actions">
+				<a class="secondary" href="/apps">Back to apps</a>
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/delete" onsubmit="return confirm('Remove this app from Open Go Panel? Application files will be preserved.')">
+					<button class="danger">Remove app</button>
+				</form>
+			</div>
 		</div>
 		` + alert + `
 		<div class="grid" style="grid-template-columns:minmax(280px,.7fr) minmax(0,1.5fr)">
