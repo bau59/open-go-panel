@@ -66,6 +66,12 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
 			return
 		}
+		if err := cfg.Databases.Attach(id, db.ID, envName); err != nil {
+			_ = cfg.Apps.RemoveEnvironmentVariable(r.Context(), id, envName)
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
+			return
+		}
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
@@ -83,7 +89,27 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		if envName == "" {
 			envName = "DATABASE_URL"
 		}
+		var restoreDSN string
+		attachments, _ := cfg.Databases.AttachmentsForApp(id)
+		for _, attachment := range attachments {
+			if attachment.EnvName != envName {
+				continue
+			}
+			if db, err := cfg.Databases.Get(attachment.DatabaseID); err == nil {
+				restoreDSN = db.DSN()
+			}
+			break
+		}
+
 		if err := cfg.Apps.RemoveEnvironmentVariable(r.Context(), id, envName); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
+			return
+		}
+		if err := cfg.Databases.Detach(id, envName); err != nil {
+			if restoreDSN != "" {
+				_ = cfg.Apps.SetEnvironmentVariable(r.Context(), id, envName, restoreDSN)
+			}
 			app, _ := cfg.Apps.Get(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
 			return
@@ -707,6 +733,37 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 	if err != nil {
 		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
 	}
+	attachments, err := cfg.Databases.AttachmentsForApp(app.ID)
+	if err != nil {
+		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
+	}
+
+	var current strings.Builder
+	for _, attachment := range attachments {
+		db, err := cfg.Databases.Get(attachment.DatabaseID)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&current, `
+			<div class="panel" style="padding:12px 14px;margin-top:8px">
+				<div class="section-title" style="margin:0">
+					<div>
+						<strong>%s</strong>
+						<div class="note" style="margin-top:4px"><code>%s</code> · %s</div>
+					</div>
+					<form method="post" action="/apps/%d/database/detach">
+						<input type="hidden" name="env_name" value="%s">
+						<button class="secondary">Detach</button>
+					</form>
+				</div>
+			</div>`,
+			html.EscapeString(db.Name),
+			html.EscapeString(attachment.EnvName),
+			html.EscapeString(db.Engine),
+			app.ID,
+			html.EscapeString(attachment.EnvName),
+		)
+	}
 
 	var options strings.Builder
 	for _, item := range items {
@@ -714,27 +771,25 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 		fmt.Fprintf(&options, `<option value="%d">%s</option>`, item.ID, html.EscapeString(label))
 	}
 
-	if options.Len() == 0 {
-		return `
-			<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-				<label>Database</label>
-				<p class="note" style="margin:6px 0 10px">No managed databases yet.</p>
-				<a class="secondary" href="/databases">Open Databases</a>
-			</div>`
-	}
-
-	return `
-		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-			<label>Database</label>
+	create := `<p class="note" style="margin:6px 0 10px">No managed databases yet.</p><a class="secondary" href="/databases">Open Databases</a>`
+	if options.Len() > 0 {
+		create = `
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/database" class="grid" style="grid-template-columns:1fr 150px auto;gap:8px">
 				<select name="database_id" required>` + options.String() + `</select>
 				<input name="env_name" value="DATABASE_URL" placeholder="ENV name" required>
 				<button class="button">Attach</button>
-			</form>
-			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/database/detach" class="compact-form" style="margin-top:8px">
-				<input name="env_name" value="DATABASE_URL" placeholder="ENV name" required>
-				<button class="secondary">Detach</button>
-			</form>
-			<p class="note" style="margin:8px 0 0">Attach writes the selected connection string into the app environment and regenerates its systemd config.</p>
+			</form>`
+	}
+
+	return `
+		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+			<div class="section-title" style="margin-bottom:10px">
+				<div>
+					<label style="margin:0">Databases</label>
+					<p class="note" style="margin:5px 0 0">Attachments are tracked by Open Go Panel and written into the app environment.</p>
+				</div>
+				<a class="secondary" href="/databases">Manage databases</a>
+			</div>
+			` + current.String() + create + `
 		</div>`
 }
