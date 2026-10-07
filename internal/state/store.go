@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS app_databases (
 CREATE INDEX IF NOT EXISTS idx_app_databases_database_id
 	ON app_databases(database_id);
 
+CREATE TABLE IF NOT EXISTS deployments (
+	app_id INTEGER PRIMARY KEY,
+	repository TEXT NOT NULL DEFAULT '',
+	branch TEXT NOT NULL DEFAULT 'main',
+	current_commit TEXT NOT NULL DEFAULT '',
+	previous_commit TEXT NOT NULL DEFAULT '',
+	deployed_at TEXT NOT NULL DEFAULT '',
+	FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
