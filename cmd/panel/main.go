@@ -32,6 +32,10 @@ func main() {
 	}
 
 	apps := app.New("/var/lib/open-go-panel/apps.json", users)
+	if err := apps.EnsureStorage(); err != nil {
+		logger.Error("ensure app storage failed", "err", err)
+		os.Exit(1)
+	}
 
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
