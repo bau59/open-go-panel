@@ -41,10 +41,20 @@ case "${ARCH}" in
 esac
 
 DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+TMP_BIN="$(mktemp "${INSTALL_DIR}/.open-go-panel.XXXXXX")"
+trap 'rm -f "${TMP_BIN}"' EXIT
 
 echo "Downloading Open Go Panel..."
-curl -fL "${DOWNLOAD_URL}" -o "${BIN_PATH}"
-chmod 0755 "${BIN_PATH}"
+if ! curl -fL "${DOWNLOAD_URL}" -o "${TMP_BIN}"; then
+  echo
+  echo "Failed to download the latest release binary."
+  echo "The release may still be building. Try again in a minute."
+  exit 1
+fi
+
+chmod 0755 "${TMP_BIN}"
+mv -f "${TMP_BIN}" "${BIN_PATH}"
+trap - EXIT
 
 mkdir -p "${CONFIG_DIR}"
 chmod 0700 "${CONFIG_DIR}"
@@ -83,7 +93,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now open-go-panel
+systemctl enable open-go-panel
+systemctl restart open-go-panel
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 if [ -z "${IP}" ]; then
@@ -91,7 +102,7 @@ if [ -z "${IP}" ]; then
 fi
 
 echo
-echo "Open Go Panel installed."
+echo "Open Go Panel installed/updated."
 echo "URL: http://${IP}:8443"
 echo "Username: admin"
 echo "Password: ${ADMIN_PASSWORD}"
