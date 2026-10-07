@@ -115,25 +115,7 @@ func install(ctx context.Context, trustedIP string) error {
 		return err
 	}
 
-	if err := run(ctx, "cscli", "collections", "install", "crowdsecurity/caddy"); err != nil {
-		return err
-	}
-	if err := os.MkdirAll("/etc/crowdsec/acquis.d", 0755); err != nil {
-		return fmt.Errorf("create CrowdSec acquisition directory: %w", err)
-	}
-	caddyAcquisition := `source: journalctl
-journalctl_filter:
-  - "_SYSTEMD_UNIT=caddy.service"
-labels:
-  type: caddy
-`
-	if err := os.WriteFile("/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml", []byte(caddyAcquisition), 0644); err != nil {
-		return fmt.Errorf("write Caddy CrowdSec acquisition: %w", err)
-	}
-	if err := run(ctx, "crowdsec", "-t"); err != nil {
-		return err
-	}
-	if err := run(ctx, "systemctl", "restart", "crowdsec.service"); err != nil {
+	if err := enableWebProtection(ctx); err != nil {
 		return err
 	}
 
@@ -157,6 +139,37 @@ labels:
 	return run(ctx, "systemctl", "enable", "--now", "crowdsec-firewall-bouncer.service")
 }
 
+
+func (m *Manager) EnableWebProtection(ctx context.Context) error {
+	return enableWebProtection(ctx)
+}
+
+func enableWebProtection(ctx context.Context) error {
+	if _, err := exec.LookPath("cscli"); err != nil {
+		return errors.New("CrowdSec is not installed")
+	}
+	if err := run(ctx, "cscli", "collections", "install", "crowdsecurity/caddy"); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "already") {
+			return err
+		}
+	}
+	if err := os.MkdirAll("/etc/crowdsec/acquis.d", 0755); err != nil {
+		return fmt.Errorf("create CrowdSec acquisition directory: %w", err)
+	}
+	caddyAcquisition := `source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=caddy.service"
+labels:
+  type: caddy
+`
+	if err := os.WriteFile("/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml", []byte(caddyAcquisition), 0644); err != nil {
+		return fmt.Errorf("write Caddy CrowdSec acquisition: %w", err)
+	}
+	if err := run(ctx, "crowdsec", "-t"); err != nil {
+		return err
+	}
+	return run(ctx, "systemctl", "restart", "crowdsec.service")
+}
 
 func (m *Manager) StartProtection(ctx context.Context) error {
 	if _, err := exec.LookPath("cscli"); err != nil {
