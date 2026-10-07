@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/state"
 )
 
 const (
@@ -64,23 +65,25 @@ type App struct {
 }
 
 type Manager struct {
-	mu         sync.Mutex
-	stateFile  string
-	serviceDir string
-	runnerDir  string
-	envDir     string
-	journalDir string
-	users      *linuxuser.Manager
+	mu              sync.Mutex
+	store           *state.Store
+	legacyStateFile string
+	serviceDir      string
+	runnerDir       string
+	envDir          string
+	journalDir      string
+	users           *linuxuser.Manager
 }
 
-func New(stateFile string, users *linuxuser.Manager) *Manager {
+func New(store *state.Store, legacyStateFile string, users *linuxuser.Manager) *Manager {
 	return &Manager{
-		stateFile:  stateFile,
-		serviceDir: "/etc/systemd/system",
-		runnerDir:  "/var/lib/open-go-panel/runners",
-		envDir:     "/var/lib/open-go-panel/env",
-		journalDir: "/etc/systemd",
-		users:      users,
+		store:           store,
+		legacyStateFile: legacyStateFile,
+		serviceDir:      "/etc/systemd/system",
+		runnerDir:       "/var/lib/open-go-panel/runners",
+		envDir:          "/var/lib/open-go-panel/env",
+		journalDir:      "/etc/systemd",
+		users:           users,
 	}
 }
 
@@ -733,7 +736,7 @@ func runnerCommand(app App) string {
 
 
 func (m *Manager) ensureStorage() error {
-	root := filepath.Dir(m.stateFile)
+	root := filepath.Dir(m.legacyStateFile)
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
 	}
@@ -892,59 +895,144 @@ func (m *Manager) userManaged(username string) (bool, error) {
 }
 
 func (m *Manager) load() ([]App, error) {
-	data, err := os.ReadFile(m.stateFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return []App{}, nil
-	}
+	rows, err := m.store.DB().Query(`
+		SELECT id, owner, name, type, root, port, command, service_json, created_at
+		FROM apps
+		ORDER BY id
+	`)
 	if err != nil {
-		return nil, fmt.Errorf("read apps state: %w", err)
+		return nil, fmt.Errorf("query apps state: %w", err)
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return []App{}, nil
-	}
+	defer rows.Close()
 
 	var apps []App
-	if err := json.Unmarshal(data, &apps); err != nil {
-		return nil, fmt.Errorf("decode apps state: %w", err)
+	for rows.Next() {
+		var app App
+		var serviceJSON string
+		var createdAt string
+		if err := rows.Scan(
+			&app.ID,
+			&app.User,
+			&app.Name,
+			&app.Type,
+			&app.Root,
+			&app.Port,
+			&app.Command,
+			&serviceJSON,
+			&createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan app state: %w", err)
+		}
+		if strings.TrimSpace(serviceJSON) != "" {
+			if err := json.Unmarshal([]byte(serviceJSON), &app.Service); err != nil {
+				return nil, fmt.Errorf("decode app %d service state: %w", app.ID, err)
+			}
+		}
+		if createdAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+				app.CreatedAt = t
+			}
+		}
+		apps = append(apps, app)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate apps state: %w", err)
+	}
+
+	if len(apps) == 0 {
+		legacy, err := m.loadLegacy()
+		if err != nil {
+			return nil, err
+		}
+		if len(legacy) > 0 {
+			if err := m.save(legacy); err != nil {
+				return nil, fmt.Errorf("migrate legacy apps state: %w", err)
+			}
+			return legacy, nil
+		}
 	}
 
 	return apps, nil
 }
 
+func (m *Manager) loadLegacy() ([]App, error) {
+	data, err := os.ReadFile(m.legacyStateFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read legacy apps state: %w", err)
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, nil
+	}
+	var apps []App
+	if err := json.Unmarshal(data, &apps); err != nil {
+		return nil, fmt.Errorf("decode legacy apps state: %w", err)
+	}
+	return apps, nil
+}
+
 func (m *Manager) save(apps []App) error {
-	if err := os.MkdirAll(filepath.Dir(m.stateFile), 0755); err != nil {
-		return fmt.Errorf("create state directory: %w", err)
-	}
-
-	data, err := json.MarshalIndent(apps, "", "  ")
+	tx, err := m.store.DB().Begin()
 	if err != nil {
-		return fmt.Errorf("encode apps state: %w", err)
+		return fmt.Errorf("begin apps state transaction: %w", err)
 	}
-	data = append(data, '\n')
+	defer tx.Rollback()
 
-	tmp, err := os.CreateTemp(filepath.Dir(m.stateFile), ".apps-*.json")
+	keep := make(map[int64]struct{}, len(apps))
+	for _, app := range apps {
+		serviceJSON, err := json.Marshal(app.Service)
+		if err != nil {
+			return fmt.Errorf("encode app %d service state: %w", app.ID, err)
+		}
+		createdAt := app.CreatedAt.UTC().Format(time.RFC3339Nano)
+		if app.CreatedAt.IsZero() {
+			createdAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO apps(id, owner, name, type, root, port, command, service_json, created_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				owner=excluded.owner,
+				name=excluded.name,
+				type=excluded.type,
+				root=excluded.root,
+				port=excluded.port,
+				command=excluded.command,
+				service_json=excluded.service_json,
+				created_at=excluded.created_at
+		`, app.ID, app.User, app.Name, app.Type, app.Root, app.Port, app.Command, string(serviceJSON), createdAt); err != nil {
+			return fmt.Errorf("save app %d state: %w", app.ID, err)
+		}
+		keep[app.ID] = struct{}{}
+	}
+
+	rows, err := tx.Query(`SELECT id FROM apps`)
 	if err != nil {
-		return fmt.Errorf("create temporary apps state: %w", err)
+		return fmt.Errorf("query existing app ids: %w", err)
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	var stale []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, ok := keep[id]; !ok {
+			stale = append(stale, id)
+		}
+	}
+	rows.Close()
+	for _, id := range stale {
+		if _, err := tx.Exec(`DELETE FROM apps WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete stale app %d state: %w", id, err)
+		}
+	}
 
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write apps state: %w", err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit apps state: %w", err)
 	}
-	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod apps state: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close apps state: %w", err)
-	}
-
-	if err := os.Rename(tmpName, m.stateFile); err != nil {
-		return fmt.Errorf("replace apps state: %w", err)
-	}
-
 	return nil
 }
 
