@@ -607,7 +607,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				` + primaryAction + `
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/stop"><button class="secondary">Stop</button></form>
 				<a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">Logs</a>
-				<a class="secondary" href="#service-settings">Service settings</a>
+				<a class="secondary" href="#service-settings" onclick="document.getElementById('service-settings').open=true">Service settings</a>
 			</div>`
 
 		rawUnit := svc.RawUnit
@@ -1056,7 +1056,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 			continue
 		}
 		fmt.Fprintf(&current, `
-			<div class="panel" style="padding:12px 14px;margin-top:8px">
+			<div class="attachment-row">
 				<div class="section-title" style="margin:0">
 					<div>
 						<strong>%s</strong>
