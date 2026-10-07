@@ -40,7 +40,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			sites, _ := cfg.Caddy.Sites()
 			config, _ := cfg.Caddy.Config()
 			template, _ := cfg.Caddy.Template()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, 0, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
