@@ -288,11 +288,27 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		logs, err := cfg.Apps.Logs(r.Context(), id, 300)
+		filters, query := parseLogFilters(r)
+		result, err := cfg.Apps.QueryLogs(r.Context(), id, query)
+		message := ""
 		if err != nil {
-			logs = err.Error()
+			message = err.Error()
 		}
-		writeHTML(w, cfg.Logger, http.StatusOK, appLogsPage(app, logs))
+		writeHTML(w, cfg.Logger, http.StatusOK, appLogsPage(app, filters, result.Lines, result.HasNext, message))
+	})))
+
+	mux.Handle("GET /apps/{id}/logs/live", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		app, err := cfg.Apps.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeHTML(w, cfg.Logger, http.StatusOK, appLiveLogsPage(app))
 	})))
 
 	mux.Handle("GET /apps/{id}/logs/stream", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -689,18 +705,46 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 </html>`
 }
 
-func appLogsPage(app panelapp.App, logs string) string {
+func appLogsPage(app panelapp.App, filters logFilters, lines []string, hasNext bool, message string) string {
+	alert := ""
+	if message != "" {
+		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
+	}
+	path := "/apps/" + fmt.Sprintf("%d", app.ID) + "/logs"
 	return pageHead(app.Name+" logs") + `<body>` + appHeader("apps") + `
 	<main class="shell">
 		<div class="page-head">
-			<div><p class="eyebrow">Journal</p><h1>` + html.EscapeString(app.Name) + ` logs</h1><p class="sub">Live systemd journal stream.</p></div>
-			<div class="actions"><span class="status-badge ok">live</span><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `">App</a><button class="secondary" type="button" onclick="document.getElementById('logbox').textContent=''">Clear view</button></div>
+			<div>
+				<p class="eyebrow">Journal</p>
+				<h1>` + html.EscapeString(app.Name) + ` logs</h1>
+				<p class="sub">Search retained systemd journal history by period, or switch to the live stream.</p>
+			</div>
+			<div class="actions">
+				<a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `">App</a>
+				<a class="button" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs/live">Live stream</a>
+			</div>
 		</div>
-		<pre class="logbox" id="logbox">` + html.EscapeString(logs) + `</pre>
+		` + alert + `
+		<section class="panel panel-pad">
+			` + logToolbar(path, filters, nil) + `
+			<div class="logbox">` + logLinesHTML(lines) + `</div>
+			` + logPagerHTML(path, filters, nil, hasNext) + `
+		</section>
+	</main>
+</body></html>`
+}
+
+func appLiveLogsPage(app panelapp.App) string {
+	return pageHead(app.Name+" live logs") + `<body>` + appHeader("apps") + `
+	<main class="shell">
+		<div class="page-head">
+			<div><p class="eyebrow">Journal</p><h1>` + html.EscapeString(app.Name) + ` live logs</h1><p class="sub">Live stream. Use history for search, periods and pagination.</p></div>
+			<div class="actions"><span class="status-badge ok">live</span><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">History</a><button class="secondary" type="button" onclick="document.getElementById('logbox').textContent=''">Clear view</button></div>
+		</div>
+		<pre class="logbox" id="logbox"></pre>
 	</main>
 	<script>
 		const box = document.getElementById('logbox');
-		box.scrollTop = box.scrollHeight;
 		const source = new EventSource('/apps/` + fmt.Sprintf("%d", app.ID) + `/logs/stream');
 		source.onmessage = (event) => {
 			const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 32;
