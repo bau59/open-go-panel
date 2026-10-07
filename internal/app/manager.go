@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -32,19 +33,24 @@ type App struct {
 	Type      string    `json:"type"`
 	Root      string    `json:"root"`
 	Port      int       `json:"port,omitempty"`
+	Command   string    `json:"command,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 type Manager struct {
-	mu        sync.Mutex
-	stateFile string
-	users     *linuxuser.Manager
+	mu          sync.Mutex
+	stateFile   string
+	serviceDir  string
+	runnerDir   string
+	users       *linuxuser.Manager
 }
 
 func New(stateFile string, users *linuxuser.Manager) *Manager {
 	return &Manager{
-		stateFile: stateFile,
-		users:     users,
+		stateFile:  stateFile,
+		serviceDir: "/etc/systemd/system",
+		runnerDir:  "/var/lib/open-go-panel/runners",
+		users:      users,
 	}
 }
 
@@ -147,6 +153,182 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 	}
 
 	return app, nil
+}
+
+func (m *Manager) Get(id int64) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	apps, err := m.load()
+	if err != nil {
+		return App{}, err
+	}
+
+	for _, app := range apps {
+		if app.ID == id {
+			return app, nil
+		}
+	}
+
+	return App{}, fmt.Errorf("app %d not found", id)
+}
+
+func (m *Manager) SetCommand(ctx context.Context, id int64, command string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("start command is required")
+	}
+
+	apps, err := m.load()
+	if err != nil {
+		return err
+	}
+
+	index := -1
+	for i := range apps {
+		if apps[i].ID == id {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return fmt.Errorf("app %d not found", id)
+	}
+	if apps[index].Type == "static" {
+		return errors.New("static apps do not use systemd services")
+	}
+
+	apps[index].Command = command
+
+	if err := m.writeRunner(apps[index]); err != nil {
+		return err
+	}
+	if err := m.writeUnit(apps[index]); err != nil {
+		return err
+	}
+	if err := systemctl(ctx, "daemon-reload"); err != nil {
+		return err
+	}
+	if err := systemctl(ctx, "enable", serviceName(id)); err != nil {
+		return err
+	}
+
+	return m.save(apps)
+}
+
+func (m *Manager) Start(ctx context.Context, id int64) error {
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if err := validateRunnable(app); err != nil {
+		return err
+	}
+	return systemctl(ctx, "start", serviceName(id))
+}
+
+func (m *Manager) Stop(ctx context.Context, id int64) error {
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if err := validateRunnable(app); err != nil {
+		return err
+	}
+	return systemctl(ctx, "stop", serviceName(id))
+}
+
+func (m *Manager) Restart(ctx context.Context, id int64) error {
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if err := validateRunnable(app); err != nil {
+		return err
+	}
+	return systemctl(ctx, "restart", serviceName(id))
+}
+
+func (m *Manager) Status(ctx context.Context, id int64) string {
+	app, err := m.Get(id)
+	if err != nil || app.Type == "static" || app.Command == "" {
+		return "not configured"
+	}
+
+	cmd := exec.CommandContext(ctx, "systemctl", "is-active", serviceName(id))
+	out, err := cmd.Output()
+	status := strings.TrimSpace(string(out))
+	if err != nil {
+		if status != "" {
+			return status
+		}
+		return "inactive"
+	}
+
+	return status
+}
+
+func (m *Manager) writeRunner(app App) error {
+	if err := os.MkdirAll(m.runnerDir, 0700); err != nil {
+		return fmt.Errorf("create runner directory: %w", err)
+	}
+
+	path := runnerPath(m.runnerDir, app.ID)
+	content := "#!/usr/bin/env bash\nset -e\n" + app.Command + "\n"
+	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+		return fmt.Errorf("write app runner: %w", err)
+	}
+	if err := os.Chmod(path, 0755); err != nil {
+		return fmt.Errorf("chmod app runner: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) writeUnit(app App) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Unit]\nDescription=Open Go Panel app %d (%s/%s)\nAfter=network-online.target\nWants=network-online.target\n\n", app.ID, app.User, app.Name)
+	fmt.Fprintf(&b, "[Service]\nType=simple\nUser=%s\nWorkingDirectory=%s\n", app.User, app.Root)
+	if app.Port > 0 {
+		fmt.Fprintf(&b, "Environment=PORT=%d\n", app.Port)
+	}
+	fmt.Fprintf(&b, "ExecStart=%s\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target\n", runnerPath(m.runnerDir, app.ID))
+
+	path := filepath.Join(m.serviceDir, serviceName(app.ID))
+	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
+		return fmt.Errorf("write systemd unit: %w", err)
+	}
+
+	return nil
+}
+
+func validateRunnable(app App) error {
+	if app.Type == "static" {
+		return errors.New("static apps do not use systemd services")
+	}
+	if strings.TrimSpace(app.Command) == "" {
+		return errors.New("configure a start command first")
+	}
+	return nil
+}
+
+func systemctl(ctx context.Context, args ...string) error {
+	cmd := exec.CommandContext(ctx, "systemctl", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func serviceName(id int64) string {
+	return fmt.Sprintf("open-go-panel-app-%d.service", id)
+}
+
+func runnerPath(dir string, id int64) string {
+	return filepath.Join(dir, fmt.Sprintf("app-%d.sh", id))
 }
 
 func (m *Manager) userManaged(username string) (bool, error) {
