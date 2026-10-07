@@ -18,6 +18,14 @@ if ! command -v curl >/dev/null 2>&1; then
   apt-get install -y curl
 fi
 
+if ! command -v sshd >/dev/null 2>&1; then
+  echo "Installing OpenSSH server..."
+  apt-get update
+  apt-get install -y openssh-server
+fi
+
+systemctl enable --now ssh
+
 ARCH="$(uname -m)"
 case "${ARCH}" in
   x86_64|amd64)
@@ -88,4 +96,5 @@ echo "URL: http://${IP}:8443"
 echo "Username: admin"
 echo "Password: ${ADMIN_PASSWORD}"
 echo
+echo "SSH/SFTP: enabled through OpenSSH on the server."
 echo "Credentials are stored in: ${ENV_FILE}"
