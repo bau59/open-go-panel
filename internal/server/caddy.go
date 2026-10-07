@@ -16,8 +16,30 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		sites, _ := cfg.Caddy.Sites()
 		config, _ := cfg.Caddy.Config()
 		template, _ := cfg.Caddy.Template()
+		settings, _ := cfg.Caddy.GlobalSettings()
 		selectedID, _ := strconv.ParseInt(r.URL.Query().Get("app"), 10, 64)
-		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, selectedID, ""))
+		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, settings, selectedID, ""))
+	})))
+
+	mux.Handle("POST /caddy/settings", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		settings := panelcaddy.GlobalSettings{
+			HTTPS:       r.FormValue("https") == "1",
+			Compression: r.FormValue("compression") == "1",
+			AccessLog:   r.FormValue("access_log") == "1",
+		}
+		if err := cfg.Caddy.SetGlobalSettings(r.Context(), settings); err != nil {
+			sites, _ := cfg.Caddy.Sites()
+			config, _ := cfg.Caddy.Config()
+			template, _ := cfg.Caddy.Template()
+			current, _ := cfg.Caddy.GlobalSettings()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, current, 0, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
 	})))
 
 	mux.Handle("POST /caddy/template", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +51,8 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			sites, _ := cfg.Caddy.Sites()
 			config, _ := cfg.Caddy.Config()
 			template, _ := cfg.Caddy.Template()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, 0, err.Error()))
+			settings, _ := cfg.Caddy.GlobalSettings()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, settings, 0, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
@@ -40,7 +63,8 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			sites, _ := cfg.Caddy.Sites()
 			config, _ := cfg.Caddy.Config()
 			template, _ := cfg.Caddy.Template()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, 0, err.Error()))
+			settings, _ := cfg.Caddy.GlobalSettings()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, settings, 0, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
@@ -60,7 +84,8 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			sites, _ := cfg.Caddy.Sites()
 			config, _ := cfg.Caddy.Config()
 			template, _ := cfg.Caddy.Template()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, id, err.Error()))
+			settings, _ := cfg.Caddy.GlobalSettings()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, settings, id, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
@@ -111,7 +136,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	})))
 }
 
-func caddyPage(status string, sites []panelcaddy.Site, config, template string, selectedID int64, message string) string {
+func caddyPage(status string, sites []panelcaddy.Site, config, template string, settings panelcaddy.GlobalSettings, selectedID int64, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -119,21 +144,28 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 
 	var rows strings.Builder
 	for _, site := range sites {
+		mode := "Global defaults"
+		if strings.TrimSpace(site.Template) != "" {
+			mode = "Custom"
+		}
 		fmt.Fprintf(&rows, `
 			<tr>
-				<td><strong>%s</strong></td>
+				<td><a href="/caddy?app=%d"><strong>%s</strong></a></td>
 				<td>#%d</td>
 				<td><code>%s</code></td>
-				<td class="actions"><a class="secondary" href="/caddy?app=%d">Edit</a></td>
+				<td><span class="badge">%s</span></td>
+				<td class="actions"><a class="secondary" href="/caddy?app=%d">Settings</a></td>
 			</tr>`,
+			site.AppID,
 			html.EscapeString(site.Domain),
 			site.AppID,
 			html.EscapeString(site.Target()),
+			html.EscapeString(mode),
 			site.AppID,
 		)
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="4" class="empty">No domains configured.</td></tr>`)
+		rows.WriteString(`<tr><td colspan="5" class="empty">No domains configured.</td></tr>`)
 	}
 
 	selectedEditor := ""
@@ -142,55 +174,67 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			if site.AppID != selectedID {
 				continue
 			}
-			value := site.Template
-			mode := "Custom override"
-			if strings.TrimSpace(value) == "" {
-				if site.Kind == "static" || site.Port == 0 {
-					value = `{domain} {
-	encode zstd gzip
-	root * {root}
-	file_server
-	log
-}`
-				} else {
-					value = template
-				}
-				if site.Kind == "static" || site.Port == 0 {
-					mode = "Using static site default"
-				} else {
-					mode = "Using global template"
-				}
+			override := strings.TrimSpace(site.Template)
+			modeText := "This domain inherits the global defaults."
+			buttonText := "Save custom config"
+			if override != "" {
+				modeText = "This domain has a custom Caddy override."
+				buttonText = "Update custom config"
 			}
-			placeholderNote := "Required placeholders: <code>{domain}</code> and <code>{port}</code>."
+			defaultTemplate := cfgTemplateForDisplay(site, template, settings)
+			editorValue := override
+			if editorValue == "" {
+				editorValue = defaultTemplate
+			}
+			placeholderNote := `<code>{domain}</code> and <code>{port}</code>`
 			if site.Kind == "static" || site.Port == 0 {
-				placeholderNote = "Required placeholders: <code>{domain}</code> and <code>{root}</code>."
+				placeholderNote = `<code>{domain}</code> and <code>{root}</code>`
 			}
 			selectedEditor = `
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div>
-					<h2>Domain settings · ` + html.EscapeString(site.Domain) + `</h2>
-					<p class="note" style="margin:6px 0 0">` + mode + `. Save an empty value to return to the global template.</p>
+					<p class="eyebrow" style="margin-bottom:6px">Domain</p>
+					<h2 style="font-size:20px">` + html.EscapeString(site.Domain) + `</h2>
 				</div>
 				<a class="secondary" href="/caddy">Close</a>
 			</div>
-			<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/template">
-				<textarea class="codearea" name="template" spellcheck="false" style="min-height:260px">` + html.EscapeString(value) + `</textarea>
-				<div class="actions" style="justify-content:flex-start;margin-top:12px">
-					<button class="button">Validate & apply to this domain</button>
-				</div>
-			</form>
-			<p class="note" style="margin:10px 0 0">This override affects only <strong>` + html.EscapeString(site.Domain) + `</strong>. ` + placeholderNote + `</p>
+			<div class="domain-summary">
+				<div><span>Application</span><strong>#` + fmt.Sprintf("%d", site.AppID) + `</strong></div>
+				<div><span>Type</span><strong>` + html.EscapeString(defaultString(site.Kind, "proxy")) + `</strong></div>
+				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
+				<div><span>Configuration</span><strong>` + func() string { if override == "" { return "Global defaults" }; return "Custom override" }() + `</strong></div>
+			</div>
+			<p class="sub" style="margin:14px 0 0">` + modeText + ` Common settings such as HTTPS, compression and access logging belong to the global Caddy configuration.</p>
+			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" { return " open" }; return "" }() + `>
+				<summary class="secondary">Advanced: custom config for this domain</summary>
+				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/template" style="margin-top:14px">
+					<textarea class="codearea" name="template" spellcheck="false" style="min-height:240px">` + html.EscapeString(editorValue) + `</textarea>
+					<p class="note" style="margin:8px 0 0">Required placeholders: ` + placeholderNote + `. Empty the field and save to return to global defaults.</p>
+					<div class="actions" style="justify-content:flex-start;margin-top:12px">
+						<button class="button">` + buttonText + `</button>
+					</div>
+				</form>
+			</details>
 		</section>`
 			break
 		}
 	}
 
-	statusClass := ""
+	statusClass := " warn"
 	if status == "active" {
 		statusClass = " ok"
-	} else {
-		statusClass = " warn"
+	}
+
+	switchRow := func(name, label, description string, enabled bool) string {
+		return `
+			<label class="setting-switch">
+				<div>
+					<strong>` + html.EscapeString(label) + `</strong>
+					<span>` + html.EscapeString(description) + `</span>
+				</div>
+				<span class="switch"><input type="checkbox" name="` + html.EscapeString(name) + `" value="1"` + checked(enabled) + `><i></i></span>
+			</label>`
 	}
 
 	return pageHead("Caddy") + `<body>` + appHeader("caddy") + `
@@ -199,50 +243,90 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			<div>
 				<p class="eyebrow">Edge / routing</p>
 				<h1>Caddy</h1>
-				<p class="sub">TLS certificates, domains and reverse proxy routing to applications.</p>
+				<p class="sub">Global web defaults and domain routing. Most projects should inherit the global settings.</p>
 			</div>
 			<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
 		</div>
 		` + alert + `
-		<section class="metrics-grid" style="margin-bottom:16px">
-			<div class="metric"><span>HTTPS</span><strong>Automatic</strong><small>Caddy issues and renews certificates.</small></div>
-			<div class="metric"><span>Compression</span><strong>zstd + gzip</strong><small>Enabled by the recommended template.</small></div>
-			<div class="metric"><span>Access log</span><strong>Enabled</strong><small>Useful for diagnostics and CrowdSec.</small></div>
-			<div class="metric"><span>Proxy target</span><strong>127.0.0.1</strong><small>Applications stay off the public network.</small></div>
-		</section>
-		<section class="panel" style="margin-bottom:16px">
-			<table>
-				<thead><tr><th>Domain</th><th>App</th><th>Target</th><th></th></tr></thead>
-				<tbody>` + rows.String() + `</tbody>
-			</table>
-		</section>
-		` + selectedEditor + `
+
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div>
-					<h2>Default site template</h2>
-					<p class="note" style="margin:6px 0 0">Applied to every connected app. Required placeholders: <code>{domain}</code> and <code>{port}</code>.</p>
+					<h2>Global defaults</h2>
+					<p class="note" style="margin:6px 0 0">These settings apply to every domain unless that domain has an advanced custom override.</p>
 				</div>
-				<form method="post" action="/caddy/template/recommended">
-					<button class="secondary">Recommended template</button>
+			</div>
+			<form method="post" action="/caddy/settings">
+				<div class="settings-list">
+					` + switchRow("https", "Automatic HTTPS", "Issue and renew TLS certificates automatically.", settings.HTTPS) + `
+					` + switchRow("compression", "Response compression", "Enable zstd and gzip for supported clients.", settings.Compression) + `
+					` + switchRow("access_log", "Access log", "Write HTTP access events for diagnostics and CrowdSec.", settings.AccessLog) + `
+				</div>
+				<div class="actions" style="justify-content:flex-start;margin-top:16px"><button class="button">Save global settings</button></div>
+			</form>
+		</section>
+
+		<section class="panel" style="margin-bottom:16px">
+			<div class="panel-pad" style="padding-bottom:10px">
+				<div class="section-title" style="margin-bottom:0">
+					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Open a domain only when it needs configuration different from the global defaults.</p></div>
+				</div>
+			</div>
+			<table>
+				<thead><tr><th>Domain</th><th>App</th><th>Target</th><th>Config</th><th></th></tr></thead>
+				<tbody>` + rows.String() + `</tbody>
+			</table>
+		</section>
+
+		` + selectedEditor + `
+
+		<details class="panel panel-pad advanced-block" style="margin-bottom:16px">
+			<summary class="section-title" style="margin:0;cursor:pointer">
+				<div><h2>Advanced global template</h2><p class="note" style="margin:6px 0 0">Raw Caddy template. Normally you do not need to edit this.</p></div>
+				<span class="secondary">Open</span>
+			</summary>
+			<div style="margin-top:18px">
+				<form method="post" action="/caddy/template">
+					<textarea class="codearea" name="template" spellcheck="false" style="min-height:220px">` + html.EscapeString(template) + `</textarea>
+					<div class="actions" style="justify-content:flex-start;margin-top:12px">
+						<button class="button">Validate & apply raw template</button>
+						<button class="secondary" type="submit" formaction="/caddy/template/recommended">Reset recommended</button>
+					</div>
 				</form>
 			</div>
-			<form method="post" action="/caddy/template">
-				<textarea class="codearea" name="template" spellcheck="false" style="min-height:220px">` + html.EscapeString(template) + `</textarea>
-				<div class="actions" style="justify-content:flex-start;margin-top:12px">
-					<button class="button">Validate & apply template</button>
-				</div>
-			</form>
-			<p class="note" style="margin:10px 0 0">Recommended template keeps HTTPS automatic, enables compression and access logging, and proxies only to the app&apos;s local port.</p>
-		</section>
-		<section class="panel panel-pad">
-			<div class="section-title"><div><h2>Generated Caddyfile</h2><p class="note">Managed by Open Go Panel. Changes are validated before reload.</p></div></div>
-			<pre class="security-output">` + html.EscapeString(config) + `</pre>
-		</section>
+		</details>
+
+		<details class="panel panel-pad advanced-block">
+			<summary class="section-title" style="margin:0;cursor:pointer">
+				<div><h2>Generated config</h2><p class="note" style="margin:6px 0 0">Read-only configuration currently managed by Open Go Panel.</p></div>
+				<span class="secondary">View</span>
+			</summary>
+			<pre class="security-output" style="margin-top:18px">` + html.EscapeString(config) + `</pre>
+		</details>
 	</main>
 </body></html>`
 }
 
+func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panelcaddy.GlobalSettings) string {
+	if site.Kind == "static" || site.Port == 0 {
+		address := "{domain}"
+		if !settings.HTTPS {
+			address = "http://{domain}"
+		}
+		var lines []string
+		lines = append(lines, address+" {")
+		if settings.Compression {
+			lines = append(lines, "\tencode zstd gzip")
+		}
+		lines = append(lines, "\troot * {root}", "\tfile_server")
+		if settings.AccessLog {
+			lines = append(lines, "\tlog")
+		}
+		lines = append(lines, "}")
+		return strings.Join(lines, "\n")
+	}
+	return template
+}
 
 func appDomainBlock(cfg Config, app panelapp.App) string {
 	if cfg.Caddy == nil || (app.Port == 0 && app.Type != "static") {
@@ -253,19 +337,24 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
 	}
 	if ok {
+		mode := "Global defaults"
+		if strings.TrimSpace(site.Template) != "" {
+			mode = "Custom Caddy config"
+		}
 		return `
-			<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-				<div class="section-title" style="margin-bottom:10px">
-					<div>
-						<label style="margin:0">Domain</label>
-						<a href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener"><strong>` + html.EscapeString(site.Domain) + `</strong></a>
-					</div>
+			<div class="app-section">
+				<div class="section-title">
+					<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Public address and reverse proxy routing.</p></div>
 					<span class="status-badge ok">connected</span>
 				</div>
-				<p class="note" style="margin:0 0 10px">HTTPS is handled by Caddy and proxied to <code>` + html.EscapeString(site.Target()) + `</code>.</p>
-				<div class="actions" style="justify-content:flex-start">
+				<div class="domain-summary">
+					<div><span>Domain</span><a href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener"><strong>` + html.EscapeString(site.Domain) + `</strong></a></div>
+					<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
+					<div><span>Caddy config</span><strong>` + mode + `</strong></div>
+				</div>
+				<div class="actions" style="justify-content:flex-start;margin-top:14px">
 					<a class="secondary" href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener">Open site</a>
-					<a class="secondary" href="/caddy">Caddy settings</a>
+					<a class="secondary" href="/caddy?app=` + fmt.Sprintf("%d", app.ID) + `">Domain settings</a>
 					<details>
 						<summary class="secondary">Change domain</summary>
 						<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="inline-popover wide">
@@ -279,12 +368,13 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 			</div>`
 	}
 	return `
-		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-			<label>Domain</label>
+		<div class="app-section">
+			<div class="section-title">
+				<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Connect a public domain. Caddy handles routing and the global web defaults.</p></div>
+			</div>
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="compact-form">
 				<input name="domain" placeholder="example.com" required>
 				<button class="button">Connect domain</button>
 			</form>
-			<p class="note" style="margin:8px 0 0">Point the domain DNS to this server. Caddy will request and renew HTTPS automatically.</p>
 		</div>`
 }
