@@ -299,7 +299,7 @@ func appPage(app panelapp.App, status, message string) string {
 		.meta{display:grid;grid-template-columns:120px 1fr;gap:10px;font-size:14px}
 		.meta span{color:#64748b}
 		.status-row{display:flex;justify-content:space-between;margin-bottom:18px}
-		input{width:100%;height:42px;margin-top:8px;padding:0 12px;border:1px solid #334155;border-radius:9px;background:#0f172a;color:#fff}
+		input{width:100%%;height:42px;margin-top:8px;padding:0 12px;border:1px solid #334155;border-radius:9px;background:#0f172a;color:#fff}
 		button{height:42px;padding:0 15px;border:1px solid #4338ca;border-radius:9px;background:#4f46e5;color:#fff;font-weight:700;cursor:pointer}
 		button.secondary{border-color:#334155;background:#111827}
 		.command-form button{margin-top:10px}
