@@ -389,6 +389,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 				</div>
 				<div class="actions" style="justify-content:flex-start;margin-top:14px">
 					<a class="secondary" href="` + scheme + `://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener">Open site</a>
+					<a class="secondary" href="/caddy/logs?domain=` + url.QueryEscape(site.Domain) + `">Traffic logs</a>
 					<a class="secondary" href="/caddy?app=` + fmt.Sprintf("%d", app.ID) + `">Domain settings</a>
 					<details>
 						<summary class="secondary">Change domain</summary>
@@ -492,7 +493,7 @@ func caddyLogsPage(sites []panelcaddy.Site, domain, kind string, filters logFilt
 				<td><code>%s</code></td>
 				<td><strong>%s</strong><div class="muted">%s</div></td>
 				<td><code>%s</code></td>
-				<td><span class="status-badge%s">%s</span></td>
+				<td><span class="http-code%s">%s</span></td>
 				<td><code>%s</code></td>
 				<td>%s ms<div class="muted">%s</div></td>
 				<td><span class="badge%s">%s</span></td>
