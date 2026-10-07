@@ -50,6 +50,12 @@ fi
 
 systemctl enable --now caddy
 
+if ! command -v setfacl >/dev/null 2>&1; then
+  echo "Installing ACL tools for static sites..."
+  apt-get update
+  apt-get install -y acl
+fi
+
 
 ARCH="$(uname -m)"
 case "${ARCH}" in
