@@ -38,7 +38,7 @@ func Read() (Info, error) {
 	if data, err := os.ReadFile("/etc/os-release"); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(line, "PRETTY_NAME=") {
-				info.OS = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), """)
+				info.OS = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
 				break
 			}
 		}
