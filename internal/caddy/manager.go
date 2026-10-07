@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bau59/open-go-panel/internal/journal"
 	"github.com/bau59/open-go-panel/internal/state"
 )
 
@@ -85,6 +86,11 @@ func (m *Manager) Status(ctx context.Context) string {
 		return "inactive"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func (m *Manager) QueryLogs(ctx context.Context, query journal.Query) (journal.Result, error) {
+	query.Service = "caddy.service"
+	return journal.Read(ctx, query)
 }
 
 func (m *Manager) Sites() ([]Site, error) {
