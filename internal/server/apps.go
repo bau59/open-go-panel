@@ -362,6 +362,7 @@ func appPage(app panelapp.App, status, unit, message string) string {
 		svc := app.Service
 		if svc.Mode == "" {
 			svc.Mode = "form"
+			svc.AutoStart = true
 		}
 		if svc.RunMode == "" {
 			svc.RunMode = defaultRunMode(app.Type)
