@@ -40,7 +40,21 @@ func registerUserRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	})))
 
 	mux.Handle("POST /users/{username}/delete", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := cfg.Users.Delete(r.Context(), r.PathValue("username")); err != nil {
+		username := r.PathValue("username")
+		if cfg.Apps != nil {
+			apps, err := cfg.Apps.List()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			for _, app := range apps {
+				if app.User == username {
+					http.Error(w, "cannot delete user while applications still belong to them", http.StatusConflict)
+					return
+				}
+			}
+		}
+		if err := cfg.Users.Delete(r.Context(), username); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
