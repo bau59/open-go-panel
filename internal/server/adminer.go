@@ -44,9 +44,23 @@ func registerAdminerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		originalHost := req.Host
+
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, "/db-admin")
+		if req.URL.Path == "" {
+			req.URL.Path = "/"
+		}
+		if req.URL.RawPath != "" {
+			req.URL.RawPath = strings.TrimPrefix(req.URL.RawPath, "/db-admin")
+			if req.URL.RawPath == "" {
+				req.URL.RawPath = "/"
+			}
+		}
+
 		originalDirector(req)
+		req.Host = originalHost
 		req.Header.Set("X-Forwarded-Prefix", "/db-admin")
-		req.Header.Set("X-Forwarded-Host", req.Host)
+		req.Header.Set("X-Forwarded-Host", originalHost)
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		location := resp.Header.Get("Location")
