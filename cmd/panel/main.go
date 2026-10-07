@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bau59/open-go-panel/internal/config"
+	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/server"
 )
 
@@ -23,12 +24,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	users := linuxuser.New(logger)
+	if err := users.EnsureGroup(context.Background()); err != nil {
+		logger.Error("ensure managed users group failed", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.New(server.Config{
 			Logger:        logger,
 			AdminUser:     cfg.AdminUser,
 			AdminPassword: cfg.AdminPassword,
+			Users:         users,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
