@@ -558,6 +558,14 @@ func validateServiceConfig(appType string, cfg *ServiceConfig) error {
 	if cfg.LogRetentionDays < 0 || cfg.LogRetentionDays > 3650 {
 		return errors.New("log retention must be between 0 and 3650 days")
 	}
+	if cfg.WorkingDirectory != "" {
+		if !filepath.IsAbs(cfg.WorkingDirectory) || strings.ContainsAny(cfg.WorkingDirectory, "\r\n") {
+			return errors.New("working directory must be an absolute path")
+		}
+	}
+	if strings.ContainsAny(cfg.Path, "\r\n") {
+		return errors.New("PATH must be a single line")
+	}
 
 	switch cfg.RunMode {
 	case "":
@@ -679,7 +687,7 @@ func journalServiceName(id int64) string {
 }
 
 func (m *Manager) StreamLogs(ctx context.Context, id int64, lines int, fn func(string) error) error {
-	if lines <= 0 || lines > 1000 {
+	if lines < 0 || lines > 1000 {
 		lines = 100
 	}
 	app, err := m.Get(id)
