@@ -170,6 +170,7 @@ func appHeader(active string) string {
 		{"overview", "/", "Overview"},
 		{"apps", "/apps", "Apps"},
 		{"users", "/users", "Users"},
+		{"databases", "/databases", "Databases"},
 		{"caddy", "/caddy", "Caddy"},
 		{"security", "/security", "Security"},
 	}
