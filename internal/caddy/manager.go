@@ -220,6 +220,10 @@ func (m *Manager) SetTemplate(ctx context.Context, value string) error {
 	if err := m.validateRendered(ctx, renderSite(value, Site{Domain: "example.com", Port: 8100})); err != nil {
 		return err
 	}
+	previous, err := m.Template()
+	if err != nil {
+		return err
+	}
 	if _, err := m.store.DB().Exec(`
 		INSERT INTO settings(key, value) VALUES('caddy.site_template', ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value
@@ -228,9 +232,20 @@ func (m *Manager) SetTemplate(ctx context.Context, value string) error {
 	}
 	sites, err := m.load()
 	if err != nil {
+		_, _ = m.store.DB().Exec(`
+			INSERT INTO settings(key, value) VALUES('caddy.site_template', ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value
+		`, previous)
 		return err
 	}
-	return m.applyLocked(ctx, sites, value)
+	if err := m.applyLocked(ctx, sites, value); err != nil {
+		_, _ = m.store.DB().Exec(`
+			INSERT INTO settings(key, value) VALUES('caddy.site_template', ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value
+		`, previous)
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) ResetTemplate(ctx context.Context) error {
