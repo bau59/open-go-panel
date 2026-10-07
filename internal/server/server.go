@@ -196,15 +196,14 @@ func (w *statusRecorder) Write(p []byte) (int, error) {
 
 func auditMutations(store *state.Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path == "/login" || r.URL.Path == "/logout" || strings.HasPrefix(r.URL.Path, "/db-admin/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 
-		if r.Method != http.MethodPost {
-			return
-		}
-		if r.URL.Path == "/login" || r.URL.Path == "/logout" || strings.HasPrefix(r.URL.Path, "/db-admin/") {
-			return
-		}
 		status := rec.status
 		if status == 0 {
 			status = http.StatusOK
