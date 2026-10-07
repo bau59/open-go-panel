@@ -58,7 +58,11 @@ mv -f "${TMP_BIN}" "${BIN_PATH}"
 trap - EXIT
 
 mkdir -p "${CONFIG_DIR}" "${STATE_DIR}"
-chmod 0700 "${CONFIG_DIR}" "${STATE_DIR}"
+chmod 0700 "${CONFIG_DIR}"
+chmod 0755 "${STATE_DIR}"
+mkdir -p "${STATE_DIR}/runners" "${STATE_DIR}/env"
+chmod 0755 "${STATE_DIR}/runners"
+chmod 0700 "${STATE_DIR}/env"
 
 if [ ! -f "${ENV_FILE}" ]; then
   ADMIN_PASSWORD="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
