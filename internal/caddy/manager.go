@@ -240,7 +240,11 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	var b strings.Builder
 	b.WriteString("# Managed by Open Go Panel\n\n")
 	for _, site := range sites {
-		b.WriteString(renderSite(template, site))
+		siteTemplate := template
+		if strings.TrimSpace(site.Template) != "" {
+			siteTemplate = site.Template
+		}
+		b.WriteString(renderSite(siteTemplate, site))
 		b.WriteString("\n\n")
 	}
 
