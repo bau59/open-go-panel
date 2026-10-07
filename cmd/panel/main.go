@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"strings"
 
 	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/app"
@@ -64,6 +65,23 @@ func main() {
 	if _, err := caddyManager.Sites(); err != nil {
 		logger.Error("migrate Caddy state failed", "err", err)
 		os.Exit(1)
+	}
+
+	appItems, _ := apps.List()
+	dbItems, _ := databaseManager.List()
+	for _, appItem := range appItems {
+		for _, line := range strings.Split(appItem.Service.Environment, "\n") {
+			parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+			if len(parts) != 2 || parts[0] == "" {
+				continue
+			}
+			for _, dbItem := range dbItems {
+				if parts[1] == dbItem.DSN() {
+					_ = databaseManager.Attach(appItem.ID, dbItem.ID, parts[0])
+					break
+				}
+			}
+		}
 	}
 
 	go func() {
