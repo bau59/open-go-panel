@@ -166,6 +166,15 @@ const baseStyles = `
 	.service-editor>summary{display:inline-flex}
 	.backup-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
 	.backup-row:last-child{border-bottom:0}
+	.list-toolbar{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border)}
+	.list-toolbar input{max-width:420px}
+	.pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-top:1px solid var(--border)}
+	.pager-info{color:var(--muted);font-size:12px}
+	.pager-actions{display:flex;gap:8px}
+	.pager-button{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:#c8d0dc;font-size:12px;font-weight:700}
+	.pager-button.disabled{opacity:.4;pointer-events:none}
+	.log-toolbar{display:grid;grid-template-columns:minmax(200px,1fr) 150px 190px 190px auto;gap:8px;margin-bottom:14px}
+	.log-line{display:block;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.025)}
 	.statline{display:flex;align-items:center;gap:8px;margin-top:22px;color:#89e8bb;font-size:12px;font-weight:750}
 	.statline i{display:block;width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 5px var(--success-soft)}
 	details{position:relative}
@@ -186,11 +195,16 @@ const baseStyles = `
 		.metrics-grid{grid-template-columns:1fr 1fr}
 		.service-grid-3,.service-grid-4,.security-grid,.domain-summary,.app-overview-grid,.health-grid,.service-summary{grid-template-columns:1fr 1fr}
 		.app-form-row-deploy,.app-form-row-db{grid-template-columns:1fr 140px}
+		.log-toolbar{grid-template-columns:1fr 1fr}
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid{grid-template-columns:1fr}
 		.service-form-grid .span-2{grid-column:auto}
 		.setting-switch{align-items:flex-start}
+		.list-toolbar{align-items:stretch;flex-direction:column}
+		.list-toolbar input{max-width:none}
+		.pager{align-items:flex-start;flex-direction:column}
+		.log-toolbar{grid-template-columns:1fr}
 	}
 `
 
