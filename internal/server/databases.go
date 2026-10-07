@@ -4,17 +4,22 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/dbmanager"
+	"github.com/bau59/open-go-panel/internal/systeminfo"
 )
 
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	mux.Handle("GET /databases", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		items, _ := cfg.Databases.List()
-		writeHTML(w, cfg.Logger, http.StatusOK, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, ""))
+		mysqlConfig, _ := cfg.Databases.MySQLConfig()
+		info, _ := systeminfo.Read()
+		recommended := cfg.Databases.RecommendedMySQLConfig(info.MemoryTotal, info.CPUs)
+		writeHTML(w, cfg.Logger, http.StatusOK, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, mysqlConfig, recommended, ""))
 	})))
 
 	mux.Handle("POST /databases/install", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +30,7 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		engine := strings.TrimSpace(r.FormValue("engine"))
 		if err := cfg.Databases.Install(r.Context(), engine); err != nil {
 			items, _ := cfg.Databases.List()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, mustMySQLConfig(cfg), recommendedMySQLConfig(cfg), err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
@@ -44,7 +49,35 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		)
 		if err != nil {
 			items, _ := cfg.Databases.List()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, mustMySQLConfig(cfg), recommendedMySQLConfig(cfg), err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/mysql/config", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Databases.ApplyMySQLConfig(r.Context(), r.FormValue("config")); err != nil {
+			items, _ := cfg.Databases.List()
+			mysqlConfig, _ := cfg.Databases.MySQLConfig()
+			info, _ := systeminfo.Read()
+			recommended := cfg.Databases.RecommendedMySQLConfig(info.MemoryTotal, info.CPUs)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, mysqlConfig, recommended, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/mysql/config/recommended", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		info, _ := systeminfo.Read()
+		config := cfg.Databases.RecommendedMySQLConfig(info.MemoryTotal, info.CPUs)
+		if err := cfg.Databases.ApplyMySQLConfig(r.Context(), config); err != nil {
+			items, _ := cfg.Databases.List()
+			current, _ := cfg.Databases.MySQLConfig()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, current, config, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
@@ -58,14 +91,14 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		if err := cfg.Databases.Delete(r.Context(), id); err != nil {
 			items, _ := cfg.Databases.List()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, databasesPage(cfg.Databases.Status(r.Context()), cfg.Adminer.Status(r.Context()), items, mustMySQLConfig(cfg), recommendedMySQLConfig(cfg), err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 }
 
-func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items []dbmanager.Database, message string) string {
+func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items []dbmanager.Database, mysqlConfig, recommendedMySQL, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -101,6 +134,16 @@ func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items 
 
 	var rows strings.Builder
 	for _, item := range items {
+		adminerURL := "/db-admin/"
+		if item.Engine == "mysql" {
+			adminerURL += "?server=" + url.QueryEscape("127.0.0.1") + "&username=" + url.QueryEscape(item.User) + "&db=" + url.QueryEscape(item.Name)
+		} else if item.Engine == "postgres" {
+			adminerURL += "?pgsql=" + url.QueryEscape("127.0.0.1") + "&username=" + url.QueryEscape(item.User) + "&db=" + url.QueryEscape(item.Name)
+		}
+		openAdminer := ""
+		if adminerStatus.Active {
+			openAdminer = `<a class="secondary" href="` + html.EscapeString(adminerURL) + `" target="_blank" rel="noopener">Open in Adminer</a>`
+		}
 		fmt.Fprintf(&rows, `
 		<tr>
 			<td><strong>%s</strong><div class="muted">#%d</div></td>
@@ -109,6 +152,7 @@ func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items 
 			<td><code>%s</code></td>
 			<td>
 				<div class="actions">
+					` + openAdminer + `
 					<details>
 						<summary class="secondary">Connection</summary>
 						<div class="inline-popover wide"><code style="word-break:break-all">%s</code></div>
@@ -151,6 +195,38 @@ func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items 
 			<div class="metric"><span>Network</span><strong>localhost</strong><small>Not exposed publicly by default</small></div>
 		</section>
 
+
+		` + func() string {
+			if !status.MySQLInstalled {
+				return ""
+			}
+			current := mysqlConfig
+			if strings.TrimSpace(current) == "" {
+				current = recommendedMySQL
+			}
+			return `
+		<section class="panel panel-pad" style="margin-bottom:16px">
+			<div class="section-title">
+				<div>
+					<h2>MySQL server settings</h2>
+					<p class="note" style="margin:6px 0 0">Managed file: <code>/etc/mysql/mysql.conf.d/99-open-go-panel.cnf</code>. Changes are validated before MySQL restart.</p>
+				</div>
+			</div>
+			<div class="actions" style="justify-content:flex-start;margin-bottom:12px">
+				<form method="post" action="/databases/mysql/config/recommended" onsubmit="return confirm('Apply recommended MySQL settings and restart MySQL?')">
+					<button class="secondary">Apply recommended for this server</button>
+				</form>
+			</div>
+			<form method="post" action="/databases/mysql/config">
+				<textarea class="codearea" name="config" spellcheck="false" style="min-height:360px">` + html.EscapeString(current) + `</textarea>
+				<div class="actions" style="justify-content:flex-start;margin-top:12px">
+					<button class="button">Validate & restart MySQL</button>
+				</div>
+			</form>
+			<p class="note" style="margin:10px 0 0">The preset is conservative for a shared server: local bind, InnoDB buffer pool sized from RAM, bounded connections, slow query log and safe durability.</p>
+		</section>`
+		}() + `
+
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div>
@@ -184,4 +260,21 @@ func databasesPage(status dbmanager.Status, adminerStatus adminer.Status, items 
 		</section>
 	</main>
 </body></html>`
+}
+
+
+func mustMySQLConfig(cfg Config) string {
+	if cfg.Databases == nil {
+		return ""
+	}
+	v, _ := cfg.Databases.MySQLConfig()
+	return v
+}
+
+func recommendedMySQLConfig(cfg Config) string {
+	if cfg.Databases == nil {
+		return ""
+	}
+	info, _ := systeminfo.Read()
+	return cfg.Databases.RecommendedMySQLConfig(info.MemoryTotal, info.CPUs)
 }
