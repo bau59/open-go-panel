@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/bau59/open-go-panel/internal/linuxuser"
 )
 
 const (
@@ -20,6 +22,7 @@ type Config struct {
 	Logger        *slog.Logger
 	AdminUser     string
 	AdminPassword string
+	Users         *linuxuser.Manager
 }
 
 type sessionStore struct {
@@ -105,6 +108,10 @@ func New(cfg Config) http.Handler {
 	mux.Handle("GET /", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeHTML(w, cfg.Logger, http.StatusOK, dashboardPage())
 	})))
+
+	if cfg.Users != nil {
+		registerUserRoutes(mux, store, cfg)
+	}
 
 	return mux
 }
@@ -250,7 +257,7 @@ func dashboardPage() string {
 		h1{margin:0;font-size:32px}
 		.sub{margin:8px 0 30px;color:#94a3b8}
 		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
-		.card{min-height:140px;padding:22px;border:1px solid #253047;border-radius:16px;background:#111827}
+		.card{display:block;min-height:140px;padding:22px;border:1px solid #253047;border-radius:16px;background:#111827;color:inherit;text-decoration:none}
 		.card h2{margin:0 0 10px;font-size:16px}
 		.card p{margin:0;color:#64748b;font-size:14px;line-height:1.5}
 		.status{display:inline-flex;align-items:center;gap:8px;margin-top:20px;color:#86efac;font-size:13px;font-weight:700}
@@ -267,7 +274,7 @@ func dashboardPage() string {
 		<p class="sub">The panel is installed and running.</p>
 		<section class="grid">
 			<article class="card"><h2>Sites</h2><p>Site and Caddy management will be added next.</p></article>
-			<article class="card"><h2>Users</h2><p>Linux user management will be added next.</p></article>
+			<a class="card" href="/users"><h2>Users</h2><p>Create Linux users, manage SSH keys, passwords and access.</p></a>
 			<article class="card"><h2>Databases</h2><p>Database installation and management will be added next.</p></article>
 			<article class="card"><h2>Terminal</h2><p>Web terminal access will be added next.</p></article>
 		</section>
