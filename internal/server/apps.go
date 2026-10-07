@@ -30,7 +30,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appDomainBlock(cfg, app), databaseBlock(cfg, app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -724,6 +724,67 @@ func recommendedServiceConfig(app panelapp.App, info systeminfo.Info) panelapp.S
 	}
 }
 
+
+func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
+	health := cfg.Apps.RuntimeHealth(r.Context(), app.ID)
+
+	statusBadge := func(ok bool, label string) string {
+		className := "warn"
+		state := "down"
+		if ok {
+			className = "ok"
+			state = "ok"
+		}
+		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong>` + state + `</strong><small><span class="status-badge ` + className + `">` + state + `</span></small></div>`
+	}
+
+	processOK := health.ProcessStatus == "active"
+	portOK := health.PortListening
+	httpOK := health.HTTPReachable
+
+	domainOK := false
+	domainLabel := "Domain / TLS"
+	domainDetail := "not connected"
+	if cfg.Caddy != nil {
+		if site, ok, _ := cfg.Caddy.SiteForApp(app.ID); ok {
+			domainDetail = site.Domain
+			client := &http.Client{Timeout: 4 * time.Second}
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://"+site.Domain+"/", nil)
+			if err == nil {
+				resp, err := client.Do(req)
+				if err == nil {
+					domainOK = true
+					domainDetail = site.Domain + " · HTTP " + strconv.Itoa(resp.StatusCode)
+					_ = resp.Body.Close()
+				}
+			}
+		}
+	}
+
+	localHTTP := statusBadge(httpOK, "Local HTTP")
+	if app.Port <= 0 {
+		localHTTP = `<div class="metric"><span>Local HTTP</span><strong>n/a</strong><small>no internal port</small></div>`
+	}
+	portBlock := statusBadge(portOK, "Port")
+	if app.Port <= 0 {
+		portBlock = `<div class="metric"><span>Port</span><strong>n/a</strong><small>not required</small></div>`
+	}
+
+	domainClass := "warn"
+	domainState := "down"
+	if domainOK {
+		domainClass = "ok"
+		domainState = "ok"
+	}
+	return `
+		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Process, listener, local HTTP and public HTTPS are checked independently.</p></div></div>
+			<div class="metrics-grid">
+				` + statusBadge(processOK, "Process") + portBlock + localHTTP + `
+				<div class="metric"><span>` + domainLabel + `</span><strong>` + domainState + `</strong><small>` + html.EscapeString(domainDetail) + ` · <span class="status-badge ` + domainClass + `">` + domainState + `</span></small></div>
+			</div>
+		</div>`
+}
 
 func databaseBlock(cfg Config, app panelapp.App) string {
 	if cfg.Databases == nil || app.Type == "static" {
