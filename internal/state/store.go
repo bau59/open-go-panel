@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -97,6 +98,8 @@ CREATE TABLE IF NOT EXISTS domains (
 	app_id INTEGER PRIMARY KEY,
 	domain TEXT NOT NULL UNIQUE,
 	port INTEGER NOT NULL,
+	root TEXT NOT NULL DEFAULT '',
+	kind TEXT NOT NULL DEFAULT 'proxy',
 	template TEXT NOT NULL DEFAULT '',
 	FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE
 );
@@ -139,6 +142,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate sqlite state: %w", err)
+	}
+	for _, statement := range []string{
+		"ALTER TABLE domains ADD COLUMN root TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE domains ADD COLUMN kind TEXT NOT NULL DEFAULT 'proxy'",
+	} {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return fmt.Errorf("migrate sqlite state: %w", err)
+		}
 	}
 	return nil
 }
