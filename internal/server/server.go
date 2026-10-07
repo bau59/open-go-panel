@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -204,7 +205,7 @@ func writeHTML(w http.ResponseWriter, logger *slog.Logger, status int, body stri
 func loginPage(message string) string {
 	messageHTML := ""
 	if message != "" {
-		messageHTML = `<div class="alert">` + message + `</div>`
+		messageHTML = `<div class="alert">` + html.EscapeString(message) + `</div>`
 	}
 
 	return `<!doctype html>
@@ -213,77 +214,69 @@ func loginPage(message string) string {
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Login · Open Go Panel</title>
-	<style>
-		*{box-sizing:border-box}
-		body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020;color:#e5e7eb;font-family:system-ui,-apple-system,sans-serif}
-		.card{width:min(420px,calc(100% - 32px));padding:32px;border:1px solid #27324a;border-radius:18px;background:#111827;box-shadow:0 24px 80px rgba(0,0,0,.35)}
-		h1{margin:0 0 8px;font-size:28px}
-		p{margin:0 0 28px;color:#94a3b8}
-		label{display:block;margin:16px 0 7px;font-size:14px;color:#cbd5e1}
-		input{width:100%;height:44px;padding:0 12px;border:1px solid #334155;border-radius:10px;background:#0f172a;color:#fff;outline:none}
-		input:focus{border-color:#6366f1}
-		button{width:100%;height:44px;margin-top:22px;border:0;border-radius:10px;background:#6366f1;color:white;font-weight:700;cursor:pointer}
-		.alert{margin:0 0 18px;padding:10px 12px;border:1px solid #7f1d1d;border-radius:10px;background:#450a0a;color:#fecaca;font-size:14px}
-		.brand{display:inline-flex;margin-bottom:22px;padding:6px 10px;border-radius:999px;background:#1e293b;color:#cbd5e1;font-size:12px;font-weight:700}
+	<style>` + baseStyles + `
+		.login-screen{min-height:100vh;display:grid;place-items:center;padding:24px}
+		.login-card{width:min(430px,100%);padding:30px;border:1px solid var(--border);border-radius:24px;background:linear-gradient(180deg,rgba(21,27,39,.96),rgba(14,19,28,.98));box-shadow:0 30px 80px rgba(0,0,0,.34)}
+		.login-brand{display:flex;align-items:center;gap:11px;margin-bottom:26px;font-weight:780}
+		.login-card h1{font-size:29px}
+		.login-card .sub{margin-bottom:24px}
+		.login-card label{margin-top:15px}
+		.login-card .button{width:100%;margin-top:20px}
 	</style>
 </head>
 <body>
-	<main class="card">
-		<div class="brand">OPEN GO PANEL</div>
-		<h1>Server login</h1>
-		<p>Sign in to manage this server.</p>
-		` + messageHTML + `
-		<form method="post" action="/login" autocomplete="on">
-			<label for="username">Username</label>
-			<input id="username" name="username" type="text" autocomplete="username" required autofocus>
-			<label for="password">Password</label>
-			<input id="password" name="password" type="password" autocomplete="current-password" required>
-			<button type="submit">Sign in</button>
-		</form>
-	</main>
+	<div class="login-screen">
+		<main class="login-card">
+			<div class="login-brand"><span class="brand-mark">OG</span><span>Open Go Panel</span></div>
+			<h1>Server login</h1>
+			<p class="sub">Sign in to manage this server.</p>
+			` + messageHTML + `
+			<form method="post" action="/login" autocomplete="on">
+				<label for="username">Username</label>
+				<input id="username" name="username" type="text" autocomplete="username" required autofocus>
+				<label for="password">Password</label>
+				<input id="password" name="password" type="password" autocomplete="current-password" required>
+				<button class="button" type="submit">Sign in</button>
+			</form>
+		</main>
+	</div>
 </body>
 </html>`
 }
 
 func dashboardPage() string {
-	return `<!doctype html>
-<html lang="en">
-<head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Open Go Panel</title>
-	<style>
-		*{box-sizing:border-box}
-		body{margin:0;background:#0b1020;color:#e5e7eb;font-family:system-ui,-apple-system,sans-serif}
-		header{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid #1e293b;background:#0f172a}
-		.brand{font-weight:800;letter-spacing:.02em}
-		button{padding:9px 14px;border:1px solid #334155;border-radius:9px;background:#111827;color:#cbd5e1;cursor:pointer}
-		main{max-width:1180px;margin:0 auto;padding:42px 28px}
-		h1{margin:0;font-size:32px}
-		.sub{margin:8px 0 30px;color:#94a3b8}
-		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
-		.card{display:block;min-height:140px;padding:22px;border:1px solid #253047;border-radius:16px;background:#111827;color:inherit;text-decoration:none}
-		.card h2{margin:0 0 10px;font-size:16px}
-		.card p{margin:0;color:#64748b;font-size:14px;line-height:1.5}
-		.status{display:inline-flex;align-items:center;gap:8px;margin-top:20px;color:#86efac;font-size:13px;font-weight:700}
-		.dot{width:8px;height:8px;border-radius:50%;background:#22c55e}
-	</style>
-</head>
-<body>
-	<header>
-		<div class="brand">Open Go Panel</div>
-		<form method="post" action="/logout"><button type="submit">Logout</button></form>
-	</header>
-	<main>
-		<h1>Server overview</h1>
-		<p class="sub">The panel is installed and running.</p>
-		<section class="grid">
-			<a class="card" href="/apps"><h2>Apps</h2><p>Create applications, assign owners and allocate internal ports.</p></a>
-			<a class="card" href="/users"><h2>Users</h2><p>Create Linux users, manage SSH keys, passwords and access.</p></a>
-			<article class="card"><h2>Databases</h2><p>Database installation and management will be added next.</p></article>
-			<article class="card"><h2>Terminal</h2><p>Web terminal access will be added next.</p></article>
+	return pageHead("Overview") + `<body>` + appHeader("overview") + `
+	<main class="shell">
+		<div class="page-head">
+			<div>
+				<p class="eyebrow">Server</p>
+				<h1>Overview</h1>
+				<p class="sub">Manage applications, Linux users and server services from one place.</p>
+			</div>
+		</div>
+		<section class="grid cards">
+			<a class="card" href="/apps">
+				<div class="card-icon">APP</div>
+				<h2>Applications</h2>
+				<p>Create apps, assign owners, manage ports and systemd services.</p>
+			</a>
+			<a class="card" href="/users">
+				<div class="card-icon">USR</div>
+				<h2>Users</h2>
+				<p>Manage Linux accounts, passwords and SSH access.</p>
+			</a>
+			<article class="card">
+				<div class="card-icon">DB</div>
+				<h2>Databases</h2>
+				<p>Database installation and management will be added next.</p>
+			</article>
+			<article class="card">
+				<div class="card-icon">TTY</div>
+				<h2>Terminal</h2>
+				<p>Browser terminal access will be added next.</p>
+			</article>
 		</section>
-		<div class="status"><span class="dot"></span>Open Go Panel is running</div>
+		<div class="statline"><i></i>Open Go Panel is running</div>
 	</main>
 </body>
 </html>`
