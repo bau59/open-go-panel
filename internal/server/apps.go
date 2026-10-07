@@ -931,7 +931,7 @@ func deployBlock(cfg Config, app panelapp.App) string {
 		rollbackDisabled = " disabled"
 	}
 	return `
-		<div class="app-section">
+		<section class="panel panel-pad app-card app-card-wide">
 			<div class="section-title">
 				<div><h2>Deploy</h2><p class="note" style="margin:6px 0 0">Pull a Git branch into the app directory, prepare dependencies and restart the service.</p></div>
 				<span class="badge">` + html.EscapeString(deployed) + `</span>
@@ -948,7 +948,7 @@ func deployBlock(cfg Config, app panelapp.App) string {
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/rollback" onsubmit="return confirm('Rollback to the previous deployed commit?')"><button class="secondary"` + rollbackDisabled + `>Rollback</button></form>
 			</div>
 			<p class="note" style="margin:10px 0 0">Current: <code>` + html.EscapeString(defaultString(current, "—")) + `</code> · Previous: <code>` + html.EscapeString(defaultString(previous, "—")) + `</code></p>
-		</div>`
+		</section>`
 }
 
 func defaultString(value, fallback string) string {
@@ -1028,12 +1028,12 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<div class="app-section">
+		<section class="panel panel-pad app-card app-card-wide">
 			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Each layer is checked independently. HTTP 5xx is treated as unhealthy.</p></div></div>
 			<div class="health-grid">
 				` + processCard + portCard + localHTTPCard + publicCard + `
 			</div>
-		</div>`
+		</section>`
 }
 
 func databaseBlock(cfg Config, app panelapp.App) string {
@@ -1093,7 +1093,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<div class="app-section">
+		<section class="panel panel-pad app-card">
 			<div class="section-title" style="margin-bottom:10px">
 				<div>
 					<label style="margin:0">Databases</label>
@@ -1102,5 +1102,5 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 				<a class="secondary" href="/databases">Manage databases</a>
 			</div>
 			` + current.String() + create + `
-		</div>`
+		</section>`
 }
