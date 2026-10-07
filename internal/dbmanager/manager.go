@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -457,6 +458,36 @@ func (m *Manager) BackupAll(ctx context.Context, keep int) error {
 	}
 	return nil
 }
+func (m *Manager) RunScheduledBackupIfDue(ctx context.Context, now time.Time) (bool, error) {
+	schedule := m.BackupSchedule()
+	if !schedule.Enabled {
+		return false, nil
+	}
+	now = now.UTC()
+	if now.Hour() < schedule.HourUTC {
+		return false, nil
+	}
+	today := now.Format("2006-01-02")
+	var last string
+	err := m.store.DB().QueryRow(`SELECT value FROM settings WHERE key = 'db.backup_last_date'`).Scan(&last)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if last == today {
+		return false, nil
+	}
+	if err := m.BackupAll(ctx, schedule.Keep); err != nil {
+		return false, err
+	}
+	if _, err := m.store.DB().Exec(`
+		INSERT INTO settings(key, value) VALUES('db.backup_last_date', ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value
+	`, today); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
 
 func (m *Manager) MySQLMetrics(ctx context.Context) (MySQLMetrics, error) {
 	if _, err := exec.LookPath("mysql"); err != nil {
