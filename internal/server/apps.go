@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"strings"
 	"strconv"
+	"strings"
+	"time"
 
 	panelapp "github.com/bau59/open-go-panel/internal/app"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/systeminfo"
 )
 
 func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
@@ -67,14 +69,25 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		}
 
 		restartSec, _ := strconv.Atoi(r.FormValue("restart_sec"))
+		timeoutStopSec, _ := strconv.Atoi(r.FormValue("timeout_stop_sec"))
+		limitNOFILE, _ := strconv.Atoi(r.FormValue("limit_nofile"))
+		tasksMax, _ := strconv.Atoi(r.FormValue("tasks_max"))
+		logRetentionDays, _ := strconv.Atoi(r.FormValue("log_retention_days"))
 		serviceCfg := panelapp.ServiceConfig{
 			Mode:        strings.TrimSpace(r.FormValue("mode")),
 			RunMode:     strings.TrimSpace(r.FormValue("run_mode")),
 			Command:     strings.TrimSpace(r.FormValue("command")),
 			Restart:     strings.TrimSpace(r.FormValue("restart")),
-			RestartSec:  restartSec,
+			RestartSec:       restartSec,
+			TimeoutStopSec:   timeoutStopSec,
+			WorkingDirectory: strings.TrimSpace(r.FormValue("working_directory")),
+			Path:             strings.TrimSpace(r.FormValue("path")),
 			CPUQuota:    strings.TrimSpace(r.FormValue("cpu_quota")),
-			MemoryMax:   strings.TrimSpace(r.FormValue("memory_max")),
+			MemoryMax:        strings.TrimSpace(r.FormValue("memory_max")),
+			LimitNOFILE:      limitNOFILE,
+			TasksMax:         tasksMax,
+			LogRetentionDays: logRetentionDays,
+			AutoStart:        r.FormValue("auto_start") == "1",
 			Environment: r.FormValue("environment"),
 			RawUnit:     r.FormValue("raw_unit"),
 		}
@@ -89,6 +102,27 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			return
 		}
 
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+
+	mux.Handle("POST /apps/{id}/service/auto", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		app, err := cfg.Apps.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		info, _ := systeminfo.Read()
+		auto := recommendedServiceConfig(app, info)
+		if err := cfg.Apps.SetServiceConfig(r.Context(), id, auto); err != nil {
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error()))
+			return
+		}
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
@@ -108,6 +142,45 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			logs = err.Error()
 		}
 		writeHTML(w, cfg.Logger, http.StatusOK, appLogsPage(app, logs))
+	})))
+
+	mux.Handle("GET /apps/{id}/logs/stream", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if _, err := cfg.Apps.Get(id); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		_, _ = fmt.Fprint(w, ": connected\n\n")
+		flusher.Flush()
+
+		err = cfg.Apps.StreamLogs(r.Context(), id, 0, func(line string) error {
+			line = strings.ReplaceAll(strings.ReplaceAll(line, "\r", ""), "\n", "")
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
+				return err
+			}
+			flusher.Flush()
+			return nil
+		})
+		if err != nil && r.Context().Err() == nil {
+			cfg.Logger.Warn("log stream stopped", "app_id", id, "err", err)
+		}
 	})))
 
 	for _, action := range []struct {
@@ -299,6 +372,24 @@ func appPage(app panelapp.App, status, unit, message string) string {
 		if svc.RestartSec == 0 {
 			svc.RestartSec = 3
 		}
+		if svc.TimeoutStopSec == 0 {
+			svc.TimeoutStopSec = 15
+		}
+		if svc.WorkingDirectory == "" {
+			svc.WorkingDirectory = app.Root
+		}
+		if svc.Path == "" {
+			svc.Path = defaultServicePath(app)
+		}
+		if svc.LimitNOFILE == 0 {
+			svc.LimitNOFILE = 65535
+		}
+		if svc.TasksMax == 0 {
+			svc.TasksMax = 256
+		}
+		if svc.LogRetentionDays == 0 {
+			svc.LogRetentionDays = 7
+		}
 
 		rawUnit := svc.RawUnit
 		if rawUnit == "" {
@@ -311,8 +402,13 @@ func appPage(app panelapp.App, status, unit, message string) string {
 				<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
 			</div>
 
+			<div class="actions" style="justify-content:flex-start;margin-bottom:16px">
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service/auto"><button class="secondary">Apply server defaults</button></form>
+			</div>
+
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/service">
 				<input type="hidden" name="mode" value="form">
+				<input type="hidden" name="auto_start" value="0">
 				<div class="grid" style="grid-template-columns:1fr 1fr">
 					<div>
 						<label>Run mode</label>
@@ -328,17 +424,37 @@ func appPage(app panelapp.App, status, unit, message string) string {
 					</div>
 				</div>
 
+				<div class="grid" style="grid-template-columns:1fr 1fr;margin-top:14px">
+					<div>
+						<label>Working directory</label>
+						<input name="working_directory" value="` + html.EscapeString(svc.WorkingDirectory) + `">
+					</div>
+					<div>
+						<label>PATH</label>
+						<input name="path" value="` + html.EscapeString(svc.Path) + `">
+					</div>
+				</div>
+
 				<div style="margin-top:14px">
 					<label>Custom command</label>
 					<input name="command" value="` + html.EscapeString(svc.Command) + `" placeholder="./app, go run ., npm run dev">
 					<p class="note" style="margin:6px 0 0">Used only when Run mode = Custom.</p>
 				</div>
 
-				<div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-top:14px">
+				<div class="grid service-grid-3" style="margin-top:14px">
 					<div><label>CPU quota</label><input name="cpu_quota" value="` + html.EscapeString(svc.CPUQuota) + `" placeholder="100%"></div>
 					<div><label>Memory max</label><input name="memory_max" value="` + html.EscapeString(svc.MemoryMax) + `" placeholder="512M"></div>
 					<div><label>Restart delay</label><input name="restart_sec" type="number" min="0" max="300" value="` + fmt.Sprintf("%d", svc.RestartSec) + `"></div>
 				</div>
+
+				<div class="grid service-grid-4" style="margin-top:14px">
+					<div><label>LimitNOFILE</label><input name="limit_nofile" type="number" min="0" value="` + fmt.Sprintf("%d", svc.LimitNOFILE) + `"></div>
+					<div><label>TasksMax</label><input name="tasks_max" type="number" min="0" value="` + fmt.Sprintf("%d", svc.TasksMax) + `"></div>
+					<div><label>Stop timeout</label><input name="timeout_stop_sec" type="number" min="0" max="3600" value="` + fmt.Sprintf("%d", svc.TimeoutStopSec) + `"></div>
+					<div><label>Log retention, days</label><input name="log_retention_days" type="number" min="0" max="3650" value="` + fmt.Sprintf("%d", svc.LogRetentionDays) + `"></div>
+				</div>
+
+				<label class="check-row" style="margin-top:14px"><input type="checkbox" name="auto_start" value="1"` + checked(svc.AutoStart) + `><span>Start automatically on boot</span></label>
 
 				<div style="margin-top:14px">
 					<label>Environment</label>
@@ -400,11 +516,22 @@ func appLogsPage(app panelapp.App, logs string) string {
 	return pageHead(app.Name+" logs") + `<body>` + appHeader("apps") + `
 	<main class="shell">
 		<div class="page-head">
-			<div><p class="eyebrow">Journal</p><h1>` + html.EscapeString(app.Name) + ` logs</h1><p class="sub">Last 300 lines from ` + fmt.Sprintf("open-go-panel-app-%d.service", app.ID) + `.</p></div>
-			<div class="actions"><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `">App</a><a class="button" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">Refresh</a></div>
+			<div><p class="eyebrow">Journal</p><h1>` + html.EscapeString(app.Name) + ` logs</h1><p class="sub">Live systemd journal stream.</p></div>
+			<div class="actions"><span class="status-badge ok">live</span><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `">App</a><button class="secondary" type="button" onclick="document.getElementById('logbox').textContent=''">Clear view</button></div>
 		</div>
-		<pre class="logbox">` + html.EscapeString(logs) + `</pre>
+		<pre class="logbox" id="logbox">` + html.EscapeString(logs) + `</pre>
 	</main>
+	<script>
+		const box = document.getElementById('logbox');
+		box.scrollTop = box.scrollHeight;
+		const source = new EventSource('/apps/` + fmt.Sprintf("%d", app.ID) + `/logs/stream');
+		source.onmessage = (event) => {
+			const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 32;
+			if (box.textContent && !box.textContent.endsWith('\n')) box.textContent += '\n';
+			box.textContent += event.data + '\n';
+			if (stick) box.scrollTop = box.scrollHeight;
+		};
+	</script>
 </body></html>`
 }
 
@@ -436,6 +563,7 @@ func runModeOptions(appType, current string) string {
 	if appType == "go" {
 		options = append([]struct{ value, label string }{
 			{"go-build", "Go: build + run binary"},
+			{"go-run", "Go: go run ."},
 			{"go-air", "Go: Air live reload"},
 		}, options...)
 	}
@@ -452,4 +580,56 @@ func runModeOptions(appType, current string) string {
 		)
 	}
 	return b.String()
+}
+
+func checked(v bool) string {
+	if v {
+		return " checked"
+	}
+	return ""
+}
+
+func defaultServicePath(app panelapp.App) string {
+	if app.Type == "go" {
+		return "/home/" + app.User + "/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+	}
+	return "/usr/local/bin:/usr/bin:/bin"
+}
+
+func recommendedServiceConfig(app panelapp.App, info systeminfo.Info) panelapp.ServiceConfig {
+	cpuQuota := "100%"
+	if info.CPUs >= 4 {
+		cpuQuota = "200%"
+	}
+
+	memoryMB := int(info.MemoryTotal / 1024 / 1024 / 4)
+	if memoryMB < 256 {
+		memoryMB = 256
+	}
+	if memoryMB > 2048 {
+		memoryMB = 2048
+	}
+
+	runMode := app.Service.RunMode
+	if runMode == "" {
+		runMode = defaultRunMode(app.Type)
+	}
+
+	return panelapp.ServiceConfig{
+		Mode:             "form",
+		RunMode:          runMode,
+		Command:          app.Service.Command,
+		WorkingDirectory: app.Root,
+		Path:             defaultServicePath(app),
+		Restart:          "on-failure",
+		RestartSec:       3,
+		TimeoutStopSec:   15,
+		CPUQuota:         cpuQuota,
+		MemoryMax:        fmt.Sprintf("%dM", memoryMB),
+		LimitNOFILE:      65535,
+		TasksMax:         256,
+		LogRetentionDays: 7,
+		AutoStart:        true,
+		Environment:      app.Service.Environment,
+	}
 }
