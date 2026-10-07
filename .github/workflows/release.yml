@@ -40,8 +40,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Download modules
-        run: go mod download
+      - name: Resolve modules
+        run: go mod tidy
 
       - name: Build
         env:
