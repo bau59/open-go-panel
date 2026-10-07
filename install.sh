@@ -9,6 +9,16 @@ STATE_DIR="/var/lib/open-go-panel"
 ENV_FILE="${CONFIG_DIR}/open-go-panel.env"
 SERVICE_FILE="/etc/systemd/system/open-go-panel.service"
 
+# install.sh is intentionally non-destructive.
+# It installs or updates the panel binary and service while preserving:
+#   /etc/open-go-panel
+#   /var/lib/open-go-panel
+#   Linux users and home directories
+#   MySQL/PostgreSQL data
+#   Caddy state/certificates
+#   CrowdSec state
+#   UFW rules
+
 if [ "${EUID}" -ne 0 ]; then
   echo "Run this installer as root."
   exit 1
@@ -122,6 +132,7 @@ fi
 
 echo
 echo "Open Go Panel installed/updated."
+echo "Persistent panel data was preserved."
 echo "URL: http://${IP}:8443"
 echo "Username: admin"
 echo "Password: ${ADMIN_PASSWORD}"
