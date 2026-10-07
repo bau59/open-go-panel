@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +27,45 @@ type Status struct {
 	FirewallStatus  string
 	WebProtection   bool
 }
+
+type Decision struct {
+	ID         string
+	Source     string
+	Scope      string
+	Value      string
+	Reason     string
+	Action     string
+	Country    string
+	AS         string
+	Expiration string
+	AlertID    string
+}
+
+type Alert struct {
+	ID        string
+	Value     string
+	Scope     string
+	Reason    string
+	Country   string
+	AS        string
+	Decisions string
+	CreatedAt string
+	Kind      string
+}
+
+type AllowEntry struct {
+	Value      string
+	Comment    string
+	Expiration string
+	CreatedAt  string
+}
+
+type Allowlist struct {
+	Name        string
+	Description string
+	Entries     []AllowEntry
+}
+
 
 type Manager struct {
 	mu           sync.Mutex
@@ -267,6 +307,216 @@ func sshPorts(ctx context.Context) []int {
 		return []int{22}
 	}
 	return ports
+}
+
+func (m *Manager) DecisionsData(ctx context.Context) ([]Decision, error) {
+	raw, err := cliJSON(ctx, "decisions", "list")
+	if err != nil {
+		return nil, err
+	}
+	var list []any
+	switch v := raw.(type) {
+	case []any:
+		list = v
+	case map[string]any:
+		if items, ok := firstArray(v, "decisions", "items"); ok {
+			list = items
+		}
+	}
+	var out []Decision
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, Decision{
+			ID:         valueString(m, "id"),
+			Source:     valueString(m, "origin", "source"),
+			Scope:      valueString(m, "scope"),
+			Value:      valueString(m, "value"),
+			Reason:     valueString(m, "scenario", "reason"),
+			Action:     valueString(m, "type", "action"),
+			Country:    valueString(m, "country"),
+			AS:         valueString(m, "as", "as_name", "asname"),
+			Expiration: firstNonEmpty(valueString(m, "duration"), valueString(m, "expiration"), valueString(m, "until")),
+			AlertID:    valueString(m, "alert_id", "alertid"),
+		})
+	}
+	return out, nil
+}
+
+func (m *Manager) AlertsData(ctx context.Context) ([]Alert, error) {
+	raw, err := cliJSON(ctx, "alerts", "list", "--since", "24h")
+	if err != nil {
+		return nil, err
+	}
+	var list []any
+	switch v := raw.(type) {
+	case []any:
+		list = v
+	case map[string]any:
+		if items, ok := firstArray(v, "alerts", "items"); ok {
+			list = items
+		}
+	}
+	var out []Alert
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		source, _ := mapValue(m, "source")
+		value := valueString(m, "value")
+		scope := valueString(m, "scope")
+		country := valueString(m, "country")
+		asName := valueString(m, "as", "as_name", "asname")
+		if source != nil {
+			if value == "" { value = valueString(source, "value") }
+			if scope == "" { scope = valueString(source, "scope") }
+			if country == "" { country = valueString(source, "country") }
+			if asName == "" { asName = firstNonEmpty(valueString(source, "as_name", "asname"), valueString(source, "as_number")) }
+		}
+		decisionText := ""
+		if decisions, ok := firstArray(m, "decisions"); ok {
+			var values []string
+			for _, rawDecision := range decisions {
+				if dm, ok := rawDecision.(map[string]any); ok {
+					t := valueString(dm, "type")
+					if t == "" { t = valueString(dm, "action") }
+					if t != "" { values = append(values, t) }
+				}
+			}
+			if len(values) > 0 {
+				decisionText = strings.Join(values, ", ")
+			} else {
+				decisionText = strconv.Itoa(len(decisions))
+			}
+		}
+		out = append(out, Alert{
+			ID:        valueString(m, "id"),
+			Value:     value,
+			Scope:     scope,
+			Reason:    valueString(m, "scenario", "reason"),
+			Country:   country,
+			AS:        asName,
+			Decisions: decisionText,
+			CreatedAt: valueString(m, "created_at", "createdat"),
+			Kind:      valueString(m, "kind"),
+		})
+	}
+	return out, nil
+}
+
+func (m *Manager) AllowlistData(ctx context.Context) (Allowlist, error) {
+	raw, err := cliJSON(ctx, "allowlists", "inspect", allowlistName)
+	if err != nil {
+		return Allowlist{}, err
+	}
+	root, ok := raw.(map[string]any)
+	if !ok {
+		return Allowlist{Name: allowlistName}, nil
+	}
+	result := Allowlist{
+		Name:        firstNonEmpty(valueString(root, "name"), allowlistName),
+		Description: valueString(root, "description"),
+	}
+	items, _ := firstArray(root, "items", "values", "entries")
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		result.Entries = append(result.Entries, AllowEntry{
+			Value:      valueString(m, "value"),
+			Comment:    valueString(m, "comment"),
+			Expiration: valueString(m, "expiration", "expires_at"),
+			CreatedAt:  valueString(m, "created_at", "createdat"),
+		})
+	}
+	return result, nil
+}
+
+func cliJSON(ctx context.Context, args ...string) (any, error) {
+	if _, err := exec.LookPath("cscli"); err != nil {
+		return nil, errors.New("CrowdSec is not installed")
+	}
+	args = append(args, "--output", "json")
+	out, err := exec.CommandContext(ctx, "cscli", args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("cscli %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	var value any
+	if err := json.Unmarshal(out, &value); err != nil {
+		return nil, fmt.Errorf("decode cscli JSON: %w", err)
+	}
+	return value, nil
+}
+
+func normalizedKey(v string) string {
+	v = strings.ToLower(v)
+	v = strings.ReplaceAll(v, "_", "")
+	v = strings.ReplaceAll(v, "-", "")
+	return v
+}
+
+func valueString(m map[string]any, names ...string) string {
+	for key, value := range m {
+		nk := normalizedKey(key)
+		for _, name := range names {
+			if nk != normalizedKey(name) {
+				continue
+			}
+			switch v := value.(type) {
+			case string:
+				return v
+			case float64:
+				if v == float64(int64(v)) {
+					return strconv.FormatInt(int64(v), 10)
+				}
+				return strconv.FormatFloat(v, 'f', -1, 64)
+			case bool:
+				return strconv.FormatBool(v)
+			case nil:
+				return ""
+			default:
+				data, _ := json.Marshal(v)
+				return string(data)
+			}
+		}
+	}
+	return ""
+}
+
+func mapValue(m map[string]any, name string) (map[string]any, bool) {
+	for key, value := range m {
+		if normalizedKey(key) == normalizedKey(name) {
+			v, ok := value.(map[string]any)
+			return v, ok
+		}
+	}
+	return nil, false
+}
+
+func firstArray(m map[string]any, names ...string) ([]any, bool) {
+	for key, value := range m {
+		nk := normalizedKey(key)
+		for _, name := range names {
+			if nk == normalizedKey(name) {
+				v, ok := value.([]any)
+				return v, ok
+			}
+		}
+	}
+	return nil, false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (m *Manager) Decisions(ctx context.Context) string {
