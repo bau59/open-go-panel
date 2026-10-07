@@ -29,6 +29,14 @@ func registerSecurityRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/security", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /security/firewall/enable", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := cfg.Security.EnableFirewall(r.Context()); err != nil {
+			writeSecurityPage(w, r, cfg, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/security", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /security/unban", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
@@ -134,9 +142,20 @@ func securityPage(status security.Status, decisions, alerts, allowlist, message 
 
 		<section class="metrics-grid">
 			<div class="metric"><span>Security Engine</span><strong>CrowdSec</strong><small>` + badge(status.EngineActive) + `</small></div>
+			<div class="metric"><span>Firewall</span><strong>UFW</strong><small>` + badge(status.FirewallActive) + `</small></div>
 			<div class="metric"><span>Firewall bouncer</span><strong>nftables</strong><small>` + badge(status.BouncerActive) + `</small></div>
-			<div class="metric"><span>Ban model</span><strong>Temporary</strong><small>Decisions expire automatically</small></div>
 			<div class="metric"><span>Allowlist</span><strong>open-go-panel</strong><small>Trusted IPs and CIDR ranges</small></div>
+		</section>
+
+		<section class="panel panel-pad" style="margin-top:16px">
+			<div class="section-title">
+				<div><h2>Firewall</h2><p class="note">UFW keeps SSH, HTTP, HTTPS and the Open Go Panel port open.</p></div>
+				` + badge(status.FirewallActive) + `
+			</div>
+			<pre class="security-output">` + html.EscapeString(status.FirewallStatus) + `</pre>
+			<form method="post" action="/security/firewall/enable" style="margin-top:12px">
+				<button class="button">Apply safe firewall defaults</button>
+			</form>
 		</section>
 
 		<div class="grid security-grid" style="margin-top:16px">
