@@ -16,7 +16,8 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		sites, _ := cfg.Caddy.Sites()
 		config, _ := cfg.Caddy.Config()
 		template, _ := cfg.Caddy.Template()
-		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, ""))
+		selectedID, _ := strconv.ParseInt(r.URL.Query().Get("app"), 10, 64)
+		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, selectedID, ""))
 	})))
 
 	mux.Handle("POST /caddy/template", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +29,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			sites, _ := cfg.Caddy.Sites()
 			config, _ := cfg.Caddy.Config()
 			template, _ := cfg.Caddy.Template()
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, err.Error()))
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, 0, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
@@ -43,6 +44,26 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			return
 		}
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /caddy/site/{id}/template", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Caddy.SetSiteTemplate(r.Context(), id, r.FormValue("template")); err != nil {
+			sites, _ := cfg.Caddy.Sites()
+			config, _ := cfg.Caddy.Config()
+			template, _ := cfg.Caddy.Template()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, id, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 	})))
 
 	mux.Handle("POST /apps/{id}/domain", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +108,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	})))
 }
 
-func caddyPage(status string, sites []panelcaddy.Site, config, template, message string) string {
+func caddyPage(status string, sites []panelcaddy.Site, config, template string, selectedID int64, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -100,14 +121,49 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template, message
 				<td><strong>%s</strong></td>
 				<td>#%d</td>
 				<td><code>%s</code></td>
+				<td class="actions"><a class="secondary" href="/caddy?app=%d">Edit</a></td>
 			</tr>`,
 			html.EscapeString(site.Domain),
 			site.AppID,
 			html.EscapeString(site.Target()),
+			site.AppID,
 		)
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="3" class="empty">No domains configured.</td></tr>`)
+		rows.WriteString(`<tr><td colspan="4" class="empty">No domains configured.</td></tr>`)
+	}
+
+	selectedEditor := ""
+	if selectedID > 0 {
+		for _, site := range sites {
+			if site.AppID != selectedID {
+				continue
+			}
+			value := site.Template
+			mode := "Custom override"
+			if strings.TrimSpace(value) == "" {
+				value = template
+				mode = "Using global template"
+			}
+			selectedEditor = `
+		<section class="panel panel-pad" style="margin-bottom:16px">
+			<div class="section-title">
+				<div>
+					<h2>Domain settings · ` + html.EscapeString(site.Domain) + `</h2>
+					<p class="note" style="margin:6px 0 0">` + mode + `. Save an empty value to return to the global template.</p>
+				</div>
+				<a class="secondary" href="/caddy">Close</a>
+			</div>
+			<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/template">
+				<textarea class="codearea" name="template" spellcheck="false" style="min-height:260px">` + html.EscapeString(value) + `</textarea>
+				<div class="actions" style="justify-content:flex-start;margin-top:12px">
+					<button class="button">Validate & apply to this domain</button>
+				</div>
+			</form>
+			<p class="note" style="margin:10px 0 0">This override affects only <strong>` + html.EscapeString(site.Domain) + `</strong>. Required placeholders: <code>{domain}</code> and <code>{port}</code>.</p>
+		</section>`
+			break
+		}
 	}
 
 	statusClass := ""
@@ -136,14 +192,15 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template, message
 		</section>
 		<section class="panel" style="margin-bottom:16px">
 			<table>
-				<thead><tr><th>Domain</th><th>App</th><th>Target</th></tr></thead>
+				<thead><tr><th>Domain</th><th>App</th><th>Target</th><th></th></tr></thead>
 				<tbody>` + rows.String() + `</tbody>
 			</table>
 		</section>
+		` + selectedEditor + `
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div>
-					<h2>Site template</h2>
+					<h2>Default site template</h2>
 					<p class="note" style="margin:6px 0 0">Applied to every connected app. Required placeholders: <code>{domain}</code> and <code>{port}</code>.</p>
 				</div>
 				<form method="post" action="/caddy/template/recommended">
