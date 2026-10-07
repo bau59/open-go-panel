@@ -86,3 +86,35 @@ Do not expose it as a production root control panel on an untrusted network yet.
 - Caddy site management;
 - databases;
 - runtime/package management.
+
+
+## Update and uninstall
+
+Running the installer again performs an in-place update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bau59/open-go-panel/main/install.sh | bash
+```
+
+The update preserves Open Go Panel configuration and state in:
+
+```text
+/etc/open-go-panel
+/var/lib/open-go-panel
+```
+
+It also does not remove Linux users, application directories, databases, Caddy certificates, CrowdSec state, or UFW rules.
+
+Uninstall the panel binary and service while preserving state:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bau59/open-go-panel/main/uninstall.sh | bash
+```
+
+Purge only Open Go Panel's own configuration and state:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bau59/open-go-panel/main/uninstall.sh | bash -s -- --purge
+```
+
+Even purge mode intentionally leaves Linux users, application files, MySQL/PostgreSQL data, Caddy, CrowdSec, and UFW untouched.
