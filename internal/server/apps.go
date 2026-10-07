@@ -657,18 +657,21 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			</div>
 		</div>
 		` + alert + `
-		<div class="grid" style="grid-template-columns:minmax(280px,.7fr) minmax(0,1.5fr)">
-			<section class="panel panel-pad">
-				<div class="section-title"><h2>Overview</h2><span class="badge">` + html.EscapeString(app.Type) + `</span></div>
-				<div class="meta-grid">
-					<span>Owner</span><strong>` + html.EscapeString(app.User) + `</strong>
-					<span>Port</span><code>` + port + `</code>
-					<span>Root</span><code>` + html.EscapeString(app.Root) + `</code>
-					<span>Service</span><code>open-go-panel-app-` + fmt.Sprintf("%d", app.ID) + `.service</code>
-				</div>` + extraBlock + `
-			</section>
-			<section class="panel panel-pad">` + serviceBlock + `</section>
-		</div>
+		<section class="panel panel-pad" style="margin-bottom:16px">
+			<div class="section-title"><h2>Overview</h2><span class="badge">` + html.EscapeString(app.Type) + `</span></div>
+			<div class="app-overview-grid">
+				<div><span>Owner</span><strong>` + html.EscapeString(app.User) + `</strong></div>
+				<div><span>Port</span><code>` + port + `</code></div>
+				<div><span>Root</span><code>` + html.EscapeString(app.Root) + `</code></div>
+				<div><span>Service</span><code>open-go-panel-app-` + fmt.Sprintf("%d", app.ID) + `.service</code></div>
+			</div>
+		</section>
+
+		<section class="panel panel-pad app-sections" style="margin-bottom:16px">
+			` + extraBlock + `
+		</section>
+
+		<section class="panel panel-pad">` + serviceBlock + `</section>
 	</main>
 </body>
 </html>`
@@ -819,13 +822,13 @@ func deployBlock(cfg Config, app panelapp.App) string {
 		rollbackDisabled = " disabled"
 	}
 	return `
-		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+		<div class="app-section">
 			<div class="section-title">
 				<div><h2>Deploy</h2><p class="note" style="margin:6px 0 0">Pull a Git branch into the app directory, prepare dependencies and restart the service.</p></div>
 				<span class="badge">` + html.EscapeString(deployed) + `</span>
 			</div>
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy/config">
-				<div class="grid" style="grid-template-columns:1fr 180px auto;gap:8px">
+				<div class="app-form-row app-form-row-deploy">
 					<input name="repository" value="` + html.EscapeString(deploy.Repository) + `" placeholder="git@github.com:org/repo.git or https://..." required>
 					<input name="branch" value="` + html.EscapeString(defaultString(deploy.Branch, "main")) + `" placeholder="main" required>
 					<button class="secondary">Save Git settings</button>
@@ -898,9 +901,9 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 		domainState = "ok"
 	}
 	return `
-		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+		<div class="app-section">
 			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Process, listener, local HTTP and public HTTPS are checked independently.</p></div></div>
-			<div class="metrics-grid">
+			<div class="health-grid">
 				` + statusBadge(processOK, "Process") + portBlock + localHTTP + `
 				<div class="metric"><span>` + domainLabel + `</span><strong>` + domainState + `</strong><small>` + html.EscapeString(domainDetail) + ` · <span class="status-badge ` + domainClass + `">` + domainState + `</span></small></div>
 			</div>
@@ -956,7 +959,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 	create := `<p class="note" style="margin:6px 0 10px">No managed databases yet.</p><a class="secondary" href="/databases">Open Databases</a>`
 	if options.Len() > 0 {
 		create = `
-			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/database" class="grid" style="grid-template-columns:1fr 150px auto;gap:8px">
+			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/database" class="app-form-row app-form-row-db">
 				<select name="database_id" required>` + options.String() + `</select>
 				<input name="env_name" value="DATABASE_URL" placeholder="ENV name" required>
 				<button class="button">Attach</button>
@@ -964,7 +967,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+		<div class="app-section">
 			<div class="section-title" style="margin-bottom:10px">
 				<div>
 					<label style="margin:0">Databases</label>
