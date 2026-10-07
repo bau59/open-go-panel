@@ -24,6 +24,7 @@ type Status struct {
 	InstallError    string
 	FirewallActive  bool
 	FirewallStatus  string
+	WebProtection   bool
 }
 
 type Manager struct {
@@ -46,6 +47,8 @@ func (m *Manager) Status(ctx context.Context) Status {
 	s.BouncerActive = serviceActive(ctx, "crowdsec-firewall-bouncer.service")
 	s.FirewallStatus = firewallStatus(ctx)
 	s.FirewallActive = strings.Contains(strings.ToLower(s.FirewallStatus), "status: active")
+	_, acquisErr := os.Stat("/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml")
+	s.WebProtection = s.EngineActive && acquisErr == nil
 
 	m.mu.Lock()
 	s.Installing = m.installing
@@ -109,6 +112,28 @@ func install(ctx context.Context, trustedIP string) error {
 		return err
 	}
 	if err := run(ctx, "systemctl", "enable", "--now", "crowdsec.service"); err != nil {
+		return err
+	}
+
+	if err := run(ctx, "cscli", "collections", "install", "crowdsecurity/caddy"); err != nil {
+		return err
+	}
+	if err := os.MkdirAll("/etc/crowdsec/acquis.d", 0755); err != nil {
+		return fmt.Errorf("create CrowdSec acquisition directory: %w", err)
+	}
+	caddyAcquisition := `source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=caddy.service"
+labels:
+  type: caddy
+`
+	if err := os.WriteFile("/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml", []byte(caddyAcquisition), 0644); err != nil {
+		return fmt.Errorf("write Caddy CrowdSec acquisition: %w", err)
+	}
+	if err := run(ctx, "crowdsec", "-t"); err != nil {
+		return err
+	}
+	if err := run(ctx, "systemctl", "restart", "crowdsec.service"); err != nil {
 		return err
 	}
 
