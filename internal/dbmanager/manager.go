@@ -1,19 +1,20 @@
 package dbmanager
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"compress/gzip"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,72 +23,9 @@ import (
 )
 
 var (
-	databaseNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,62}package dbmanager
-
-import (
-	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/bau59/open-go-panel/internal/state"
-)
-
-)
-	mysqlUserRE    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,31}package dbmanager
-
-import (
-	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/bau59/open-go-panel/internal/state"
-)
-
-)
-	postgresUserRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,62}package dbmanager
-
-import (
-	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/bau59/open-go-panel/internal/state"
-)
-
-)
+	databaseNameRE = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_]{0,62}$")
+	mysqlUserRE    = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_]{0,31}$")
+	postgresUserRE = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_]{0,62}$")
 )
 
 type Database struct {
