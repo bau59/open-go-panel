@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -149,7 +150,7 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 }
 
 func (m *Manager) userManaged(username string) (bool, error) {
-	users, err := m.users.List(nilContext{})
+	users, err := m.users.List(context.Background())
 	if err != nil {
 		return false, err
 	}
@@ -248,10 +249,3 @@ func nextPort(apps []App) (int, error) {
 	return 0, errors.New("no free application ports available")
 }
 
-// nilContext is enough for linuxuser.List, which only passes the context to local commands.
-type nilContext struct{}
-
-func (nilContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (nilContext) Done() <-chan struct{}       { return nil }
-func (nilContext) Err() error                  { return nil }
-func (nilContext) Value(any) any               { return nil }
