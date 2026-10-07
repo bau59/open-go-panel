@@ -451,6 +451,43 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 	return health
 }
 
+func (m *Manager) Delete(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	apps, err := m.load()
+	if err != nil {
+		return err
+	}
+	index := -1
+	var app App
+	for i := range apps {
+		if apps[i].ID == id {
+			index = i
+			app = apps[i]
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("app %d not found", id)
+	}
+
+	if app.Type != "static" {
+		_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", serviceName(id)).Run()
+	}
+	_ = os.Remove(filepath.Join(m.serviceDir, serviceName(id)))
+	_ = os.Remove(runnerPath(m.runnerDir, id))
+	_ = os.Remove(envPath(m.envDir, id))
+	_ = os.RemoveAll(filepath.Join(m.journalDir, "journald@"+journalNamespace(id)+".conf.d"))
+	_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+
+	apps = append(apps[:index], apps[index+1:]...)
+	if err := m.save(apps); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (m *Manager) SetCommand(ctx context.Context, id int64, command string) error {
 	return m.SetServiceConfig(ctx, id, ServiceConfig{
 		Mode:       "form",
