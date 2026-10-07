@@ -263,6 +263,20 @@ func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceCon
 	return m.save(apps)
 }
 
+func (m *Manager) Unit(id int64) (string, error) {
+	if _, err := m.Get(id); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(m.serviceDir, serviceName(id)))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read systemd unit: %w", err)
+	}
+	return string(data), nil
+}
+
 func (m *Manager) Logs(ctx context.Context, id int64, lines int) (string, error) {
 	if lines <= 0 || lines > 1000 {
 		lines = 200
