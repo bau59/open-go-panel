@@ -71,6 +71,21 @@ const baseStyles = `
 	.toolbar{display:grid;gap:10px;padding:16px;border-bottom:1px solid var(--border)}
 	.field,input,select,textarea{width:100%;border:1px solid var(--border-strong);border-radius:11px;background:#0d121b;color:var(--text);outline:none;transition:.15s ease}
 	input,select{height:42px;padding:0 12px}
+	select{
+		appearance:none;
+		-webkit-appearance:none;
+		padding-right:42px;
+		background-color:#0d121b;
+		background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23909aab' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+		background-repeat:no-repeat;
+		background-position:right 14px center;
+	}
+	select:hover{border-color:#465268}
+	select option{background:#10151f;color:var(--text)}
+	.check-row{display:flex;align-items:center;gap:9px;color:#c8d0dc;font-size:13px;font-weight:650;cursor:pointer}
+	.check-row input[type="checkbox"]{width:17px;height:17px;margin:0;accent-color:var(--primary)}
+	.service-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+	.service-grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}
 	textarea{padding:11px 12px;resize:vertical}
 	input:focus,select:focus,textarea:focus{border-color:#675af0;box-shadow:0 0 0 3px rgba(109,93,252,.11)}
 	input::placeholder,textarea::placeholder{color:#566074}
@@ -124,9 +139,12 @@ const baseStyles = `
 		table{display:block;overflow-x:auto}
 		.inline-popover.wide{width:min(460px,82vw)}
 		.metrics-grid{grid-template-columns:1fr 1fr}
-		@media(max-width:520px){.metrics-grid{grid-template-columns:1fr}}
+		.service-grid-3,.service-grid-4{grid-template-columns:1fr 1fr}
 	}
-`
+	@media(max-width:520px){
+		.metrics-grid,.service-grid-3,.service-grid-4{grid-template-columns:1fr}
+	}
+
 
 func pageHead(title string) string {
 	return `<!doctype html>
