@@ -157,6 +157,13 @@ const baseStyles = `
 	.app-form-row{display:grid;gap:8px}
 	.app-form-row-deploy{grid-template-columns:minmax(0,1fr) 160px auto}
 	.app-form-row-db{grid-template-columns:minmax(0,1fr) 170px auto}
+	.service-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+	.service-summary>div{min-width:0;padding:13px 14px;border:1px solid var(--border);border-radius:13px;background:#0d121b}
+	.service-summary span{display:block;margin-bottom:6px;color:var(--muted-2);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+	.service-summary strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+	.service-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+	.service-form-grid .span-2{grid-column:1/-1}
+	.service-editor>summary{display:inline-flex}
 	.backup-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
 	.backup-row:last-child{border-bottom:0}
 	.statline{display:flex;align-items:center;gap:8px;margin-top:22px;color:#89e8bb;font-size:12px;font-weight:750}
@@ -177,11 +184,12 @@ const baseStyles = `
 		table{display:block;overflow-x:auto}
 		.inline-popover.wide{width:min(460px,82vw)}
 		.metrics-grid{grid-template-columns:1fr 1fr}
-		.service-grid-3,.service-grid-4,.security-grid,.domain-summary,.app-overview-grid,.health-grid{grid-template-columns:1fr 1fr}
+		.service-grid-3,.service-grid-4,.security-grid,.domain-summary,.app-overview-grid,.health-grid,.service-summary{grid-template-columns:1fr 1fr}
 		.app-form-row-deploy,.app-form-row-db{grid-template-columns:1fr 140px}
 	}
 	@media(max-width:520px){
-		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db{grid-template-columns:1fr}
+		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid{grid-template-columns:1fr}
+		.service-form-grid .span-2{grid-column:auto}
 		.setting-switch{align-items:flex-start}
 	}
 `
