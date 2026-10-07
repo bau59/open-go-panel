@@ -1222,6 +1222,15 @@ func (m *Manager) load() ([]App, error) {
 		return nil, fmt.Errorf("iterate apps state: %w", err)
 	}
 
+	if len(apps) > 0 {
+		if _, done, err := m.store.Setting("migration.apps_json_done"); err != nil {
+			return nil, err
+		} else if !done {
+			if err := m.store.SetSetting("migration.apps_json_done", "1"); err != nil {
+				return nil, fmt.Errorf("mark apps migration complete: %w", err)
+			}
+		}
+	}
 	if len(apps) == 0 {
 		if _, done, err := m.store.Setting("migration.apps_json_done"); err != nil {
 			return nil, err
