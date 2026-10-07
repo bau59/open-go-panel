@@ -115,12 +115,12 @@ func usersPage(users []linuxuser.User, message string) string {
 	for _, user := range users {
 		statusClass := "ok"
 		status := "Active"
-		lockLabel := "Lock"
+		lockLabel := "Lock password"
 		lockPath := "lock"
 		if user.Locked {
 			statusClass = "warn"
 			status = "Locked"
-			lockLabel = "Unlock"
+			lockLabel = "Unlock password"
 			lockPath = "unlock"
 		}
 
@@ -200,7 +200,7 @@ func usersPage(users []linuxuser.User, message string) string {
 				<tbody>` + rows.String() + `</tbody>
 			</table>
 		</section>
-		<p class="note" style="margin:14px 4px 0">Users receive /bin/bash, a home directory and SSH/SFTP access through OpenSSH.</p>
+		<p class="note" style="margin:14px 4px 0">Users receive /bin/bash, a home directory and SSH/SFTP access through OpenSSH. Password lock does not disable authorized SSH keys.</p>
 	</main>
 </body>
 </html>`
