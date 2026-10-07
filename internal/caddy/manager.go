@@ -24,9 +24,10 @@ const recommendedSiteTemplate = `{domain} {
 var domainRE = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
 
 type Site struct {
-	AppID  int64  `json:"app_id"`
-	Domain string `json:"domain"`
-	Port   int    `json:"port"`
+	AppID    int64  `json:"app_id"`
+	Domain   string `json:"domain"`
+	Port     int    `json:"port"`
+	Template string `json:"template,omitempty"`
 }
 
 type Manager struct {
@@ -96,7 +97,8 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 	found := false
 	for i := range sites {
 		if sites[i].AppID == appID {
-			sites[i] = Site{AppID: appID, Domain: domain, Port: port}
+			sites[i].Domain = domain
+			sites[i].Port = port
 			found = true
 			break
 		}
@@ -106,6 +108,45 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 	}
 
 	return m.apply(ctx, sites)
+}
+
+func (m *Manager) SetSiteTemplate(ctx context.Context, appID int64, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sites, err := m.load()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range sites {
+		if sites[i].AppID != appID {
+			continue
+		}
+		found = true
+		value = strings.TrimSpace(value)
+		if value == "" {
+			sites[i].Template = ""
+			break
+		}
+		if !strings.Contains(value, "{domain}") || !strings.Contains(value, "{port}") {
+			return errors.New("Caddy template must contain {domain} and {port}")
+		}
+		if err := m.validateRendered(ctx, renderSite(value, sites[i])); err != nil {
+			return err
+		}
+		sites[i].Template = value
+		break
+	}
+	if !found {
+		return fmt.Errorf("site for app %d not found", appID)
+	}
+
+	globalTemplate, err := m.Template()
+	if err != nil {
+		return err
+	}
+	return m.applyLocked(ctx, sites, globalTemplate)
 }
 
 func (m *Manager) RemoveSite(ctx context.Context, appID int64) error {
