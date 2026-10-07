@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/app"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
@@ -33,6 +34,7 @@ type Config struct {
 	Caddy         *panelcaddy.Manager
 	Security      *security.Manager
 	Databases     *dbmanager.Manager
+	Adminer       *adminer.Manager
 }
 
 type sessionStore struct {
@@ -157,6 +159,9 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Databases != nil {
 		registerDatabaseRoutes(mux, store, cfg)
+	}
+	if cfg.Adminer != nil {
+		registerAdminerRoutes(mux, store, cfg)
 	}
 
 	return mux
