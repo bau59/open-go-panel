@@ -13,6 +13,7 @@ import (
 
 	"github.com/bau59/open-go-panel/internal/app"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/systeminfo"
 )
 
 const (
@@ -109,7 +110,21 @@ func New(cfg Config) http.Handler {
 	})
 
 	mux.Handle("GET /", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeHTML(w, cfg.Logger, http.StatusOK, dashboardPage())
+		info, err := systeminfo.Read()
+		if err != nil {
+			cfg.Logger.Warn("read server metrics failed", "err", err)
+		}
+
+		apps, _ := cfg.Apps.List()
+		users, _ := cfg.Users.List(r.Context())
+		activeApps := 0
+		for _, app := range apps {
+			if cfg.Apps.Status(r.Context(), app.ID) == "active" {
+				activeApps++
+			}
+		}
+
+		writeHTML(w, cfg.Logger, http.StatusOK, dashboardPage(info, len(apps), len(users), activeApps))
 	})))
 
 	if cfg.Users != nil {
@@ -244,40 +259,65 @@ func loginPage(message string) string {
 </html>`
 }
 
-func dashboardPage() string {
+func dashboardPage(info systeminfo.Info, appCount, userCount, activeApps int) string {
 	return pageHead("Overview") + `<body>` + appHeader("overview") + `
 	<main class="shell">
 		<div class="page-head">
 			<div>
 				<p class="eyebrow">Server</p>
-				<h1>Overview</h1>
-				<p class="sub">Manage applications, Linux users and server services from one place.</p>
+				<h1>` + html.EscapeString(info.Hostname) + `</h1>
+				<p class="sub">` + html.EscapeString(info.OS) + ` · kernel ` + html.EscapeString(info.Kernel) + `</p>
 			</div>
 		</div>
-		<section class="grid cards">
+
+		<section class="metrics-grid">
+			<div class="metric"><span>CPU</span><strong>` + fmt.Sprintf("%d cores", info.CPUs) + `</strong><small>load ` + html.EscapeString(info.Load1) + ` / ` + html.EscapeString(info.Load5) + ` / ` + html.EscapeString(info.Load15) + `</small></div>
+			<div class="metric"><span>Memory</span><strong>` + formatBytes(info.MemoryUsed) + ` / ` + formatBytes(info.MemoryTotal) + `</strong><div class="meter"><i style="width:` + fmt.Sprintf("%.1f", info.MemoryPercent) + `%"></i></div></div>
+			<div class="metric"><span>Disk /</span><strong>` + formatBytes(info.DiskUsed) + ` / ` + formatBytes(info.DiskTotal) + `</strong><div class="meter"><i style="width:` + fmt.Sprintf("%.1f", info.DiskPercent) + `%"></i></div></div>
+			<div class="metric"><span>Uptime</span><strong>` + formatDuration(info.Uptime) + `</strong><small>` + fmt.Sprintf("%d apps · %d active · %d users", appCount, activeApps, userCount) + `</small></div>
+		</section>
+
+		<section class="grid cards" style="margin-top:18px">
 			<a class="card" href="/apps">
 				<div class="card-icon">APP</div>
 				<h2>Applications</h2>
-				<p>Create apps, assign owners, manage ports and systemd services.</p>
+				<p>Create apps, manage systemd, resources, ports and logs.</p>
 			</a>
 			<a class="card" href="/users">
 				<div class="card-icon">USR</div>
 				<h2>Users</h2>
 				<p>Manage Linux accounts, passwords and SSH access.</p>
 			</a>
-			<article class="card">
-				<div class="card-icon">DB</div>
-				<h2>Databases</h2>
-				<p>Database installation and management will be added next.</p>
-			</article>
-			<article class="card">
-				<div class="card-icon">TTY</div>
-				<h2>Terminal</h2>
-				<p>Browser terminal access will be added next.</p>
-			</article>
+			<article class="card"><div class="card-icon">DB</div><h2>Databases</h2><p>Database installation and management will be added next.</p></article>
+			<article class="card"><div class="card-icon">TTY</div><h2>Terminal</h2><p>Browser terminal access will be added next.</p></article>
 		</section>
 		<div class="statline"><i></i>Open Go Panel is running</div>
 	</main>
 </body>
 </html>`
+}
+
+func formatBytes(v uint64) string {
+	const unit = 1024
+	if v < unit {
+		return fmt.Sprintf("%d B", v)
+	}
+	div, exp := uint64(unit), 0
+	for n := v / unit; n >= unit && exp < 5; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(v)/float64(div), "KMGTPE"[exp])
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "—"
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	return fmt.Sprintf("%dh %dm", hours, int(d.Minutes())%60)
 }
