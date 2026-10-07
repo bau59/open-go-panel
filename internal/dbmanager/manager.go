@@ -740,7 +740,13 @@ func (m *Manager) Create(ctx context.Context, engine, name, username string) (Da
 	}
 	if username == "" {
 		username = "ogp_" + strings.ToLower(name)
-		if len(username) > 63 { username = username[:63] }
+		limit := 63
+		if engine == "mysql" {
+			limit = 32
+		}
+		if len(username) > limit {
+			username = username[:limit]
+		}
 	}
 	userRE := postgresUserRE
 	if engine == "mysql" {
