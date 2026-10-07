@@ -217,6 +217,109 @@ func (m *Manager) SetCommand(ctx context.Context, id int64, command string) erro
 	})
 }
 
+func (m *Manager) SetEnvironmentVariable(ctx context.Context, id int64, key, value string) error {
+	if !envNamePattern.MatchString(key) {
+		return errors.New("invalid environment variable name")
+	}
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if app.Type == "static" {
+		return errors.New("static apps do not use service environment variables")
+	}
+	if app.Service.Mode == "raw" {
+		return errors.New("database attachment is unavailable in raw systemd mode")
+	}
+
+	cfg := app.Service
+	if cfg.Mode == "" {
+		cfg.Mode = "form"
+	}
+	if cfg.RunMode == "" {
+		switch app.Type {
+		case "go":
+			cfg.RunMode = "go-build"
+		case "node":
+			cfg.RunMode = "node-npm"
+		default:
+			cfg.RunMode = "custom"
+		}
+	}
+	if cfg.Restart == "" {
+		cfg.Restart = "on-failure"
+	}
+	if cfg.RestartSec == 0 {
+		cfg.RestartSec = 3
+	}
+	if cfg.TimeoutStopSec == 0 {
+		cfg.TimeoutStopSec = 15
+	}
+	if cfg.LimitNOFILE == 0 {
+		cfg.LimitNOFILE = 65535
+	}
+	if cfg.TasksMax == 0 {
+		cfg.TasksMax = 256
+	}
+	if cfg.LogRetentionDays == 0 {
+		cfg.LogRetentionDays = 7
+	}
+	if cfg.Path == "" {
+		cfg.Path = defaultPath(app)
+	}
+	if cfg.WorkingDirectory == "" {
+		cfg.WorkingDirectory = app.Root
+	}
+
+	var lines []string
+	replaced := false
+	for _, line := range strings.Split(cfg.Environment, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, key+"=") {
+			lines = append(lines, key+"="+value)
+			replaced = true
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if !replaced {
+		lines = append(lines, key+"="+value)
+	}
+	cfg.Environment = strings.Join(lines, "\n")
+	return m.SetServiceConfig(ctx, id, cfg)
+}
+
+func (m *Manager) RemoveEnvironmentVariable(ctx context.Context, id int64, key string) error {
+	if !envNamePattern.MatchString(key) {
+		return errors.New("invalid environment variable name")
+	}
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if app.Type == "static" {
+		return errors.New("static apps do not use service environment variables")
+	}
+	if app.Service.Mode == "raw" {
+		return errors.New("database attachment is unavailable in raw systemd mode")
+	}
+
+	cfg := app.Service
+	var lines []string
+	for _, line := range strings.Split(cfg.Environment, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, key+"=") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	cfg.Environment = strings.Join(lines, "\n")
+	return m.SetServiceConfig(ctx, id, cfg)
+}
+
 func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
