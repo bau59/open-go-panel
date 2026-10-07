@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bau59/open-go-panel/internal/app"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 )
 
@@ -23,6 +24,7 @@ type Config struct {
 	AdminUser     string
 	AdminPassword string
 	Users         *linuxuser.Manager
+	Apps          *app.Manager
 }
 
 type sessionStore struct {
@@ -111,6 +113,9 @@ func New(cfg Config) http.Handler {
 
 	if cfg.Users != nil {
 		registerUserRoutes(mux, store, cfg)
+	}
+	if cfg.Apps != nil && cfg.Users != nil {
+		registerAppRoutes(mux, store, cfg)
 	}
 
 	return mux
@@ -273,7 +278,7 @@ func dashboardPage() string {
 		<h1>Server overview</h1>
 		<p class="sub">The panel is installed and running.</p>
 		<section class="grid">
-			<article class="card"><h2>Sites</h2><p>Site and Caddy management will be added next.</p></article>
+			<a class="card" href="/apps"><h2>Apps</h2><p>Create applications, assign owners and allocate internal ports.</p></a>
 			<a class="card" href="/users"><h2>Users</h2><p>Create Linux users, manage SSH keys, passwords and access.</p></a>
 			<article class="card"><h2>Databases</h2><p>Database installation and management will be added next.</p></article>
 			<article class="card"><h2>Terminal</h2><p>Web terminal access will be added next.</p></article>
