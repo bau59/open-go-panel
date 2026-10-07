@@ -115,7 +115,7 @@ func (m *Manager) Create(ctx context.Context, engine, name, username string) (Da
 			return Database{}, errors.New("MySQL is not installed")
 		}
 		sql := fmt.Sprintf(
-			"CREATE DATABASE \`%s\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER '%s'@'localhost' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'localhost'; FLUSH PRIVILEGES;",
+			"CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER '%s'@'localhost' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES;",
 			name, username, sqlString(password), name, username,
 		)
 		if err := run(ctx, sql, "mysql", "--protocol=socket", "-uroot"); err != nil {
@@ -169,7 +169,7 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	switch item.Engine {
 	case "mysql":
 		sql := fmt.Sprintf(
-			"DROP DATABASE IF EXISTS \`%s\`; DROP USER IF EXISTS '%s'@'localhost'; FLUSH PRIVILEGES;",
+			"DROP DATABASE IF EXISTS `%s`; DROP USER IF EXISTS '%s'@'localhost'; FLUSH PRIVILEGES;",
 			item.Name, item.User,
 		)
 		if err := run(ctx, sql, "mysql", "--protocol=socket", "-uroot"); err != nil { return err }
