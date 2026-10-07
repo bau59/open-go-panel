@@ -15,14 +15,25 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("load config failed", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           server.New(logger),
+		Addr: cfg.ListenAddr,
+		Handler: server.New(server.Config{
+			Logger:        logger,
+			AdminUser:     cfg.AdminUser,
+			AdminPassword: cfg.AdminPassword,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
