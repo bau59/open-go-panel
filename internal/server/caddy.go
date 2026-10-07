@@ -341,6 +341,12 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 		if strings.TrimSpace(site.Template) != "" {
 			mode = "Custom Caddy config"
 		}
+		scheme := "https"
+		routeLabel := "HTTPS"
+		if settings, err := cfg.Caddy.GlobalSettings(); err == nil && !settings.HTTPS {
+			scheme = "http"
+			routeLabel = "HTTP"
+		}
 		return `
 			<div class="app-section">
 				<div class="section-title">
@@ -348,12 +354,13 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 					<span class="status-badge ok">connected</span>
 				</div>
 				<div class="domain-summary">
-					<div><span>Domain</span><a href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener"><strong>` + html.EscapeString(site.Domain) + `</strong></a></div>
+					<div><span>Domain</span><a href="` + scheme + `://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener"><strong>` + html.EscapeString(site.Domain) + `</strong></a></div>
 					<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
+					<div><span>Protocol</span><strong>` + routeLabel + `</strong></div>
 					<div><span>Caddy config</span><strong>` + mode + `</strong></div>
 				</div>
 				<div class="actions" style="justify-content:flex-start;margin-top:14px">
-					<a class="secondary" href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener">Open site</a>
+					<a class="secondary" href="` + scheme + `://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener">Open site</a>
 					<a class="secondary" href="/caddy?app=` + fmt.Sprintf("%d", app.ID) + `">Domain settings</a>
 					<details>
 						<summary class="secondary">Change domain</summary>
