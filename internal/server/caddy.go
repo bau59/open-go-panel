@@ -15,7 +15,34 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	mux.Handle("GET /caddy", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sites, _ := cfg.Caddy.Sites()
 		config, _ := cfg.Caddy.Config()
-		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, ""))
+		template, _ := cfg.Caddy.Template()
+		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, ""))
+	})))
+
+	mux.Handle("POST /caddy/template", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Caddy.SetTemplate(r.Context(), r.FormValue("template")); err != nil {
+			sites, _ := cfg.Caddy.Sites()
+			config, _ := cfg.Caddy.Config()
+			template, _ := cfg.Caddy.Template()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /caddy/template/recommended", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := cfg.Caddy.ResetTemplate(r.Context()); err != nil {
+			sites, _ := cfg.Caddy.Sites()
+			config, _ := cfg.Caddy.Config()
+			template, _ := cfg.Caddy.Template()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
 	})))
 
 	mux.Handle("POST /apps/{id}/domain", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +87,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	})))
 }
 
-func caddyPage(status string, sites []panelcaddy.Site, config, message string) string {
+func caddyPage(status string, sites []panelcaddy.Site, config, template, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -101,11 +128,35 @@ func caddyPage(status string, sites []panelcaddy.Site, config, message string) s
 			<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
 		</div>
 		` + alert + `
+		<section class="metrics-grid" style="margin-bottom:16px">
+			<div class="metric"><span>HTTPS</span><strong>Automatic</strong><small>Caddy issues and renews certificates.</small></div>
+			<div class="metric"><span>Compression</span><strong>zstd + gzip</strong><small>Enabled by the recommended template.</small></div>
+			<div class="metric"><span>Access log</span><strong>Enabled</strong><small>Useful for diagnostics and CrowdSec.</small></div>
+			<div class="metric"><span>Proxy target</span><strong>127.0.0.1</strong><small>Applications stay off the public network.</small></div>
+		</section>
 		<section class="panel" style="margin-bottom:16px">
 			<table>
 				<thead><tr><th>Domain</th><th>App</th><th>Target</th></tr></thead>
 				<tbody>` + rows.String() + `</tbody>
 			</table>
+		</section>
+		<section class="panel panel-pad" style="margin-bottom:16px">
+			<div class="section-title">
+				<div>
+					<h2>Site template</h2>
+					<p class="note" style="margin:6px 0 0">Applied to every connected app. Required placeholders: <code>{domain}</code> and <code>{port}</code>.</p>
+				</div>
+				<form method="post" action="/caddy/template/recommended">
+					<button class="secondary">Recommended template</button>
+				</form>
+			</div>
+			<form method="post" action="/caddy/template">
+				<textarea class="codearea" name="template" spellcheck="false" style="min-height:220px">` + html.EscapeString(template) + `</textarea>
+				<div class="actions" style="justify-content:flex-start;margin-top:12px">
+					<button class="button">Validate & apply template</button>
+				</div>
+			</form>
+			<p class="note" style="margin:10px 0 0">Recommended template keeps HTTPS automatic, enables compression and access logging, and proxies only to the app&apos;s local port.</p>
 		</section>
 		<section class="panel panel-pad">
 			<div class="section-title"><div><h2>Generated Caddyfile</h2><p class="note">Managed by Open Go Panel. Changes are validated before reload.</p></div></div>
