@@ -115,16 +115,26 @@ func New(cfg Config) http.Handler {
 			cfg.Logger.Warn("read server metrics failed", "err", err)
 		}
 
-		apps, _ := cfg.Apps.List()
-		users, _ := cfg.Users.List(r.Context())
+		appCount := 0
+		userCount := 0
 		activeApps := 0
-		for _, app := range apps {
-			if cfg.Apps.Status(r.Context(), app.ID) == "active" {
-				activeApps++
+
+		if cfg.Apps != nil {
+			apps, _ := cfg.Apps.List()
+			appCount = len(apps)
+			for _, app := range apps {
+				if cfg.Apps.Status(r.Context(), app.ID) == "active" {
+					activeApps++
+				}
 			}
 		}
 
-		writeHTML(w, cfg.Logger, http.StatusOK, dashboardPage(info, len(apps), len(users), activeApps))
+		if cfg.Users != nil {
+			users, _ := cfg.Users.List(r.Context())
+			userCount = len(users)
+		}
+
+		writeHTML(w, cfg.Logger, http.StatusOK, dashboardPage(info, appCount, userCount, activeApps))
 	})))
 
 	if cfg.Users != nil {
