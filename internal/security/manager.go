@@ -227,6 +227,49 @@ func (m *Manager) StartProtection(ctx context.Context) error {
 	return errors.New("CrowdSec firewall bouncer is not installed")
 }
 
+func (m *Manager) ControlService(ctx context.Context, component, action string) error {
+	var service string
+	switch strings.TrimSpace(component) {
+	case "engine":
+		service = "crowdsec.service"
+	case "bouncer":
+		service = "crowdsec-firewall-bouncer.service"
+	default:
+		return errors.New("unsupported security component")
+	}
+	switch strings.TrimSpace(action) {
+	case "start":
+		return run(ctx, "systemctl", "enable", "--now", service)
+	case "stop":
+		return run(ctx, "systemctl", "disable", "--now", service)
+	case "restart":
+		return run(ctx, "systemctl", "restart", service)
+	default:
+		return errors.New("unsupported service action")
+	}
+}
+
+func (m *Manager) DisableWebProtection(ctx context.Context) error {
+	path := "/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml"
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("disable Caddy acquisition: %w", err)
+	}
+	if serviceActive(ctx, "crowdsec.service") {
+		if err := run(ctx, "crowdsec", "-t"); err != nil {
+			return err
+		}
+		return run(ctx, "systemctl", "restart", "crowdsec.service")
+	}
+	return nil
+}
+
+func (m *Manager) DisableFirewall(ctx context.Context) error {
+	if _, err := exec.LookPath("ufw"); err != nil {
+		return errors.New("UFW is not installed")
+	}
+	return run(ctx, "ufw", "--force", "disable")
+}
+
 func (m *Manager) EnableFirewall(ctx context.Context) error {
 	if err := run(ctx, "apt-get", "install", "-y", "ufw"); err != nil {
 		return err
