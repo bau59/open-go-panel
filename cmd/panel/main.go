@@ -112,6 +112,7 @@ func main() {
 			Security:      securityManager,
 			Databases:     databaseManager,
 			Adminer:       adminerManager,
+			State:         stateStore,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
