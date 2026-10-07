@@ -92,7 +92,7 @@ if [ ! -f "${ENV_FILE}" ]; then
   ADMIN_PASSWORD="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 
   cat > "${ENV_FILE}" <<EOF
-OGP_LISTEN_ADDR=:8443
+OGP_LISTEN_ADDR=127.0.0.1:8443
 OGP_ADMIN_USER=admin
 OGP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 EOF
@@ -133,7 +133,15 @@ fi
 echo
 echo "Open Go Panel installed/updated."
 echo "Persistent panel data was preserved."
-echo "URL: http://${IP}:8443"
+LISTEN_ADDR="$(sed -n 's/^OGP_LISTEN_ADDR=//p' "${ENV_FILE}" | head -n1)"
+if [[ "${LISTEN_ADDR}" == 127.0.0.1:* || "${LISTEN_ADDR}" == localhost:* ]]; then
+  echo "Panel listens on localhost only."
+  echo "SSH tunnel:"
+  echo "  ssh -L 8443:127.0.0.1:8443 root@${IP}"
+  echo "Then open: http://127.0.0.1:8443"
+else
+  echo "URL: http://${IP}:8443"
+fi
 echo "Username: admin"
 echo "Password: ${ADMIN_PASSWORD}"
 echo
