@@ -43,6 +43,16 @@ type Site struct {
 	Template string `json:"template,omitempty"`
 }
 
+type GlobalSettings struct {
+	HTTPS       bool
+	Compression bool
+	AccessLog   bool
+}
+
+func defaultGlobalSettings() GlobalSettings {
+	return GlobalSettings{HTTPS: true, Compression: true, AccessLog: true}
+}
+
 type Manager struct {
 	mu                 sync.Mutex
 	store              *state.Store
@@ -204,6 +214,116 @@ func (m *Manager) RemoveSite(ctx context.Context, appID int64) error {
 }
 
 
+func (m *Manager) GlobalSettings() (GlobalSettings, error) {
+	settings := defaultGlobalSettings()
+	rows, err := m.store.DB().Query(`
+		SELECT key, value FROM settings
+		WHERE key IN ('caddy.https','caddy.compression','caddy.access_log')
+	`)
+	if err != nil {
+		return settings, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return settings, err
+		}
+		enabled := value == "1"
+		switch key {
+		case "caddy.https":
+			settings.HTTPS = enabled
+		case "caddy.compression":
+			settings.Compression = enabled
+		case "caddy.access_log":
+			settings.AccessLog = enabled
+		}
+	}
+	return settings, rows.Err()
+}
+
+func (m *Manager) SetGlobalSettings(ctx context.Context, settings GlobalSettings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	tx, err := m.store.DB().Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	values := map[string]string{
+		"caddy.https":       boolSetting(settings.HTTPS),
+		"caddy.compression": boolSetting(settings.Compression),
+		"caddy.access_log":  boolSetting(settings.AccessLog),
+		"caddy.site_template": managedProxyTemplate(settings),
+	}
+	for key, value := range values {
+		if _, err := tx.Exec(`
+			INSERT INTO settings(key, value) VALUES(?, ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value
+		`, key, value); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	sites, err := m.load()
+	if err != nil {
+		return err
+	}
+	if err := m.applyLocked(ctx, sites, managedProxyTemplate(settings)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func boolSetting(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+
+func managedProxyTemplate(settings GlobalSettings) string {
+	address := "{domain}"
+	if !settings.HTTPS {
+		address = "http://{domain}"
+	}
+	var lines []string
+	lines = append(lines, address+" {")
+	if settings.Compression {
+		lines = append(lines, "\tencode zstd gzip")
+	}
+	lines = append(lines, "\treverse_proxy 127.0.0.1:{port}")
+	if settings.AccessLog {
+		lines = append(lines, "\tlog")
+	}
+	lines = append(lines, "}")
+	return strings.Join(lines, "\n")
+}
+
+func managedStaticTemplate(settings GlobalSettings) string {
+	address := "{domain}"
+	if !settings.HTTPS {
+		address = "http://{domain}"
+	}
+	var lines []string
+	lines = append(lines, address+" {")
+	if settings.Compression {
+		lines = append(lines, "\tencode zstd gzip")
+	}
+	lines = append(lines, "\troot * {root}", "\tfile_server")
+	if settings.AccessLog {
+		lines = append(lines, "\tlog")
+	}
+	lines = append(lines, "}")
+	return strings.Join(lines, "\n")
+}
+
 func (m *Manager) Template() (string, error) {
 	var value string
 	err := m.store.DB().QueryRow(`SELECT value FROM settings WHERE key = 'caddy.site_template'`).Scan(&value)
@@ -235,6 +355,21 @@ func (m *Manager) Template() (string, error) {
 
 func (m *Manager) RecommendedTemplate() string {
 	return recommendedSiteTemplate
+}
+
+func (m *Manager) DefaultTemplateForSite(site Site) string {
+	settings, err := m.GlobalSettings()
+	if err != nil {
+		settings = defaultGlobalSettings()
+	}
+	if site.Kind == "static" || site.Port == 0 {
+		return managedStaticTemplate(settings)
+	}
+	template, err := m.Template()
+	if err != nil || strings.TrimSpace(template) == "" {
+		return managedProxyTemplate(settings)
+	}
+	return template
 }
 
 func (m *Manager) SetTemplate(ctx context.Context, value string) error {
@@ -323,7 +458,11 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	for _, site := range sites {
 		siteTemplate := template
 		if site.Kind == "static" || site.Port == 0 {
-			siteTemplate = recommendedStaticSiteTemplate
+			settings, err := m.GlobalSettings()
+			if err != nil {
+				settings = defaultGlobalSettings()
+			}
+			siteTemplate = managedStaticTemplate(settings)
 		}
 		if strings.TrimSpace(site.Template) != "" {
 			siteTemplate = site.Template
