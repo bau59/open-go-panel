@@ -931,6 +931,15 @@ func (m *Manager) load() ([]Database, error) {
 		return nil, fmt.Errorf("iterate databases state: %w", err)
 	}
 
+	if len(items) > 0 {
+		if _, done, err := m.store.Setting("migration.databases_json_done"); err != nil {
+			return nil, err
+		} else if !done {
+			if err := m.store.SetSetting("migration.databases_json_done", "1"); err != nil {
+				return nil, fmt.Errorf("mark database migration complete: %w", err)
+			}
+		}
+	}
 	if len(items) == 0 {
 		if _, done, err := m.store.Setting("migration.databases_json_done"); err != nil {
 			return nil, err
