@@ -1223,15 +1223,22 @@ func (m *Manager) load() ([]App, error) {
 	}
 
 	if len(apps) == 0 {
-		legacy, err := m.loadLegacy()
-		if err != nil {
+		if _, done, err := m.store.Setting("migration.apps_json_done"); err != nil {
 			return nil, err
-		}
-		if len(legacy) > 0 {
-			if err := m.save(legacy); err != nil {
-				return nil, fmt.Errorf("migrate legacy apps state: %w", err)
+		} else if !done {
+			legacy, err := m.loadLegacy()
+			if err != nil {
+				return nil, err
 			}
-			return legacy, nil
+			if len(legacy) > 0 {
+				if err := m.save(legacy); err != nil {
+					return nil, fmt.Errorf("migrate legacy apps state: %w", err)
+				}
+				apps = legacy
+			}
+			if err := m.store.SetSetting("migration.apps_json_done", "1"); err != nil {
+				return nil, fmt.Errorf("mark apps migration complete: %w", err)
+			}
 		}
 	}
 
