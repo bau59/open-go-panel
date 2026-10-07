@@ -583,7 +583,7 @@ func (m *Manager) Backup(ctx context.Context, id int64) (Backup, error) {
 	case "mysql":
 		cmd = exec.CommandContext(ctx, "mysqldump", "--protocol=socket", "-uroot", "--single-transaction", "--routines", "--triggers", "--events", item.Name)
 	case "postgres":
-		cmd = exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "pg_dump", "--no-owner", "--no-privileges", item.Name)
+		cmd = exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "pg_dump", "--clean", "--if-exists", "--no-owner", "--no-privileges", item.Name)
 	default:
 		return Backup{}, errors.New("unsupported database engine")
 	}
@@ -617,16 +617,38 @@ func (m *Manager) Backup(ctx context.Context, id int64) (Backup, error) {
 	return Backup{Engine: item.Engine, Database: item.Name, Path: path, Size: info.Size(), CreatedAt: info.ModTime().UTC()}, nil
 }
 
+func (m *Manager) BackupFile(id int64, path string) (string, error) {
+	item, err := m.Get(id)
+	if err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(path)
+	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
+	rel, err := filepath.Rel(root, clean)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", errors.New("backup path is outside the managed backup directory")
+	}
+	if !strings.HasSuffix(clean, ".sql.gz") {
+		return "", errors.New("invalid backup file")
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("backup is not a regular file")
+	}
+	return clean, nil
+}
+
 func (m *Manager) Restore(ctx context.Context, id int64, path string) error {
 	item, err := m.Get(id)
 	if err != nil {
 		return err
 	}
-	clean := filepath.Clean(path)
-	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
-	rel, err := filepath.Rel(root, clean)
-	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
-		return errors.New("backup path is outside the managed backup directory")
+	clean, err := m.BackupFile(id, path)
+	if err != nil {
+		return err
 	}
 
 	file, err := os.Open(clean)
