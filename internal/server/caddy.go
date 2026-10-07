@@ -81,11 +81,14 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		if app.Port == 0 {
-			http.Error(w, "this app has no reverse proxy port", http.StatusBadRequest)
+		kind := "proxy"
+		if app.Type == "static" {
+			kind = "static"
+		} else if app.Port == 0 {
+			http.Error(w, "this app has no web port", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Caddy.SetSite(r.Context(), id, r.FormValue("domain"), app.Port); err != nil {
+		if err := cfg.Caddy.SetSite(r.Context(), id, r.FormValue("domain"), app.Port, app.Root, kind); err != nil {
 			status := cfg.Apps.Status(r.Context(), id)
 			unit, _ := cfg.Apps.Unit(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, status, unit, err.Error()))
@@ -142,8 +145,16 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			value := site.Template
 			mode := "Custom override"
 			if strings.TrimSpace(value) == "" {
-				value = template
-				mode = "Using global template"
+				value = cfg.Caddy.DefaultTemplateForSite(site)
+				if site.Kind == "static" || site.Port == 0 {
+					mode = "Using static site default"
+				} else {
+					mode = "Using global template"
+				}
+			}
+			placeholderNote := "Required placeholders: <code>{domain}</code> and <code>{port}</code>."
+			if site.Kind == "static" || site.Port == 0 {
+				placeholderNote = "Required placeholders: <code>{domain}</code> and <code>{root}</code>."
 			}
 			selectedEditor = `
 		<section class="panel panel-pad" style="margin-bottom:16px">
@@ -160,7 +171,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<button class="button">Validate & apply to this domain</button>
 				</div>
 			</form>
-			<p class="note" style="margin:10px 0 0">This override affects only <strong>` + html.EscapeString(site.Domain) + `</strong>. Required placeholders: <code>{domain}</code> and <code>{port}</code>.</p>
+			<p class="note" style="margin:10px 0 0">This override affects only <strong>` + html.EscapeString(site.Domain) + `</strong>. ` + placeholderNote + `</p>
 		</section>`
 			break
 		}
@@ -225,7 +236,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 
 
 func appDomainBlock(cfg Config, app panelapp.App) string {
-	if cfg.Caddy == nil || app.Port == 0 {
+	if cfg.Caddy == nil || (app.Port == 0 && app.Type != "static") {
 		return ""
 	}
 	site, ok, err := cfg.Caddy.SiteForApp(app.ID)
