@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	defaultListenAddr = ":8443"
+	defaultListenAddr = "127.0.0.1:8443"
 	defaultAdminUser  = "admin"
 )
 
