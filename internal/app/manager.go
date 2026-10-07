@@ -1301,9 +1301,15 @@ func nextPort(apps []App) (int, error) {
 	}
 
 	for port := minPort; port <= maxPort; port++ {
-		if _, exists := used[port]; !exists {
-			return port, nil
+		if _, exists := used[port]; exists {
+			continue
 		}
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		_ = listener.Close()
+		return port, nil
 	}
 
 	return 0, errors.New("no free application ports available")
