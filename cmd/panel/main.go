@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bau59/open-go-panel/internal/app"
+	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/server"
@@ -32,6 +33,7 @@ func main() {
 	}
 
 	apps := app.New("/var/lib/open-go-panel/apps.json", users)
+	caddyManager := panelcaddy.New("/var/lib/open-go-panel/caddy-sites.json")
 	if err := apps.EnsureStorage(); err != nil {
 		logger.Error("ensure app storage failed", "err", err)
 		os.Exit(1)
@@ -45,6 +47,7 @@ func main() {
 			AdminPassword: cfg.AdminPassword,
 			Users:         users,
 			Apps:          apps,
+			Caddy:         caddyManager,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
