@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"compress/gzip"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,6 +113,31 @@ type Status struct {
 	PostgresInstalled bool
 	PostgresActive    bool
 }
+
+type MySQLMetrics struct {
+	Version            string
+	UptimeSeconds      int64
+	ThreadsConnected   int64
+	MaxUsedConnections int64
+	SlowQueries        int64
+	Questions          int64
+	BufferPoolBytes    int64
+	BufferPoolUsed     int64
+}
+
+type DatabaseSize struct {
+	Name  string
+	Bytes int64
+}
+
+type Backup struct {
+	Engine    string
+	Database  string
+	Path      string
+	Size      int64
+	CreatedAt time.Time
+}
+
 
 type Manager struct {
 	mu              sync.Mutex
@@ -401,6 +428,222 @@ func (m *Manager) AttachmentsForDatabase(databaseID int64) ([]Attachment, error)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (m *Manager) MySQLMetrics(ctx context.Context) (MySQLMetrics, error) {
+	if _, err := exec.LookPath("mysql"); err != nil {
+		return MySQLMetrics{}, errors.New("MySQL is not installed")
+	}
+
+	var metrics MySQLMetrics
+	query := `
+SELECT @@version;
+SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Max_used_connections','Slow_queries','Questions','Innodb_buffer_pool_pages_total','Innodb_buffer_pool_pages_free','Innodb_page_size');
+`
+	out, err := exec.CommandContext(ctx, "mysql", "--batch", "--skip-column-names", "--protocol=socket", "-uroot", "-e", query).CombinedOutput()
+	if err != nil {
+		return metrics, fmt.Errorf("read MySQL metrics: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 {
+		return metrics, nil
+	}
+	metrics.Version = strings.TrimSpace(lines[0])
+	values := map[string]int64{}
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		v, _ := strconv.ParseInt(fields[1], 10, 64)
+		values[fields[0]] = v
+	}
+	metrics.UptimeSeconds = values["Uptime"]
+	metrics.ThreadsConnected = values["Threads_connected"]
+	metrics.MaxUsedConnections = values["Max_used_connections"]
+	metrics.SlowQueries = values["Slow_queries"]
+	metrics.Questions = values["Questions"]
+	pageSize := values["Innodb_page_size"]
+	totalPages := values["Innodb_buffer_pool_pages_total"]
+	freePages := values["Innodb_buffer_pool_pages_free"]
+	metrics.BufferPoolBytes = totalPages * pageSize
+	metrics.BufferPoolUsed = (totalPages - freePages) * pageSize
+	return metrics, nil
+}
+
+func (m *Manager) MySQLDatabaseSizes(ctx context.Context) ([]DatabaseSize, error) {
+	query := `
+SELECT table_schema, COALESCE(SUM(data_length + index_length),0)
+FROM information_schema.tables
+WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')
+GROUP BY table_schema
+ORDER BY table_schema;
+`
+	out, err := exec.CommandContext(ctx, "mysql", "--batch", "--skip-column-names", "--protocol=socket", "-uroot", "-e", query).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("read MySQL database sizes: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var sizes []DatabaseSize
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		size, _ := strconv.ParseInt(fields[1], 10, 64)
+		sizes = append(sizes, DatabaseSize{Name: fields[0], Bytes: size})
+	}
+	return sizes, nil
+}
+
+func (m *Manager) Backup(ctx context.Context, id int64) (Backup, error) {
+	item, err := m.Get(id)
+	if err != nil {
+		return Backup{}, err
+	}
+
+	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return Backup{}, fmt.Errorf("create backup directory: %w", err)
+	}
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	path := filepath.Join(root, stamp+".sql.gz")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return Backup{}, err
+	}
+	defer file.Close()
+
+	gz := gzip.NewWriter(file)
+	defer gz.Close()
+
+	var cmd *exec.Cmd
+	switch item.Engine {
+	case "mysql":
+		cmd = exec.CommandContext(ctx, "mysqldump", "--protocol=socket", "-uroot", "--single-transaction", "--routines", "--triggers", "--events", item.Name)
+	case "postgres":
+		cmd = exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "pg_dump", "--no-owner", "--no-privileges", item.Name)
+	default:
+		return Backup{}, errors.New("unsupported database engine")
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return Backup{}, err
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return Backup{}, err
+	}
+	if _, err := io.Copy(gz, stdout); err != nil {
+		_ = cmd.Process.Kill()
+		_ = os.Remove(path)
+		return Backup{}, fmt.Errorf("write backup: %w", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		_ = os.Remove(path)
+		return Backup{}, fmt.Errorf("database backup failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	if err := gz.Close(); err != nil {
+		_ = os.Remove(path)
+		return Backup{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return Backup{}, err
+	}
+	return Backup{Engine: item.Engine, Database: item.Name, Path: path, Size: info.Size(), CreatedAt: info.ModTime().UTC()}, nil
+}
+
+func (m *Manager) Restore(ctx context.Context, id int64, path string) error {
+	item, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	clean := filepath.Clean(path)
+	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
+	rel, err := filepath.Rel(root, clean)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return errors.New("backup path is outside the managed backup directory")
+	}
+
+	file, err := os.Open(clean)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("open compressed backup: %w", err)
+	}
+	defer gz.Close()
+
+	var cmd *exec.Cmd
+	switch item.Engine {
+	case "mysql":
+		cmd = exec.CommandContext(ctx, "mysql", "--protocol=socket", "-uroot", item.Name)
+	case "postgres":
+		cmd = exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", item.Name)
+	default:
+		return errors.New("unsupported database engine")
+	}
+	cmd.Stdin = gz
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restore database: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (m *Manager) Backups(id int64) ([]Backup, error) {
+	item, err := m.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var backups []Backup
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql.gz") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		backups = append(backups, Backup{
+			Engine: item.Engine, Database: item.Name,
+			Path: filepath.Join(root, entry.Name()),
+			Size: info.Size(), CreatedAt: info.ModTime().UTC(),
+		})
+	}
+	sort.Slice(backups, func(i, j int) bool { return backups[i].CreatedAt.After(backups[j].CreatedAt) })
+	return backups, nil
+}
+
+func (m *Manager) PruneBackups(id int64, keep int) error {
+	if keep < 1 {
+		return errors.New("backup retention must keep at least one backup")
+	}
+	backups, err := m.Backups(id)
+	if err != nil {
+		return err
+	}
+	for _, backup := range backups[keep:] {
+		if err := os.Remove(backup.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) Create(ctx context.Context, engine, name, username string) (Database, error) {
