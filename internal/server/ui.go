@@ -175,6 +175,10 @@ const baseStyles = `
 	.pager-button.disabled{opacity:.4;pointer-events:none}
 	.log-toolbar{display:grid;grid-template-columns:minmax(200px,1fr) 150px 190px 190px auto;gap:8px;margin-bottom:14px}
 	.log-line{display:block;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.025)}
+	.table-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border)}
+	.table-tools-search{max-width:360px}
+	.table-tools-right{display:flex;align-items:center;gap:8px}
+	.table-tools-right select{width:92px;height:36px}
 	.statline{display:flex;align-items:center;gap:8px;margin-top:22px;color:#89e8bb;font-size:12px;font-weight:750}
 	.statline i{display:block;width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 5px var(--success-soft)}
 	details{position:relative}
@@ -208,6 +212,59 @@ const baseStyles = `
 	}
 `
 
+const tablePagerScript = `<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('table').forEach((table) => {
+    if (table.dataset.noPager === '1') return;
+    const tbody = table.tBodies[0];
+    if (!tbody) return;
+    const allRows = Array.from(tbody.rows);
+    if (allRows.length <= 25) return;
+
+    let page = 1;
+    let perPage = 25;
+    let query = '';
+
+    const tools = document.createElement('div');
+    tools.className = 'table-tools';
+    tools.innerHTML = '<input class="table-tools-search" type="search" placeholder="Search this table"><div class="table-tools-right"><span class="pager-info"></span><select aria-label="Rows per page"><option>25</option><option>50</option><option>100</option></select><button type="button" class="secondary" data-prev>Previous</button><button type="button" class="secondary" data-next>Next</button></div>';
+    table.parentNode.insertBefore(tools, table);
+
+    const search = tools.querySelector('input');
+    const select = tools.querySelector('select');
+    const info = tools.querySelector('.pager-info');
+    const prev = tools.querySelector('[data-prev]');
+    const next = tools.querySelector('[data-next]');
+
+    const render = () => {
+      const filtered = allRows.filter((row) => row.textContent.toLowerCase().includes(query));
+      const pages = Math.max(1, Math.ceil(filtered.length / perPage));
+      page = Math.min(Math.max(1, page), pages);
+      const start = (page - 1) * perPage;
+      const visible = new Set(filtered.slice(start, start + perPage));
+      allRows.forEach((row) => { row.hidden = !visible.has(row); });
+      info.textContent = filtered.length + ' items · page ' + page + ' of ' + pages;
+      prev.disabled = page <= 1;
+      next.disabled = page >= pages;
+    };
+
+    search.addEventListener('input', () => {
+      query = search.value.trim().toLowerCase();
+      page = 1;
+      render();
+    });
+    select.addEventListener('change', () => {
+      perPage = Number(select.value) || 25;
+      page = 1;
+      render();
+    });
+    prev.addEventListener('click', () => { if (page > 1) page--; render(); });
+    next.addEventListener('click', () => { page++; render(); });
+    render();
+  });
+});
+</script>`
+
 func pageHead(title string) string {
 	return `<!doctype html>
 <html lang="en">
@@ -215,7 +272,7 @@ func pageHead(title string) string {
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>` + html.EscapeString(title) + ` · Open Go Panel</title>
-	<style>` + baseStyles + `</style>
+	<style>` + baseStyles + `</style>` + tablePagerScript + `
 </head>`
 }
 
