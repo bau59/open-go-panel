@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	panelapp "github.com/bau59/open-go-panel/internal/app"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 )
 
@@ -112,4 +113,50 @@ func caddyPage(status string, sites []panelcaddy.Site, config, message string) s
 		</section>
 	</main>
 </body></html>`
+}
+
+
+func appDomainBlock(cfg Config, app panelapp.App) string {
+	if cfg.Caddy == nil || app.Port == 0 {
+		return ""
+	}
+	site, ok, err := cfg.Caddy.SiteForApp(app.ID)
+	if err != nil {
+		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
+	}
+	if ok {
+		return `
+			<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+				<div class="section-title" style="margin-bottom:10px">
+					<div>
+						<label style="margin:0">Domain</label>
+						<a href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener"><strong>` + html.EscapeString(site.Domain) + `</strong></a>
+					</div>
+					<span class="status-badge ok">connected</span>
+				</div>
+				<p class="note" style="margin:0 0 10px">HTTPS is handled by Caddy and proxied to <code>` + html.EscapeString(site.Target()) + `</code>.</p>
+				<div class="actions" style="justify-content:flex-start">
+					<a class="secondary" href="https://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener">Open site</a>
+					<a class="secondary" href="/caddy">Caddy settings</a>
+					<details>
+						<summary class="secondary">Change domain</summary>
+						<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="inline-popover wide">
+							<label>New domain</label>
+							<input name="domain" value="` + html.EscapeString(site.Domain) + `" required>
+							<button class="button">Save domain</button>
+						</form>
+					</details>
+					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain/delete"><button class="danger">Disconnect</button></form>
+				</div>
+			</div>`
+	}
+	return `
+		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+			<label>Domain</label>
+			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="compact-form">
+				<input name="domain" placeholder="example.com" required>
+				<button class="button">Connect domain</button>
+			</form>
+			<p class="note" style="margin:8px 0 0">Point the domain DNS to this server. Caddy will request and renew HTTPS automatically.</p>
+		</div>`
 }
