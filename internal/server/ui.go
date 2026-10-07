@@ -125,7 +125,7 @@ const baseStyles = `
 	.tab{padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:#0d131d;color:var(--muted);font-size:12px;font-weight:700}
 	.codearea{min-height:320px;font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;line-height:1.55}
 	.logbox{min-height:420px;max-height:65vh;overflow:auto;margin:0;padding:18px;border:1px solid var(--border);border-radius:14px;background:#080c12;color:#c6cfdd;font:12px/1.6 "SFMono-Regular",Consolas,monospace;white-space:pre-wrap}
-	.security-output{max-height:420px;overflow:auto;margin:0;padding:16px;border:1px solid var(--border);border-radius:12px;background:#080c12;color:#c6cfdd;font:12px/1.55 "SFMono-Regular",Consolas,monospace;white-space:pre-wrap}
+	.security-output{max-height:420px;overflow:auto;margin:0;padding:16px;border:1px solid var(--border);border-radius:12px;background:#080c12;color:#c6cfdd;font:11px/1.55 "SFMono-Regular",Consolas,monospace;white-space:pre;overscroll-behavior:contain}
 	.compact-form{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
 	.compact-form-3{grid-template-columns:1fr 1fr auto}
 	.security-grid{grid-template-columns:1fr 1fr}
