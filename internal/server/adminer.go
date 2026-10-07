@@ -59,5 +59,6 @@ func registerAdminerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
 	mux.Handle("GET /db-admin", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/db-admin/", http.StatusSeeOther)
 	})))
-	mux.Handle("/db-admin/", requireAuth(store, proxy))
+	mux.Handle("GET /db-admin/{path...}", requireAuth(store, proxy))
+	mux.Handle("POST /db-admin/{path...}", requireAuth(store, proxy))
 }
