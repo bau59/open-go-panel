@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ var (
 	envNamePattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 	cpuPattern     = regexp.MustCompile("^[0-9]{1,4}%$")
 	memoryPattern  = regexp.MustCompile("^[0-9]+[KMGTP]$")
+	branchPattern  = regexp.MustCompile("^[A-Za-z0-9._/-]{1,128}$")
 )
 
 type ServiceConfig struct {
@@ -64,6 +66,14 @@ type App struct {
 	Command   string        `json:"command,omitempty"`
 	Service   ServiceConfig `json:"service,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
+}
+
+type DeployConfig struct {
+	Repository     string
+	Branch         string
+	CurrentCommit  string
+	PreviousCommit string
+	DeployedAt     time.Time
 }
 
 type RuntimeHealth struct {
@@ -214,6 +224,195 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 	}
 
 	return app, nil
+}
+
+func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
+	var cfg DeployConfig
+	var deployedAt string
+	err := m.store.DB().QueryRow(`
+		SELECT repository, branch, current_commit, previous_commit, deployed_at
+		FROM deployments
+		WHERE app_id = ?
+	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit, &deployedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeployConfig{Branch: "main"}, nil
+	}
+	if err != nil {
+		return cfg, fmt.Errorf("read deployment config: %w", err)
+	}
+	if deployedAt != "" {
+		cfg.DeployedAt, _ = time.Parse(time.RFC3339Nano, deployedAt)
+	}
+	return cfg, nil
+}
+
+func (m *Manager) SetDeployConfig(id int64, repository, branch string) error {
+	repository = strings.TrimSpace(repository)
+	branch = strings.TrimSpace(branch)
+	if repository == "" {
+		return errors.New("Git repository is required")
+	}
+	if strings.ContainsAny(repository, " \t\r\n") {
+		return errors.New("Git repository URL must not contain whitespace")
+	}
+	if !(strings.HasPrefix(repository, "https://") || strings.HasPrefix(repository, "ssh://") || strings.HasPrefix(repository, "git@")) {
+		return errors.New("Git repository must use https://, ssh:// or git@")
+	}
+	if !branchPattern.MatchString(branch) || strings.Contains(branch, "..") || strings.HasPrefix(branch, "-") {
+		return errors.New("invalid Git branch")
+	}
+	if _, err := m.Get(id); err != nil {
+		return err
+	}
+	_, err := m.store.DB().Exec(`
+		INSERT INTO deployments(app_id, repository, branch)
+		VALUES(?, ?, ?)
+		ON CONFLICT(app_id) DO UPDATE SET
+			repository=excluded.repository,
+			branch=excluded.branch
+	`, id, repository, branch)
+	if err != nil {
+		return fmt.Errorf("save deployment config: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) Deploy(ctx context.Context, id int64) error {
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return err
+	}
+	if cfg.Repository == "" {
+		return errors.New("configure a Git repository before deploying")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return errors.New("git is not installed")
+	}
+
+	if _, err := os.Stat(filepath.Join(app.Root, ".git")); errors.Is(err, os.ErrNotExist) {
+		if _, err := runAsUser(ctx, app.User, app.Root, "git", "init"); err != nil {
+			return err
+		}
+		if _, err := runAsUser(ctx, app.User, app.Root, "git", "remote", "add", "origin", cfg.Repository); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect app repository: %w", err)
+	} else {
+		if _, err := runAsUser(ctx, app.User, app.Root, "git", "remote", "set-url", "origin", cfg.Repository); err != nil {
+			return err
+		}
+	}
+
+	previous := ""
+	if out, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "HEAD"); err == nil {
+		previous = strings.TrimSpace(out)
+	}
+
+	if _, err := runAsUser(ctx, app.User, app.Root, "git", "fetch", "--prune", "origin", cfg.Branch); err != nil {
+		return err
+	}
+	targetOut, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "FETCH_HEAD")
+	if err != nil {
+		return err
+	}
+	target := strings.TrimSpace(targetOut)
+	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", target); err != nil {
+		return err
+	}
+
+	if err := m.prepareDeployment(ctx, app); err != nil {
+		if previous != "" {
+			_, _ = runAsUser(context.Background(), app.User, app.Root, "git", "reset", "--hard", previous)
+		}
+		return err
+	}
+	if app.Type != "static" {
+		if err := m.Restart(ctx, id); err != nil {
+			if previous != "" {
+				_, _ = runAsUser(context.Background(), app.User, app.Root, "git", "reset", "--hard", previous)
+				_ = m.Restart(context.Background(), id)
+			}
+			return err
+		}
+	}
+
+	_, err = m.store.DB().Exec(`
+		UPDATE deployments
+		SET current_commit = ?, previous_commit = ?, deployed_at = ?
+		WHERE app_id = ?
+	`, target, previous, time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return fmt.Errorf("save deployment result: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) Rollback(ctx context.Context, id int64) error {
+	app, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return err
+	}
+	if cfg.PreviousCommit == "" {
+		return errors.New("no previous deployment is available")
+	}
+	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", cfg.PreviousCommit); err != nil {
+		return err
+	}
+	if err := m.prepareDeployment(ctx, app); err != nil {
+		return err
+	}
+	if app.Type != "static" {
+		if err := m.Restart(ctx, id); err != nil {
+			return err
+		}
+	}
+	_, err = m.store.DB().Exec(`
+		UPDATE deployments
+		SET current_commit = ?, previous_commit = ?, deployed_at = ?
+		WHERE app_id = ?
+	`, cfg.PreviousCommit, cfg.CurrentCommit, time.Now().UTC().Format(time.RFC3339Nano), id)
+	return err
+}
+
+func (m *Manager) prepareDeployment(ctx context.Context, app App) error {
+	switch app.Type {
+	case "node":
+		if _, err := os.Stat(filepath.Join(app.Root, "package-lock.json")); err == nil {
+			_, err = runAsUser(ctx, app.User, app.Root, "npm", "ci")
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(app.Root, "package.json")); err == nil {
+			_, err = runAsUser(ctx, app.User, app.Root, "npm", "install")
+			return err
+		}
+	case "go":
+		if _, err := os.Stat(filepath.Join(app.Root, "go.mod")); err == nil {
+			_, err = runAsUser(ctx, app.User, app.Root, "go", "mod", "download")
+			return err
+		}
+	}
+	return nil
+}
+
+func runAsUser(ctx context.Context, username, dir, name string, args ...string) (string, error) {
+	runArgs := []string{"-u", username, "--", name}
+	runArgs = append(runArgs, args...)
+	cmd := exec.CommandContext(ctx, "runuser", runArgs...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
 }
 
 func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
