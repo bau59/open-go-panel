@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"os/exec"
 	"strings"
 	"sync"
@@ -15,12 +16,14 @@ import (
 const allowlistName = "open-go-panel"
 
 type Status struct {
-	Installed      bool
-	EngineActive   bool
-	BouncerActive  bool
-	Version        string
-	Installing     bool
-	InstallError   string
+	Installed       bool
+	EngineActive    bool
+	BouncerActive   bool
+	Version         string
+	Installing      bool
+	InstallError    string
+	FirewallActive  bool
+	FirewallStatus  string
 }
 
 type Manager struct {
@@ -41,6 +44,8 @@ func (m *Manager) Status(ctx context.Context) Status {
 	}
 	s.EngineActive = serviceActive(ctx, "crowdsec.service")
 	s.BouncerActive = serviceActive(ctx, "crowdsec-firewall-bouncer.service")
+	s.FirewallStatus = firewallStatus(ctx)
+	s.FirewallActive = strings.Contains(strings.ToLower(s.FirewallStatus), "status: active")
 
 	m.mu.Lock()
 	s.Installing = m.installing
@@ -125,6 +130,89 @@ func install(ctx context.Context, trustedIP string) error {
 		return err
 	}
 	return run(ctx, "systemctl", "enable", "--now", "crowdsec-firewall-bouncer.service")
+}
+
+
+func (m *Manager) EnableFirewall(ctx context.Context) error {
+	if err := run(ctx, "apt-get", "install", "-y", "ufw"); err != nil {
+		return err
+	}
+
+	ports := map[int]struct{}{80: {}, 443: {}}
+	if p := panelPort(); p > 0 {
+		ports[p] = struct{}{}
+	}
+	for _, p := range sshPorts(ctx) {
+		ports[p] = struct{}{}
+	}
+
+	if err := run(ctx, "ufw", "default", "deny", "incoming"); err != nil {
+		return err
+	}
+	if err := run(ctx, "ufw", "default", "allow", "outgoing"); err != nil {
+		return err
+	}
+
+	for port := range ports {
+		if err := run(ctx, "ufw", "allow", strconv.Itoa(port)+"/tcp"); err != nil {
+			return err
+		}
+	}
+
+	return run(ctx, "ufw", "--force", "enable")
+}
+
+func (m *Manager) FirewallRules(ctx context.Context) string {
+	return firewallStatus(ctx)
+}
+
+func firewallStatus(ctx context.Context) string {
+	if _, err := exec.LookPath("ufw"); err != nil {
+		return "UFW is not installed."
+	}
+	out, err := exec.CommandContext(ctx, "ufw", "status", "numbered").CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil && text == "" {
+		return err.Error()
+	}
+	return text
+}
+
+func panelPort() int {
+	addr := strings.TrimSpace(os.Getenv("OGP_LISTEN_ADDR"))
+	if addr == "" {
+		return 8443
+	}
+	if strings.HasPrefix(addr, ":") {
+		p, _ := strconv.Atoi(strings.TrimPrefix(addr, ":"))
+		return p
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 8443
+	}
+	p, _ := strconv.Atoi(port)
+	return p
+}
+
+func sshPorts(ctx context.Context) []int {
+	out, err := exec.CommandContext(ctx, "sshd", "-T").CombinedOutput()
+	if err != nil {
+		return []int{22}
+	}
+	var ports []int
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "port" {
+			if p, err := strconv.Atoi(fields[1]); err == nil && p > 0 && p <= 65535 {
+				ports = append(ports, p)
+			}
+		}
+	}
+	if len(ports) == 0 {
+		return []int{22}
+	}
+	return ports
 }
 
 func (m *Manager) Decisions(ctx context.Context) string {
