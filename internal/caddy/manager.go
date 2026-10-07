@@ -635,6 +635,15 @@ func (m *Manager) load() ([]Site, error) {
 		return nil, fmt.Errorf("iterate domains state: %w", err)
 	}
 
+	if len(sites) > 0 {
+		if _, done, err := m.store.Setting("migration.caddy_sites_json_done"); err != nil {
+			return nil, err
+		} else if !done {
+			if err := m.store.SetSetting("migration.caddy_sites_json_done", "1"); err != nil {
+				return nil, fmt.Errorf("mark Caddy migration complete: %w", err)
+			}
+		}
+	}
 	if len(sites) == 0 {
 		if _, done, err := m.store.Setting("migration.caddy_sites_json_done"); err != nil {
 			return nil, err
