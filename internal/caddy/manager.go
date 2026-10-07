@@ -2,6 +2,7 @@ package caddy
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/bau59/open-go-panel/internal/state"
 )
 
 const recommendedSiteTemplate = `{domain} {
@@ -31,17 +34,19 @@ type Site struct {
 }
 
 type Manager struct {
-	mu           sync.Mutex
-	stateFile    string
-	configFile   string
-	templateFile string
+	mu              sync.Mutex
+	store           *state.Store
+	legacyStateFile string
+	configFile      string
+	legacyTemplateFile string
 }
 
-func New(stateFile string) *Manager {
+func New(store *state.Store, legacyStateFile string) *Manager {
 	return &Manager{
-		stateFile:    stateFile,
-		configFile:   "/etc/caddy/Caddyfile",
-		templateFile: filepath.Join(filepath.Dir(stateFile), "caddy-site-template.txt"),
+		store:              store,
+		legacyStateFile:    legacyStateFile,
+		configFile:         "/etc/caddy/Caddyfile",
+		legacyTemplateFile: filepath.Join(filepath.Dir(legacyStateFile), "caddy-site-template.txt"),
 	}
 }
 
@@ -165,18 +170,32 @@ func (m *Manager) RemoveSite(ctx context.Context, appID int64) error {
 
 
 func (m *Manager) Template() (string, error) {
-	data, err := os.ReadFile(m.templateFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return recommendedSiteTemplate, nil
+	var value string
+	err := m.store.DB().QueryRow(`SELECT value FROM settings WHERE key = 'caddy.site_template'`).Scan(&value)
+	if err == nil {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value, nil
+		}
 	}
-	if err != nil {
-		return "", err
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("read Caddy template setting: %w", err)
 	}
-	value := strings.TrimSpace(string(data))
-	if value == "" {
-		return recommendedSiteTemplate, nil
+
+	data, legacyErr := os.ReadFile(m.legacyTemplateFile)
+	if legacyErr == nil {
+		value = strings.TrimSpace(string(data))
+		if value != "" {
+			_, _ = m.store.DB().Exec(`
+				INSERT INTO settings(key, value) VALUES('caddy.site_template', ?)
+				ON CONFLICT(key) DO UPDATE SET value=excluded.value
+			`, value)
+			return value, nil
+		}
+	} else if !errors.Is(legacyErr, os.ErrNotExist) {
+		return "", legacyErr
 	}
-	return value, nil
+	return recommendedSiteTemplate, nil
 }
 
 func (m *Manager) RecommendedTemplate() string {
@@ -197,11 +216,11 @@ func (m *Manager) SetTemplate(ctx context.Context, value string) error {
 	if err := m.validateRendered(ctx, renderSite(value, Site{Domain: "example.com", Port: 8100})); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(m.templateFile), 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(m.templateFile, []byte(value+"\n"), 0600); err != nil {
-		return err
+	if _, err := m.store.DB().Exec(`
+		INSERT INTO settings(key, value) VALUES('caddy.site_template', ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value
+	`, value); err != nil {
+		return fmt.Errorf("save Caddy template setting: %w", err)
 	}
 	sites, err := m.load()
 	if err != nil {
@@ -296,31 +315,106 @@ func (m *Manager) validateRendered(ctx context.Context, config string) error {
 }
 
 func (m *Manager) load() ([]Site, error) {
-	data, err := os.ReadFile(m.stateFile)
-	if errors.Is(err, os.ErrNotExist) { return []Site{}, nil }
-	if err != nil { return nil, err }
-	if len(strings.TrimSpace(string(data))) == 0 { return []Site{}, nil }
+	rows, err := m.store.DB().Query(`
+		SELECT app_id, domain, port, template
+		FROM domains
+		ORDER BY domain
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query domains state: %w", err)
+	}
+	defer rows.Close()
 
 	var sites []Site
-	if err := json.Unmarshal(data, &sites); err != nil { return nil, err }
+	for rows.Next() {
+		var site Site
+		if err := rows.Scan(&site.AppID, &site.Domain, &site.Port, &site.Template); err != nil {
+			return nil, fmt.Errorf("scan domain state: %w", err)
+		}
+		sites = append(sites, site)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate domains state: %w", err)
+	}
+
+	if len(sites) == 0 {
+		legacy, err := m.loadLegacy()
+		if err != nil {
+			return nil, err
+		}
+		if len(legacy) > 0 {
+			if err := m.save(legacy); err != nil {
+				return nil, fmt.Errorf("migrate legacy domains state: %w", err)
+			}
+			return legacy, nil
+		}
+	}
+	return sites, nil
+}
+
+func (m *Manager) loadLegacy() ([]Site, error) {
+	data, err := os.ReadFile(m.legacyStateFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, nil
+	}
+	var sites []Site
+	if err := json.Unmarshal(data, &sites); err != nil {
+		return nil, err
+	}
 	return sites, nil
 }
 
 func (m *Manager) save(sites []Site) error {
-	if err := os.MkdirAll(filepath.Dir(m.stateFile), 0755); err != nil { return err }
-	data, err := json.MarshalIndent(sites, "", "  ")
-	if err != nil { return err }
-	data = append(data, '\n')
+	tx, err := m.store.DB().Begin()
+	if err != nil {
+		return fmt.Errorf("begin domains state transaction: %w", err)
+	}
+	defer tx.Rollback()
 
-	tmp, err := os.CreateTemp(filepath.Dir(m.stateFile), ".caddy-sites-*")
-	if err != nil { return err }
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	keep := make(map[int64]struct{}, len(sites))
+	for _, site := range sites {
+		if _, err := tx.Exec(`
+			INSERT INTO domains(app_id, domain, port, template)
+			VALUES(?, ?, ?, ?)
+			ON CONFLICT(app_id) DO UPDATE SET
+				domain=excluded.domain,
+				port=excluded.port,
+				template=excluded.template
+		`, site.AppID, site.Domain, site.Port, site.Template); err != nil {
+			return fmt.Errorf("save domain %s state: %w", site.Domain, err)
+		}
+		keep[site.AppID] = struct{}{}
+	}
 
-	if _, err := tmp.Write(data); err != nil { _ = tmp.Close(); return err }
-	if err := tmp.Chmod(0600); err != nil { _ = tmp.Close(); return err }
-	if err := tmp.Close(); err != nil { return err }
-	return os.Rename(tmpName, m.stateFile)
+	rows, err := tx.Query(`SELECT app_id FROM domains`)
+	if err != nil {
+		return fmt.Errorf("query existing domain ids: %w", err)
+	}
+	var stale []int64
+	for rows.Next() {
+		var appID int64
+		if err := rows.Scan(&appID); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, ok := keep[appID]; !ok {
+			stale = append(stale, appID)
+		}
+	}
+	rows.Close()
+	for _, appID := range stale {
+		if _, err := tx.Exec(`DELETE FROM domains WHERE app_id = ?`, appID); err != nil {
+			return fmt.Errorf("delete stale domain state for app %d: %w", appID, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s Site) Target() string {
