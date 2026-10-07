@@ -30,7 +30,65 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, ""))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", databaseBlock(cfg, app)))
+	})))
+
+	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		dbID, err := strconv.ParseInt(r.FormValue("database_id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid database id", http.StatusBadRequest)
+			return
+		}
+		if cfg.Databases == nil {
+			http.Error(w, "database manager is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		db, err := cfg.Databases.Get(dbID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		envName := strings.TrimSpace(r.FormValue("env_name"))
+		if envName == "" {
+			envName = "DATABASE_URL"
+		}
+		if err := cfg.Apps.SetEnvironmentVariable(r.Context(), id, envName, db.DSN()); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/database/detach", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		envName := strings.TrimSpace(r.FormValue("env_name"))
+		if envName == "" {
+			envName = "DATABASE_URL"
+		}
+		if err := cfg.Apps.RemoveEnvironmentVariable(r.Context(), id, envName); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), databaseBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
 	mux.Handle("POST /apps/{id}/command", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +397,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 </html>`
 }
 
-func appPage(app panelapp.App, status, unit, message string) string {
+func appPage(app panelapp.App, status, unit, message string, extras ...string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -365,6 +423,11 @@ func appPage(app panelapp.App, status, unit, message string) string {
 				</div>
 				<p class="note" style="margin:8px 0 0">DNS must point to this server. Caddy will request TLS automatically.</p>
 			</div>`
+	}
+
+	extraBlock := ""
+	if len(extras) > 0 {
+		extraBlock = strings.Join(extras, "")
 	}
 
 	statusClass := ""
@@ -521,7 +584,7 @@ func appPage(app panelapp.App, status, unit, message string) string {
 					<span>Port</span><code>` + port + `</code>
 					<span>Root</span><code>` + html.EscapeString(app.Root) + `</code>
 					<span>Service</span><code>open-go-panel-app-` + fmt.Sprintf("%d", app.ID) + `.service</code>
-				</div>` + domainBlock + `
+				</div>` + domainBlock + extraBlock + `
 			</section>
 			<section class="panel panel-pad">` + serviceBlock + `</section>
 		</div>
@@ -650,4 +713,45 @@ func recommendedServiceConfig(app panelapp.App, info systeminfo.Info) panelapp.S
 		AutoStart:        true,
 		Environment:      app.Service.Environment,
 	}
+}
+
+
+func databaseBlock(cfg Config, app panelapp.App) string {
+	if cfg.Databases == nil || app.Type == "static" {
+		return ""
+	}
+	items, err := cfg.Databases.List()
+	if err != nil {
+		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
+	}
+
+	var options strings.Builder
+	for _, item := range items {
+		label := item.Name + " · " + item.Engine
+		fmt.Fprintf(&options, `<option value="%d">%s</option>`, item.ID, html.EscapeString(label))
+	}
+
+	if options.Len() == 0 {
+		return `
+			<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+				<label>Database</label>
+				<p class="note" style="margin:6px 0 10px">No managed databases yet.</p>
+				<a class="secondary" href="/databases">Open Databases</a>
+			</div>`
+	}
+
+	return `
+		<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+			<label>Database</label>
+			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/database" class="grid" style="grid-template-columns:1fr 150px auto;gap:8px">
+				<select name="database_id" required>` + options.String() + `</select>
+				<input name="env_name" value="DATABASE_URL" placeholder="ENV name" required>
+				<button class="button">Attach</button>
+			</form>
+			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/database/detach" class="compact-form" style="margin-top:8px">
+				<input name="env_name" value="DATABASE_URL" placeholder="ENV name" required>
+				<button class="secondary">Detach</button>
+			</form>
+			<p class="note" style="margin:8px 0 0">Attach writes the selected connection string into the app environment and regenerates its systemd config.</p>
+		</div>`
 }
