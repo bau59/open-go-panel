@@ -145,7 +145,16 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			value := site.Template
 			mode := "Custom override"
 			if strings.TrimSpace(value) == "" {
-				value = cfg.Caddy.DefaultTemplateForSite(site)
+				if site.Kind == "static" || site.Port == 0 {
+					value = `{domain} {
+	encode zstd gzip
+	root * {root}
+	file_server
+	log
+}`
+				} else {
+					value = template
+				}
 				if site.Kind == "static" || site.Port == 0 {
 					mode = "Using static site default"
 				} else {
