@@ -376,7 +376,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 			routeLabel = "HTTP"
 		}
 		return `
-			<div class="app-section">
+			<section class="panel panel-pad app-card">
 				<div class="section-title">
 					<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Public address and reverse proxy routing.</p></div>
 					<span class="status-badge ok">connected</span>
@@ -400,10 +400,10 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 					</details>
 					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain/delete"><button class="danger">Disconnect</button></form>
 				</div>
-			</div>`
+			</section>`
 	}
 	return `
-		<div class="app-section">
+		<section class="panel panel-pad app-card">
 			<div class="section-title">
 				<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Connect a public domain. Caddy handles routing and the global web defaults.</p></div>
 			</div>
@@ -411,7 +411,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 				<input name="domain" placeholder="example.com" required>
 				<button class="button">Connect domain</button>
 			</form>
-		</div>`
+		</section>`
 }
 
 
