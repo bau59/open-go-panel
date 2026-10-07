@@ -14,6 +14,15 @@ type Store struct {
 	db *sql.DB
 }
 
+type AuditEntry struct {
+	ID        int64
+	CreatedAt string
+	Action    string
+	Target    string
+	Details   string
+}
+
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
@@ -144,4 +153,30 @@ func (s *Store) Audit(ctx context.Context, action, target, details string) {
 		 VALUES(strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?)`,
 		action, target, details,
 	)
+}
+
+func (s *Store) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, created_at, action, target, details
+		FROM audit_log
+		ORDER BY id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []AuditEntry
+	for rows.Next() {
+		var entry AuditEntry
+		if err := rows.Scan(&entry.ID, &entry.CreatedAt, &entry.Action, &entry.Target, &entry.Details); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
 }
