@@ -350,6 +350,23 @@ func appPage(app panelapp.App, status, unit, message string) string {
 		port = fmt.Sprintf("%d", app.Port)
 	}
 
+	domainBlock := ""
+	if app.Port > 0 {
+		domainBlock = `
+			<div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+				<label>Domain</label>
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="compact-form">
+					<input name="domain" placeholder="example.com" required>
+					<button class="button">Connect</button>
+				</form>
+				<div class="actions" style="justify-content:flex-start;margin-top:8px">
+					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain/delete"><button class="secondary">Remove domain</button></form>
+					<a class="secondary" href="/caddy">Open Caddy</a>
+				</div>
+				<p class="note" style="margin:8px 0 0">DNS must point to this server. Caddy will request TLS automatically.</p>
+			</div>`
+	}
+
 	statusClass := ""
 	if status == "active" {
 		statusClass = " ok"
@@ -504,7 +521,7 @@ func appPage(app panelapp.App, status, unit, message string) string {
 					<span>Port</span><code>` + port + `</code>
 					<span>Root</span><code>` + html.EscapeString(app.Root) + `</code>
 					<span>Service</span><code>open-go-panel-app-` + fmt.Sprintf("%d", app.ID) + `.service</code>
-				</div>
+				</div>` + domainBlock + `
 			</section>
 			<section class="panel panel-pad">` + serviceBlock + `</section>
 		</div>
