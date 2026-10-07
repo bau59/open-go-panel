@@ -158,6 +158,22 @@ labels:
 }
 
 
+func (m *Manager) StartProtection(ctx context.Context) error {
+	if _, err := exec.LookPath("cscli"); err != nil {
+		return errors.New("CrowdSec is not installed")
+	}
+	if err := run(ctx, "systemctl", "enable", "--now", "crowdsec.service"); err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("crowdsec-firewall-bouncer"); err == nil {
+		return run(ctx, "systemctl", "enable", "--now", "crowdsec-firewall-bouncer.service")
+	}
+	if _, err := os.Stat("/usr/bin/crowdsec-firewall-bouncer"); err == nil {
+		return run(ctx, "systemctl", "enable", "--now", "crowdsec-firewall-bouncer.service")
+	}
+	return errors.New("CrowdSec firewall bouncer is not installed")
+}
+
 func (m *Manager) EnableFirewall(ctx context.Context) error {
 	if err := run(ctx, "apt-get", "install", "-y", "ufw"); err != nil {
 		return err
