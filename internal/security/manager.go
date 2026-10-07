@@ -233,7 +233,7 @@ func (m *Manager) EnableFirewall(ctx context.Context) error {
 	}
 
 	ports := map[int]struct{}{80: {}, 443: {}}
-	if p := panelPort(); p > 0 {
+	if p := panelPublicPort(); p > 0 {
 		ports[p] = struct{}{}
 	}
 	for _, p := range sshPorts(ctx) {
@@ -272,18 +272,25 @@ func firewallStatus(ctx context.Context) string {
 	return text
 }
 
-func panelPort() int {
+func panelPublicPort() int {
 	addr := strings.TrimSpace(os.Getenv("OGP_LISTEN_ADDR"))
 	if addr == "" {
-		return 8443
+		return 0
 	}
 	if strings.HasPrefix(addr, ":") {
 		p, _ := strconv.Atoi(strings.TrimPrefix(addr, ":"))
 		return p
 	}
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return 8443
+		return 0
+	}
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return 0
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return 0
 	}
 	p, _ := strconv.Atoi(port)
 	return p
