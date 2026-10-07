@@ -29,6 +29,14 @@ func registerSecurityRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/security", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /security/web/enable", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := cfg.Security.EnableWebProtection(r.Context()); err != nil {
+			writeSecurityPage(w, r, cfg, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/security", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /security/protection/start", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := cfg.Security.StartProtection(r.Context()); err != nil {
 			writeSecurityPage(w, r, cfg, err.Error())
@@ -143,11 +151,15 @@ func securityPage(status security.Status, decisions, alerts, allowlist, message 
 	if status.Installed && (!status.EngineActive || !status.BouncerActive) {
 		setupText = "CrowdSec is installed, but one of its protection services is stopped."
 		setupAction = `<form method="post" action="/security/protection/start"><button class="button">Start CrowdSec protection</button></form>`
+	} else if status.EngineActive && status.BouncerActive && !status.WebProtection {
+		setupState = "Almost ready"
+		setupText = "CrowdSec is running, but Caddy web traffic is not connected yet. Enable web protection to detect HTTP scanners and attacks."
+		setupAction = `<form method="post" action="/security/web/enable"><button class="button">Enable web protection</button></form>`
 	} else if status.EngineActive && status.BouncerActive && !status.FirewallActive {
 		setupState = "Almost ready"
 		setupText = "CrowdSec is detecting and blocking abusive IPs. Enable UFW to close unused public ports."
 		setupAction = `<form method="post" action="/security/firewall/enable"><button class="button">Enable recommended firewall</button></form>`
-	} else if status.EngineActive && status.BouncerActive && status.FirewallActive {
+	} else if status.EngineActive && status.BouncerActive && status.FirewallActive && status.WebProtection {
 		setupState = "Protected"
 		setupClass = " ok"
 		setupText = "Recommended protection is enabled: detection, dynamic IP blocking and a deny-by-default firewall."
