@@ -104,6 +104,10 @@ const baseStyles = `
 	.status-badge.warn{border-color:rgba(246,196,83,.2);background:var(--warning-soft);color:#f7d884}
 	.status-badge.warn::before{background:var(--warning)}
 	.actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+	.actions form,.section-title form{margin:0}
+	.metric form{margin-top:12px}
+	.metric .button,.metric .secondary{width:max-content}
+	.toolbar .button{height:42px;white-space:nowrap}
 	.alert{margin-bottom:16px;padding:12px 14px;border:1px solid rgba(255,107,122,.25);border-radius:12px;background:var(--danger-soft);color:#ffabb4;font-size:13px}
 	.empty{padding:38px!important;text-align:center;color:var(--muted-2)}
 	code{font-family:"SFMono-Regular",Consolas,monospace;color:#b8c1d1;font-size:12px}
