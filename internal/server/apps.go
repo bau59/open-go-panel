@@ -852,60 +852,77 @@ func defaultString(value, fallback string) string {
 func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 	health := cfg.Apps.RuntimeHealth(r.Context(), app.ID)
 
-	statusBadge := func(ok bool, label string) string {
+	statusCard := func(state, label, detail string) string {
 		className := "warn"
-		state := "down"
-		if ok {
+		if state == "ok" {
 			className = "ok"
-			state = "ok"
 		}
-		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong>` + state + `</strong><small><span class="status-badge ` + className + `">` + state + `</span></small></div>`
+		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong>` + html.EscapeString(state) + `</strong><small>` + html.EscapeString(detail) + ` · <span class="status-badge ` + className + `">` + html.EscapeString(state) + `</span></small></div>`
+	}
+	naCard := func(label, detail string) string {
+		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong>n/a</strong><small>` + html.EscapeString(detail) + `</small></div>`
 	}
 
-	processOK := health.ProcessStatus == "active"
-	portOK := health.PortListening
-	httpOK := health.HTTPReachable
+	processCard := statusCard("down", "Process", health.ProcessStatus)
+	if health.ProcessStatus == "active" {
+		processCard = statusCard("ok", "Process", "systemd active")
+	}
+	if app.Type == "static" {
+		processCard = naCard("Process", "served directly by Caddy")
+	}
 
-	domainOK := false
-	domainLabel := "Domain / TLS"
-	domainDetail := "not connected"
+	portCard := naCard("Port", "not required")
+	localHTTPCard := naCard("Local HTTP", "not required")
+	if app.Port > 0 {
+		if health.PortListening {
+			portCard = statusCard("ok", "Port", "127.0.0.1:"+strconv.Itoa(app.Port))
+		} else {
+			portCard = statusCard("down", "Port", "not listening")
+		}
+
+		localState := "down"
+		localDetail := "unreachable"
+		if health.HTTPReachable {
+			localDetail = "HTTP " + strconv.Itoa(health.HTTPStatus)
+			if health.HTTPStatus < 500 {
+				localState = "ok"
+			}
+		}
+		localHTTPCard = statusCard(localState, "Local HTTP", localDetail)
+	}
+
+	publicCard := naCard("Public URL", "domain not connected")
 	if cfg.Caddy != nil {
 		if site, ok, _ := cfg.Caddy.SiteForApp(app.ID); ok {
-			domainDetail = site.Domain
+			scheme := "https"
+			label := "Public HTTPS"
+			if settings, err := cfg.Caddy.GlobalSettings(); err == nil && !settings.HTTPS {
+				scheme = "http"
+				label = "Public HTTP"
+			}
 			client := &http.Client{Timeout: 4 * time.Second}
-			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://"+site.Domain+"/", nil)
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, scheme+"://"+site.Domain+"/", nil)
+			state := "down"
+			detail := site.Domain + " · unreachable"
 			if err == nil {
-				resp, err := client.Do(req)
-				if err == nil {
-					domainOK = true
-					domainDetail = site.Domain + " · HTTP " + strconv.Itoa(resp.StatusCode)
+				resp, requestErr := client.Do(req)
+				if requestErr == nil {
+					detail = site.Domain + " · HTTP " + strconv.Itoa(resp.StatusCode)
+					if resp.StatusCode < 500 {
+						state = "ok"
+					}
 					_ = resp.Body.Close()
 				}
 			}
+			publicCard = statusCard(state, label, detail)
 		}
 	}
 
-	localHTTP := statusBadge(httpOK, "Local HTTP")
-	if app.Port <= 0 {
-		localHTTP = `<div class="metric"><span>Local HTTP</span><strong>n/a</strong><small>no internal port</small></div>`
-	}
-	portBlock := statusBadge(portOK, "Port")
-	if app.Port <= 0 {
-		portBlock = `<div class="metric"><span>Port</span><strong>n/a</strong><small>not required</small></div>`
-	}
-
-	domainClass := "warn"
-	domainState := "down"
-	if domainOK {
-		domainClass = "ok"
-		domainState = "ok"
-	}
 	return `
 		<div class="app-section">
-			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Process, listener, local HTTP and public HTTPS are checked independently.</p></div></div>
+			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Each layer is checked independently. HTTP 5xx is treated as unhealthy.</p></div></div>
 			<div class="health-grid">
-				` + statusBadge(processOK, "Process") + portBlock + localHTTP + `
-				<div class="metric"><span>` + domainLabel + `</span><strong>` + domainState + `</strong><small>` + html.EscapeString(domainDetail) + ` · <span class="status-badge ` + domainClass + `">` + domainState + `</span></small></div>
+				` + processCard + portCard + localHTTPCard + publicCard + `
 			</div>
 		</div>`
 }
