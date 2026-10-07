@@ -24,12 +24,21 @@ const recommendedSiteTemplate = `{domain} {
 	log
 }`
 
+const recommendedStaticSiteTemplate = `{domain} {
+	encode zstd gzip
+	root * {root}
+	file_server
+	log
+}`
+
 var domainRE = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
 
 type Site struct {
 	AppID    int64  `json:"app_id"`
 	Domain   string `json:"domain"`
 	Port     int    `json:"port"`
+	Root     string `json:"root,omitempty"`
+	Kind     string `json:"kind,omitempty"`
 	Template string `json:"template,omitempty"`
 }
 
@@ -82,7 +91,7 @@ func (m *Manager) SiteForApp(appID int64) (Site, bool, error) {
 	return Site{}, false, nil
 }
 
-func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port int) error {
+func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port int, root, kind string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -90,8 +99,24 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 	if !domainRE.MatchString(domain) {
 		return errors.New("invalid domain")
 	}
-	if port < 1 || port > 65535 {
-		return errors.New("invalid app port")
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "proxy"
+	}
+	if kind == "static" {
+		if port != 0 {
+			return errors.New("static sites must not use an app port")
+		}
+		root = filepath.Clean(strings.TrimSpace(root))
+		if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n") {
+			return errors.New("static site root must be an absolute path")
+		}
+	} else {
+		kind = "proxy"
+		if port < 1 || port > 65535 {
+			return errors.New("invalid app port")
+		}
+		root = ""
 	}
 
 	sites, err := m.load()
@@ -108,12 +133,14 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 		if sites[i].AppID == appID {
 			sites[i].Domain = domain
 			sites[i].Port = port
+			sites[i].Root = root
+			sites[i].Kind = kind
 			found = true
 			break
 		}
 	}
 	if !found {
-		sites = append(sites, Site{AppID: appID, Domain: domain, Port: port})
+		sites = append(sites, Site{AppID: appID, Domain: domain, Port: port, Root: root, Kind: kind})
 	}
 
 	return m.apply(ctx, sites)
@@ -138,8 +165,8 @@ func (m *Manager) SetSiteTemplate(ctx context.Context, appID int64, value string
 			sites[i].Template = ""
 			break
 		}
-		if !strings.Contains(value, "{domain}") || !strings.Contains(value, "{port}") {
-			return errors.New("Caddy template must contain {domain} and {port}")
+		if err := validateSiteTemplate(value, sites[i]); err != nil {
+			return err
 		}
 		if err := m.validateRendered(ctx, renderSite(value, sites[i])); err != nil {
 			return err
@@ -291,6 +318,9 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	b.WriteString("# Managed by Open Go Panel\n\n")
 	for _, site := range sites {
 		siteTemplate := template
+		if site.Kind == "static" || site.Port == 0 {
+			siteTemplate = recommendedStaticSiteTemplate
+		}
 		if strings.TrimSpace(site.Template) != "" {
 			siteTemplate = site.Template
 		}
@@ -359,7 +389,35 @@ func (m *Manager) restoreConfig(oldManaged []byte, hadManaged bool, oldRoot []by
 func renderSite(template string, site Site) string {
 	value := strings.ReplaceAll(template, "{domain}", site.Domain)
 	value = strings.ReplaceAll(value, "{port}", strconv.Itoa(site.Port))
+	value = strings.ReplaceAll(value, "{root}", site.Root)
 	return strings.TrimSpace(value)
+}
+
+func validateSiteTemplate(value string, site Site) error {
+	if !strings.Contains(value, "{domain}") {
+		return errors.New("Caddy template must contain {domain}")
+	}
+	if site.Kind == "static" || site.Port == 0 {
+		if !strings.Contains(value, "{root}") {
+			return errors.New("static Caddy template must contain {root}")
+		}
+		return nil
+	}
+	if !strings.Contains(value, "{port}") {
+		return errors.New("proxy Caddy template must contain {port}")
+	}
+	return nil
+}
+
+func (m *Manager) DefaultTemplateForSite(site Site) string {
+	if site.Kind == "static" || site.Port == 0 {
+		return recommendedStaticSiteTemplate
+	}
+	value, err := m.Template()
+	if err != nil {
+		return recommendedSiteTemplate
+	}
+	return value
 }
 
 func (m *Manager) validateRendered(ctx context.Context, config string) error {
@@ -384,7 +442,7 @@ func (m *Manager) validateRendered(ctx context.Context, config string) error {
 
 func (m *Manager) load() ([]Site, error) {
 	rows, err := m.store.DB().Query(`
-		SELECT app_id, domain, port, template
+		SELECT app_id, domain, port, root, kind, template
 		FROM domains
 		ORDER BY domain
 	`)
@@ -396,7 +454,7 @@ func (m *Manager) load() ([]Site, error) {
 	var sites []Site
 	for rows.Next() {
 		var site Site
-		if err := rows.Scan(&site.AppID, &site.Domain, &site.Port, &site.Template); err != nil {
+		if err := rows.Scan(&site.AppID, &site.Domain, &site.Port, &site.Root, &site.Kind, &site.Template); err != nil {
 			return nil, fmt.Errorf("scan domain state: %w", err)
 		}
 		sites = append(sites, site)
@@ -448,13 +506,15 @@ func (m *Manager) save(sites []Site) error {
 	keep := make(map[int64]struct{}, len(sites))
 	for _, site := range sites {
 		if _, err := tx.Exec(`
-			INSERT INTO domains(app_id, domain, port, template)
-			VALUES(?, ?, ?, ?)
+			INSERT INTO domains(app_id, domain, port, root, kind, template)
+			VALUES(?, ?, ?, ?, ?, ?)
 			ON CONFLICT(app_id) DO UPDATE SET
 				domain=excluded.domain,
 				port=excluded.port,
+				root=excluded.root,
+				kind=excluded.kind,
 				template=excluded.template
-		`, site.AppID, site.Domain, site.Port, site.Template); err != nil {
+		`, site.AppID, site.Domain, site.Port, site.Root, site.Kind, site.Template); err != nil {
 			return fmt.Errorf("save domain %s state: %w", site.Domain, err)
 		}
 		keep[site.AppID] = struct{}{}
@@ -486,5 +546,8 @@ func (m *Manager) save(sites []Site) error {
 }
 
 func (s Site) Target() string {
+	if s.Kind == "static" || s.Port == 0 {
+		return s.Root
+	}
 	return "127.0.0.1:" + strconv.Itoa(s.Port)
 }
