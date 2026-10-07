@@ -97,6 +97,14 @@ type Database struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Attachment struct {
+	AppID      int64
+	DatabaseID int64
+	EnvName    string
+	CreatedAt  time.Time
+}
+
+
 type Status struct {
 	MySQLInstalled    bool
 	MySQLActive       bool
@@ -308,6 +316,93 @@ func (m *Manager) Get(id int64) (Database, error) {
 	return Database{}, fmt.Errorf("database %d not found", id)
 }
 
+func (m *Manager) Attach(appID, databaseID int64, envName string) error {
+	envName = strings.TrimSpace(envName)
+	if appID <= 0 || databaseID <= 0 || envName == "" {
+		return errors.New("invalid database attachment")
+	}
+	_, err := m.store.DB().Exec(`
+		INSERT INTO app_databases(app_id, database_id, env_name, created_at)
+		VALUES(?, ?, ?, ?)
+		ON CONFLICT(app_id, env_name) DO UPDATE SET
+			database_id=excluded.database_id,
+			created_at=excluded.created_at
+	`, appID, databaseID, envName, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("save database attachment: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) Detach(appID int64, envName string) error {
+	envName = strings.TrimSpace(envName)
+	if appID <= 0 || envName == "" {
+		return errors.New("invalid database attachment")
+	}
+	_, err := m.store.DB().Exec(
+		`DELETE FROM app_databases WHERE app_id = ? AND env_name = ?`,
+		appID, envName,
+	)
+	if err != nil {
+		return fmt.Errorf("delete database attachment: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) AttachmentsForApp(appID int64) ([]Attachment, error) {
+	rows, err := m.store.DB().Query(`
+		SELECT app_id, database_id, env_name, created_at
+		FROM app_databases
+		WHERE app_id = ?
+		ORDER BY env_name
+	`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []Attachment
+	for rows.Next() {
+		var item Attachment
+		var createdAt string
+		if err := rows.Scan(&item.AppID, &item.DatabaseID, &item.EnvName, &createdAt); err != nil {
+			return nil, err
+		}
+		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			item.CreatedAt = t
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (m *Manager) AttachmentsForDatabase(databaseID int64) ([]Attachment, error) {
+	rows, err := m.store.DB().Query(`
+		SELECT app_id, database_id, env_name, created_at
+		FROM app_databases
+		WHERE database_id = ?
+		ORDER BY app_id, env_name
+	`, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []Attachment
+	for rows.Next() {
+		var item Attachment
+		var createdAt string
+		if err := rows.Scan(&item.AppID, &item.DatabaseID, &item.EnvName, &createdAt); err != nil {
+			return nil, err
+		}
+		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			item.CreatedAt = t
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (m *Manager) Create(ctx context.Context, engine, name, username string) (Database, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -401,6 +496,14 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 		}
 	}
 	if idx == -1 { return fmt.Errorf("database %d not found", id) }
+
+	attachments, err := m.AttachmentsForDatabase(id)
+	if err != nil {
+		return fmt.Errorf("check database attachments: %w", err)
+	}
+	if len(attachments) > 0 {
+		return fmt.Errorf("database %q is attached to %d app environment variable(s); detach it first", item.Name, len(attachments))
+	}
 
 	switch item.Engine {
 	case "mysql":
