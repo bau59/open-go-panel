@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,32 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		settings, _ := cfg.Caddy.GlobalSettings()
 		selectedID, _ := strconv.ParseInt(r.URL.Query().Get("app"), 10, 64)
 		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, settings, selectedID, ""))
+	})))
+
+	mux.Handle("GET /caddy/logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sites, _ := cfg.Caddy.Sites()
+		filters, query := parseLogFilters(r)
+		domain := strings.TrimSpace(r.URL.Query().Get("domain"))
+		userSearch := filters.Search
+		if domain != "" {
+			query.Search = domain
+		}
+		result, err := cfg.Caddy.QueryLogs(r.Context(), query)
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
+		lines := result.Lines
+		if domain != "" && userSearch != "" {
+			filtered := lines[:0]
+			for _, line := range lines {
+				if strings.Contains(strings.ToLower(line), strings.ToLower(userSearch)) {
+					filtered = append(filtered, line)
+				}
+			}
+			lines = filtered
+		}
+		writeHTML(w, cfg.Logger, http.StatusOK, caddyLogsPage(sites, domain, filters, lines, result.HasNext, message))
 	})))
 
 	mux.Handle("POST /caddy/settings", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +272,10 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<h1>Caddy</h1>
 				<p class="sub">Global web defaults and domain routing. Most projects should inherit the global settings.</p>
 			</div>
-			<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
+			<div class="actions">
+				<a class="secondary" href="/caddy/logs">Access logs</a>
+				<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
+			</div>
 		</div>
 		` + alert + `
 
@@ -384,4 +414,72 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 				<button class="button">Connect domain</button>
 			</form>
 		</div>`
+}
+
+
+func caddyLogsPage(sites []panelcaddy.Site, domain string, filters logFilters, lines []string, hasNext bool, message string) string {
+	alert := ""
+	if message != "" {
+		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
+	}
+
+	var options strings.Builder
+	options.WriteString(`<option value="">All Caddy logs</option>`)
+	for _, site := range sites {
+		selectedAttr := ""
+		if site.Domain == domain {
+			selectedAttr = " selected"
+		}
+		fmt.Fprintf(&options, `<option value="%s"%s>%s</option>`, html.EscapeString(site.Domain), selectedAttr, html.EscapeString(site.Domain))
+	}
+
+	extra := make(url.Values)
+	if domain != "" {
+		extra.Set("domain", domain)
+	}
+	filterValues := cloneValues(extra)
+	if filters.Search != "" {
+		filterValues.Set("q", filters.Search)
+	}
+	filterValues.Set("period", filters.Period)
+	if filters.From != "" {
+		filterValues.Set("from", filters.From)
+	}
+	if filters.To != "" {
+		filterValues.Set("to", filters.To)
+	}
+	filterValues.Set("per_page", strconv.Itoa(filters.PerPage))
+
+	var hidden strings.Builder
+	for key, values := range filterValues {
+		if key == "domain" {
+			continue
+		}
+		for _, value := range values {
+			fmt.Fprintf(&hidden, `<input type="hidden" name="%s" value="%s">`, html.EscapeString(key), html.EscapeString(value))
+		}
+	}
+
+	return pageHead("Caddy logs") + `<body>` + appHeader("caddy") + `
+	<main class="shell">
+		<div class="page-head">
+			<div>
+				<p class="eyebrow">HTTP access</p>
+				<h1>Caddy logs</h1>
+				<p class="sub">Search Caddy's systemd journal by domain, text and time period.</p>
+			</div>
+			<a class="secondary" href="/caddy">Caddy settings</a>
+		</div>
+		` + alert + `
+		<section class="panel panel-pad">
+			<form method="get" action="/caddy/logs" class="list-toolbar" style="padding-left:0;padding-right:0;border:0">
+				` + hidden.String() + `
+				<select name="domain" onchange="this.form.submit()">` + options.String() + `</select>
+			</form>
+			` + logToolbar("/caddy/logs", filters, extra) + `
+			<div class="logbox">` + logLinesHTML(lines) + `</div>
+			` + logPagerHTML("/caddy/logs", filters, extra, hasNext) + `
+		</section>
+	</main>
+</body></html>`
 }
