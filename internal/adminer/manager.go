@@ -15,6 +15,7 @@ const (
 	rootDir    = "/var/lib/open-go-panel/adminer"
 	indexFile  = "/var/lib/open-go-panel/adminer/index.php"
 	serviceFile = "/etc/systemd/system/open-go-panel-adminer.service"
+	routerFile  = "/var/lib/open-go-panel/adminer/router.php"
 )
 
 type Status struct {
@@ -72,6 +73,11 @@ func (m *Manager) Install(ctx context.Context) error {
 		return fmt.Errorf("install Adminer file: %w", err)
 	}
 
+	router := "<?php require __DIR__ . '/index.php';\n"
+	if err := os.WriteFile(routerFile, []byte(router), 0644); err != nil {
+		return fmt.Errorf("write Adminer router: %w", err)
+	}
+
 	unit := `[Unit]
 Description=Open Go Panel Adminer
 After=network-online.target
@@ -82,7 +88,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/var/lib/open-go-panel/adminer
-ExecStart=/usr/bin/php -S 127.0.0.1:8787 -t /var/lib/open-go-panel/adminer
+ExecStart=/usr/bin/php -S 127.0.0.1:8787 /var/lib/open-go-panel/adminer/router.php
 Restart=on-failure
 RestartSec=3
 PrivateTmp=true
