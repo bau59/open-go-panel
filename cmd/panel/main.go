@@ -14,6 +14,7 @@ import (
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/dbmanager"
 	"github.com/bau59/open-go-panel/internal/security"
 	"github.com/bau59/open-go-panel/internal/server"
 )
@@ -36,6 +37,7 @@ func main() {
 	apps := app.New("/var/lib/open-go-panel/apps.json", users)
 	caddyManager := panelcaddy.New("/var/lib/open-go-panel/caddy-sites.json")
 	securityManager := security.New()
+	databaseManager := dbmanager.New("/var/lib/open-go-panel/databases.json")
 	if err := apps.EnsureStorage(); err != nil {
 		logger.Error("ensure app storage failed", "err", err)
 		os.Exit(1)
@@ -51,6 +53,7 @@ func main() {
 			Apps:          apps,
 			Caddy:         caddyManager,
 			Security:      securityManager,
+			Databases:     databaseManager,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
