@@ -179,6 +179,38 @@ const baseStyles = `
 	.table-tools-search{max-width:360px}
 	.table-tools-right{display:flex;align-items:center;gap:8px}
 	.table-tools-right select{width:92px;height:36px}
+	.app-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px}
+	.app-breadcrumb{color:var(--muted);font-size:12px;font-weight:700}
+	.app-breadcrumb:hover{color:var(--text)}
+	.app-title-row{display:flex;align-items:center;gap:10px}
+	.app-runtime-card{margin-bottom:16px}
+	.runtime-head{display:flex;align-items:center;justify-content:space-between;gap:20px}
+	.runtime-state{display:flex;align-items:center;gap:10px}
+	.runtime-state>strong{font-size:28px;letter-spacing:-.03em}
+	.runtime-actions{justify-content:flex-end}
+	.runtime-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:18px}
+	.runtime-facts>div{min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:#0d121b}
+	.runtime-facts span{display:block;margin-bottom:6px;color:var(--muted-2);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+	.runtime-facts strong,.runtime-facts code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+	.app-dashboard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+	.app-card{min-width:0}
+	.app-card-wide{grid-column:1/-1}
+	.app-card .domain-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+	.attachment-row{padding:12px 13px;margin:8px 0;border:1px solid var(--border);border-radius:12px;background:#0d121b}
+	.service-settings-card{scroll-margin-top:92px}
+	.service-settings-body{margin-top:18px;padding-top:18px;border-top:1px solid var(--border)}
+	.danger-zone{border-color:rgba(255,107,122,.18)}
+	.danger-zone-body{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,107,122,.18)}
+	.caddy-log-filters{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:10px;margin-bottom:10px}
+	.caddy-log-filters .filter-submit{display:flex;align-items:end}
+	.table-scroll{overflow:auto}
+	.http-code{display:inline-flex;min-width:42px;justify-content:center;padding:4px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:800}
+	.http-code.ok{border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc}
+	.http-code.warn{border-color:rgba(246,196,83,.2);background:var(--warning-soft);color:#f7d884}
+	.http-code.danger{border-color:rgba(255,107,122,.25);background:var(--danger-soft);color:#ff9aa5}
+	.log-details{position:relative}
+	.log-popover{top:100%;right:0}
+	.log-error-message{margin:0 0 10px;color:#ff9aa5;font-size:12px;line-height:1.5}
 	.statline{display:flex;align-items:center;gap:8px;margin-top:22px;color:#89e8bb;font-size:12px;font-weight:750}
 	.statline i{display:block;width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 5px var(--success-soft)}
 	details{position:relative}
@@ -200,6 +232,11 @@ const baseStyles = `
 		.service-grid-3,.service-grid-4,.security-grid,.domain-summary,.app-overview-grid,.health-grid,.service-summary{grid-template-columns:1fr 1fr}
 		.app-form-row-deploy,.app-form-row-db{grid-template-columns:1fr 140px}
 		.log-toolbar{grid-template-columns:1fr 1fr}
+		.app-dashboard-grid{grid-template-columns:1fr}
+		.app-card-wide{grid-column:auto}
+		.runtime-head{align-items:flex-start;flex-direction:column}
+		.runtime-actions{justify-content:flex-start}
+		.caddy-log-filters{grid-template-columns:1fr 1fr}
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid{grid-template-columns:1fr}
@@ -209,6 +246,12 @@ const baseStyles = `
 		.list-toolbar input{max-width:none}
 		.pager{align-items:flex-start;flex-direction:column}
 		.log-toolbar{grid-template-columns:1fr}
+		.app-page-head{align-items:flex-start;flex-direction:column}
+		.runtime-state>strong{font-size:24px}
+		.runtime-facts{grid-template-columns:1fr 1fr}
+		.app-card .domain-summary{grid-template-columns:1fr}
+		.danger-zone-body{align-items:flex-start;flex-direction:column}
+		.caddy-log-filters{grid-template-columns:1fr}
 	}
 `
 
