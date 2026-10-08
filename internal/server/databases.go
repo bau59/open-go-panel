@@ -22,6 +22,8 @@ type databasePageData struct {
 	MySQLConfig      string
 	RecommendedMySQL string
 	MySQLMetrics     dbmanager.MySQLMetrics
+	PostgresMetrics  dbmanager.PostgresMetrics
+	RedisMetrics     dbmanager.RedisMetrics
 	MySQLSizes       map[string]int64
 	Backups          map[int64][]dbmanager.Backup
 	Schedule         dbmanager.BackupSchedule
@@ -230,6 +232,12 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 		for _, size := range sizes {
 			data.MySQLSizes[size.Name] = size.Bytes
 		}
+	}
+	if data.Status.PostgresActive {
+		data.PostgresMetrics, _ = cfg.Databases.PostgresMetrics(r.Context())
+	}
+	if data.Status.RedisActive {
+		data.RedisMetrics, _ = cfg.Databases.RedisMetrics(r.Context())
 	}
 	for _, item := range data.Items {
 		data.Backups[item.ID], _ = cfg.Databases.Backups(item.ID)
