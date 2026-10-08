@@ -94,21 +94,41 @@ func (m *Manager) QueryPerformanceFromLogs(ctx context.Context, f PerformanceFil
   }
  case "file":
   if !ValidCaddyLogPath(path){return PerformanceResult{},fmt.Errorf("Caddy JSON file must be under /var/log/caddy/")}
-  file,err:=os.Open(path);if err!=nil{return PerformanceResult{},err}
-  defer file.Close()
-  info,err:=file.Stat();if err!=nil{return PerformanceResult{},err}
-  from:=info.Size()-reportFileTailBytes
-  if from<0{from=0}else{truncated=true}
-  if _,err=file.Seek(from,io.SeekStart);err!=nil{return PerformanceResult{},err}
-  scanner:=bufio.NewScanner(io.LimitReader(file,reportFileTailBytes))
-  scanner.Buffer(make([]byte,64*1024),2*1024*1024)
-  if from>0 {scanner.Scan()} // Ignore first potentially partial JSONL entry.
-  for scanner.Scan(){
-   if ctx.Err()!=nil{return PerformanceResult{},ctx.Err()}
-   add(scanner.Text())
-   if scanned>=reportMaxScanned||truncated&&len(records)>=performanceMaxRecords{truncated=true;break}
+  active,err:=os.Stat(path)
+  if err!=nil{return PerformanceResult{},err}
+  budget:=reportFileTailBytes
+  consume:=func(name string,available int64)error{
+   if available<=0{return nil}
+   file,err:=os.Open(name);if err!=nil{return err}
+   defer file.Close()
+   info,err:=file.Stat();if err!=nil{return err}
+   start:=info.Size()-available
+   if start<0{start=0}else{truncated=true}
+   if _,err=file.Seek(start,io.SeekStart);err!=nil{return err}
+   scanner:=bufio.NewScanner(io.LimitReader(file,available))
+   scanner.Buffer(make([]byte,64*1024),2*1024*1024)
+   if start>0{scanner.Scan()} // Discard partial first line.
+   for scanner.Scan(){
+    if ctx.Err()!=nil{return ctx.Err()}
+    add(scanner.Text())
+    if scanned>=reportMaxScanned||len(records)>=performanceMaxRecords{
+     truncated=true;break
+    }
+   }
+   return scanner.Err()
   }
-  if err=scanner.Err();err!=nil{return PerformanceResult{},err}
+  activeBudget:=active.Size()
+  if activeBudget>budget{activeBudget=budget}
+  if err:=consume(path,activeBudget);err!=nil{return PerformanceResult{},err}
+  budget-=activeBudget
+  if previous,err:=os.Stat(path+".1");err==nil&&previous.Mode().IsRegular(){
+   if budget<=0{truncated=true}else{
+    if err:=consume(path+".1",budget);err!=nil{return PerformanceResult{},err}
+   }
+  }
+  // Older and compressed rotations are not decoded in the bounded first-stage report.
+  if _,err:=os.Stat(path+".2");err==nil{truncated=true}
+  if _,err:=os.Stat(path+".1.gz");err==nil{truncated=true}
   if ctx.Err()!=nil{return PerformanceResult{},ctx.Err()}
  default:
   return PerformanceResult{},fmt.Errorf("unknown Caddy log source")
