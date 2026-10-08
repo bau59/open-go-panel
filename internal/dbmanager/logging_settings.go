@@ -44,10 +44,13 @@ func (m *Manager) SetOptionalLogging(ctx context.Context,engine string,enabled b
  case "postgres":
   duration:="-1"
   if enabled{duration="1000ms"}
-  statement:="ALTER SYSTEM SET log_min_duration_statement = '"+duration+"'; SELECT pg_reload_conf();"
+  statement:="ALTER SYSTEM SET log_min_duration_statement = '"+duration+"'"
   out,err:=exec.CommandContext(ctx,"runuser","-u","postgres","--",
    "psql","-X","-v","ON_ERROR_STOP=1","-d","postgres","-c",statement).CombinedOutput()
   if err!=nil{return fmt.Errorf("PostgreSQL duration log: %w: %s",err,strings.TrimSpace(string(out)))}
+  out,err=exec.CommandContext(ctx,"runuser","-u","postgres","--",
+   "psql","-X","-v","ON_ERROR_STOP=1","-d","postgres","-c","SELECT pg_reload_conf()").CombinedOutput()
+  if err!=nil{return fmt.Errorf("PostgreSQL setting saved but reload failed: %w: %s",err,strings.TrimSpace(string(out)))}
   return nil
  case "redis":
   threshold:="-1"
