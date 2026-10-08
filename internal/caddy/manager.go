@@ -745,6 +745,22 @@ func (m *Manager) load() ([]Site, error) {
 		return nil, fmt.Errorf("iterate domains state: %w", err)
 	}
 
+	standaloneRows, err := m.store.DB().Query("SELECT id, domain, port, root, kind, template FROM standalone_domains ORDER BY domain")
+	if err != nil {
+		return nil, fmt.Errorf("query standalone domains: %w", err)
+	}
+	defer standaloneRows.Close()
+	for standaloneRows.Next() {
+		var site Site
+		if err := standaloneRows.Scan(&site.AppID, &site.Domain, &site.Port, &site.Root, &site.Kind, &site.Template); err != nil {
+			return nil, fmt.Errorf("scan standalone domain: %w", err)
+		}
+		sites = append(sites, site)
+	}
+	if err := standaloneRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate standalone domains: %w", err)
+	}
+
 	if len(sites) > 0 {
 		if _, done, err := m.store.Setting("migration.caddy_sites_json_done"); err != nil {
 			return nil, err
@@ -802,7 +818,19 @@ func (m *Manager) save(sites []Site) error {
 	defer tx.Rollback()
 
 	keep := make(map[int64]struct{}, len(sites))
+	standaloneKeep := make(map[int64]struct{})
 	for _, site := range sites {
+		if site.AppID < 0 {
+			if _, err := tx.Exec(`INSERT INTO standalone_domains(id, domain, port, root, kind, template)
+				VALUES(?, ?, ?, ?, ?, ?)
+				ON CONFLICT(id) DO UPDATE SET domain=excluded.domain, port=excluded.port,
+					root=excluded.root, kind=excluded.kind, template=excluded.template`,
+				site.AppID, site.Domain, site.Port, site.Root, site.Kind, site.Template); err != nil {
+				return fmt.Errorf("save standalone domain %s: %w", site.Domain, err)
+			}
+			standaloneKeep[site.AppID] = struct{}{}
+			continue
+		}
 		if _, err := tx.Exec(`
 			INSERT INTO domains(app_id, domain, port, root, kind, template)
 			VALUES(?, ?, ?, ?, ?, ?)
@@ -840,6 +868,31 @@ func (m *Manager) save(sites []Site) error {
 		}
 	}
 
+	standaloneRows, err := tx.Query("SELECT id FROM standalone_domains")
+	if err != nil {
+		return err
+	}
+	var staleStandalone []int64
+	for standaloneRows.Next() {
+		var id int64
+		if err := standaloneRows.Scan(&id); err != nil {
+			standaloneRows.Close()
+			return err
+		}
+		if _, ok := standaloneKeep[id]; !ok {
+			staleStandalone = append(staleStandalone, id)
+		}
+	}
+	if err := standaloneRows.Err(); err != nil {
+		standaloneRows.Close()
+		return err
+	}
+	standaloneRows.Close()
+	for _, id := range staleStandalone {
+		if _, err := tx.Exec("DELETE FROM standalone_domains WHERE id = ?", id); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
