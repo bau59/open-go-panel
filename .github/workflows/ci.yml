@@ -24,6 +24,9 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
+      - name: Shell syntax
+        run: bash -n install.sh uninstall.sh
+
       - name: Vet
         run: go vet ./...
 
