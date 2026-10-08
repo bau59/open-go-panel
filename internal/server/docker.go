@@ -4,6 +4,7 @@ import (
     "fmt"
     "html"
     "net/http"
+    "net/url"
     "strings"
 
     paneldocker "github.com/bau59/open-go-panel/internal/docker"
@@ -44,6 +45,39 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
         }
         http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
+    mux.Handle("POST /docker/github/key", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid form", http.StatusBadRequest)
+            return
+        }
+        info, err := cfg.Docker.EnsureGitHubKey(r.Context(), r.FormValue("repository"))
+        if err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker?github_repo="+url.QueryEscape(info.Repository), http.StatusSeeOther)
+    })))
+
+    mux.Handle("POST /docker/github/build", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid form", http.StatusBadRequest)
+            return
+        }
+        if err := cfg.Docker.StartGitHubBuild(
+            r.FormValue("name"),
+            r.FormValue("repository"),
+            r.FormValue("branch"),
+            r.FormValue("dockerfile"),
+            r.FormValue("ports"),
+            r.FormValue("autostart") == "1",
+            r.FormValue("public_ports") == "1",
+        ); err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker", http.StatusSeeOther)
+    })))
+
     mux.Handle("POST /docker/service/restart", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         if err := cfg.Docker.RestartService(r.Context()); err != nil {
             writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
@@ -107,10 +141,20 @@ func writeDockerPage(w http.ResponseWriter, r *http.Request, cfg Config, statusC
         }
     }
     task := cfg.Software.Task()
-    writeHTML(w, cfg.Logger, statusCode, dockerPage(status, containers, task.Running && task.SoftwareID == "docker", message))
+    requestedRepo := r.URL.Query().Get("github_repo")
+    var key paneldocker.GitHubKeyInfo
+    if requestedRepo != "" {
+        info, err := cfg.Docker.GitHubKey(requestedRepo)
+        if err != nil && message == "" {
+            message = err.Error()
+        } else {
+            key = info
+        }
+    }
+    writeHTML(w, cfg.Logger, statusCode, dockerPage(status, containers, task.Running && task.SoftwareID == "docker", cfg.Docker.BuildStatus(), key, message))
 }
 
-func dockerPage(status paneldocker.Status, containers []paneldocker.Container, installing bool, message string) string {
+func dockerPage(status paneldocker.Status, containers []paneldocker.Container, installing bool, build paneldocker.BuildTask, key paneldocker.GitHubKeyInfo, message string) string {
     alert := ""
     if message != "" {
         alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -120,6 +164,10 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     if installing {
         alert += `<div class="software-task"><span class="status-badge warn">installing</span><div><strong>Docker installation is running</strong><p class="note">The page refreshes automatically.</p></div></div>`
         refresh = `<script>setTimeout(() => location.reload(), 3000)</script>`
+    }
+
+    if build.Running {
+        refresh = `<script>setTimeout(() => location.reload(), 4000)</script>`
     }
 
     if !status.Installed {
@@ -170,6 +218,26 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         rows.WriteString(`<tr><td colspan="6" class="empty">No Docker containers yet.</td></tr>`)
     }
 
+    githubBuildStatus := ""
+    if build.Running {
+        githubBuildStatus = `<div class="software-task"><span class="status-badge warn">building</span><div><strong>` +
+            html.EscapeString(build.Container) + `</strong><p class="note">` + html.EscapeString(build.Step) +
+            ` — ` + html.EscapeString(build.Repository) + `. Keep the panel running until build completes.</p></div></div>`
+    } else if build.Error != "" {
+        githubBuildStatus = `<div class="alert"><strong>GitHub build failed:</strong> ` + html.EscapeString(build.Error) + `</div>`
+    } else if build.Image != "" {
+        githubBuildStatus = `<div class="software-task"><span class="status-badge ok">built</span><div><strong>` + html.EscapeString(build.Container) +
+            `</strong><p class="note">Container created from <code>` + html.EscapeString(build.Image) + `</code></p></div></div>`
+    }
+
+    githubKeyCard := ""
+    if key.Generated {
+        githubKeyCard = `<div style="margin:12px 0"><label>Public deploy key — copy into GitHub → Repository Settings → Deploy keys (read-only)</label>
+            <textarea readonly rows="3" style="width:100%;font-family:monospace">` + html.EscapeString(key.PublicKey) + `</textarea>
+            <p class="note">Key is unique to <strong>` + html.EscapeString(key.Repository) +
+                `</strong>. The private key stays on the server and is never included in the Docker build context.</p></div>`
+    }
+
     serviceAlert := ""
     dockerStateClass := "ok"
     dockerStateText := "running"
@@ -190,7 +258,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <form method="post" action="/docker/service/restart"><button class="secondary">Restart Docker</button></form>
             </div>
         </div>
-        ` + alert + serviceAlert + `
+        ` + alert + serviceAlert + githubBuildStatus + `
         <section class="metrics-grid docker-metrics" style="margin-bottom:16px">
             <div class="metric"><span>Containers</span><strong>` + fmt.Sprintf("%d", len(containers)) + `</strong><small>all containers</small></div>
             <div class="metric"><span>Running</span><strong>` + fmt.Sprintf("%d", runningCount) + `</strong><small>currently active</small></div>
@@ -208,6 +276,26 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
             <p class="note" style="margin-top:12px">Ports bind to 127.0.0.1 by default. Public ports may bypass UFW rules; enable only when external access is required.</p>
+        </section>
+        <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
+            <div class="section-title"><div><h2>Build from GitHub</h2>
+                <p class="note" style="margin:6px 0 0">Clone a GitHub repository, build its Dockerfile, then create and start the container. Private repositories use a read-only SSH deploy key.</p></div></div>
+            <form method="post" action="/docker/github/key" class="docker-create-grid" style="margin:12px 0">
+                <div><label>GitHub repository for deploy key</label><input name="repository" value="` + html.EscapeString(key.Repository) + `" placeholder="owner/repository" required></div>
+                <div class="docker-create-submit"><button class="secondary" type="submit">Generate SSH deploy key</button></div>
+            </form>
+            ` + githubKeyCard + `
+            <form method="post" action="/docker/github/build" class="docker-create-grid">
+                <div><label>Container name</label><input name="name" placeholder="my-project" required></div>
+                <div><label>GitHub repository / URL</label><input name="repository" placeholder="https://github.com/owner/repository" value="` + html.EscapeString(key.Repository) + `" required></div>
+                <div><label>Branch (blank = default)</label><input name="branch" placeholder="main"></div>
+                <div><label>Dockerfile in repository</label><input name="dockerfile" value="Dockerfile" required></div>
+                <div><label>Ports</label><input name="ports" placeholder="8080:80"></div>
+                <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-create-submit"><button class="button"` + createDisabled + func() string { if build.Running { return " disabled" }; return "" }() + `>Build &amp; run</button></div>
+            </form>
+            <p class="note" style="margin-top:12px">For private repositories: first generate the deploy key, add it to the specific GitHub repository in Settings → Deploy keys, then Build &amp; run. Ports default to 127.0.0.1.</p>
         </section>
         <section class="panel">
             <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">Autostart maps to Docker restart policy <code>unless-stopped</code>.</p></div></div>
