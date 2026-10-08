@@ -148,7 +148,9 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
   }
  }
  backlog:=false
- if remaining,statErr:=file.Stat();statErr==nil&&position<remaining.Size(){backlog=true}
+ if !switched || !reachedEOF{
+  if remaining,statErr:=file.Stat();statErr==nil&&position<remaining.Size(){backlog=true}
+ }
  checkpoint:=fmt.Sprintf("%s:%d",id,position)
  tx,err:=m.store.DB().BeginTx(ctx,nil)
  if err!=nil{return err}
