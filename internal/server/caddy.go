@@ -179,7 +179,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<td>#%d</td>
 				<td><code>%s</code></td>
 				<td><span class="badge">%s</span></td>
-				<td class="actions"><a class="secondary" href="/caddy?app=%d">Settings</a></td>
+				<td><div class="actions table-actions"><a class="secondary" href="/caddy?app=%d">Settings</a></div></td>
 			</tr>`,
 			site.AppID,
 			html.EscapeString(site.Domain),
