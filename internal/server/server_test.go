@@ -114,6 +114,7 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		"/databases",
 		"/db-admin/",
 		"/apps/1",
+		"/terminal",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -124,6 +125,25 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		if got := rec.Header().Get("Location"); got != "/login" {
 			t.Fatalf("%s: expected /login redirect, got %q", path, got)
 		}
+	}
+}
+
+func TestResolveTerminalTarget(t *testing.T) {
+	users := []linuxuser.User{{Username: "alice", Home: "/home/alice"}}
+	apps := []app.App{{ID: 7, User: "alice", Name: "demo", Root: "/home/alice/apps/demo"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/terminal?user=alice&app=7", nil)
+	username, workdir, appID, err := resolveTerminalTarget(req, users, apps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if username != "alice" || workdir != "/home/alice/apps/demo" || appID != 7 {
+		t.Fatalf("unexpected target: user=%q workdir=%q app=%d", username, workdir, appID)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/terminal?user=root&app=7", nil)
+	if _, _, _, err := resolveTerminalTarget(req, users, apps); err == nil {
+		t.Fatal("expected root app terminal to be rejected")
 	}
 }
 
