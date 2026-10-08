@@ -205,8 +205,13 @@ func (m *Manager) replaceWithBuiltImage(ctx context.Context, existingID, image s
 	spec,err:=inspectReplacement(ctx,existingID)
 	if err!=nil{return err}
 	if spec.ID!=existingID{return errors.New("container changed while rebuilding; refusing replacement")}
-	backupName:=fmt.Sprintf("ogp-prev-%s-%s",spec.Name,strconv.FormatInt(time.Now().UnixNano(),36))
-	if len(backupName)>127 {backupName=backupName[:127]}
+	suffix:="-"+strconv.FormatInt(time.Now().UnixNano(),36)
+	prefix:="ogp-prev-"
+	name:=spec.Name
+	if len(prefix)+len(name)+len(suffix)>127 {
+		name=name[:127-len(prefix)-len(suffix)]
+	}
+	backupName:=prefix+name+suffix
 	specArgs,cleanup,err:=spec.launchArgs(image)
 	if err!=nil{return err}
 	defer cleanup()
