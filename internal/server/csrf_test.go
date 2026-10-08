@@ -146,7 +146,7 @@ func TestAdminerPostStillChecksOrigin(t *testing.T) {
 		{name: "cross origin", origin: "https://evil.example", want: http.StatusForbidden},
 		{name: "cross site", site: "cross-site", want: http.StatusForbidden},
 		{name: "same site sibling", site: "same-site", want: http.StatusForbidden},
-		{name: "same origin", origin: "http://example.com", site: "same-origin", want: http.StatusNotFound},
+		{name: "same origin", origin: "http://example.com", site: "same-origin", want: http.StatusMethodNotAllowed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			form := url.Values{csrfFormField: {token}}
