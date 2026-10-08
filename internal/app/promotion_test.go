@@ -51,6 +51,11 @@ func TestValidateDevToProductionPair(t *testing.T) {
 	if err := validatePromotion(dev, other, "."); err == nil {
 		t.Fatal("overlapping source and production root accepted")
 	}
+	nested := prod
+	nested.Root = filepath.Join(dev.Root, "prod")
+	if err := validatePromotion(dev, nested, "."); err == nil {
+		t.Fatal("nested production directory accepted")
+	}
 }
 
 func TestNormalizePromotionGoPackage(t *testing.T) {
