@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -58,4 +57,3 @@ func TestRecoveryWithoutPreviousRevisionReportsOriginalFailure(t *testing.T) {
 	}
 }
 
-var _ = context.Background
