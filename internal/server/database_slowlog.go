@@ -84,14 +84,16 @@ func databaseSlowLogPage(db dbmanager.Database, info dbmanager.SlowLogInfo, entr
 		notice = `<p class="note" style="margin:10px 0 0">` + html.EscapeString(info.Notice) + `</p>`
 	}
 	controls := ""
+	currentThreshold := strconv.Itoa(info.ThresholdMS)
+	if currentThreshold == "0" { currentThreshold = "1000" }
 	if db.Engine == "mysql" {
 		controls = `<form method="post" action="/databases/` + fmt.Sprintf("%d", db.ID) + `/slow-queries/settings" class="compact-form">
 			<select name="threshold_ms" aria-label="Slow query threshold">
-				<option value="500">500 ms</option>
-				<option value="1000" selected>1 second</option>
-				<option value="2000">2 seconds</option>
-				<option value="5000">5 seconds</option>
-				<option value="10000">10 seconds</option>
+				<option value="500"` + selected(currentThreshold, "500") + `>500 ms</option>
+				<option value="1000"` + selected(currentThreshold, "1000") + `>1 second</option>
+				<option value="2000"` + selected(currentThreshold, "2000") + `>2 seconds</option>
+				<option value="5000"` + selected(currentThreshold, "5000") + `>5 seconds</option>
+				<option value="10000"` + selected(currentThreshold, "10000") + `>10 seconds</option>
 			</select>
 			<button class="secondary" type="submit">Enable / update MySQL slow log</button>
 		</form>
@@ -99,11 +101,11 @@ func databaseSlowLogPage(db dbmanager.Database, info dbmanager.SlowLogInfo, entr
 	} else if db.Engine == "postgres" {
 		controls = `<form method="post" action="/databases/` + fmt.Sprintf("%d", db.ID) + `/slow-queries/settings" class="compact-form">
 			<select name="threshold_ms" aria-label="Slow query threshold">
-				<option value="500">500 ms</option>
-				<option value="1000" selected>1 second</option>
-				<option value="2000">2 seconds</option>
-				<option value="5000">5 seconds</option>
-				<option value="10000">10 seconds</option>
+				<option value="500"` + selected(currentThreshold, "500") + `>500 ms</option>
+				<option value="1000"` + selected(currentThreshold, "1000") + `>1 second</option>
+				<option value="2000"` + selected(currentThreshold, "2000") + `>2 seconds</option>
+				<option value="5000"` + selected(currentThreshold, "5000") + `>5 seconds</option>
+				<option value="10000"` + selected(currentThreshold, "10000") + `>10 seconds</option>
 				<option value="0">Disable for this database</option>
 			</select>
 			<button class="secondary" type="submit">Save PostgreSQL threshold</button>
