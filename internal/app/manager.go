@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -75,6 +76,15 @@ type DeployConfig struct {
 	CurrentCommit  string
 	PreviousCommit string
 	DeployedAt     time.Time
+}
+
+type DeployKeyInfo struct {
+	PublicKey  string
+	KeyPath    string
+	KnownHosts string
+	Host       string
+	Generated  bool
+	HostKnown  bool
 }
 
 type RuntimeHealth struct {
@@ -278,6 +288,196 @@ func (m *Manager) SetDeployConfig(id int64, repository, branch string) error {
 	return nil
 }
 
+func (m *Manager) DeployKeyInfo(id int64) (DeployKeyInfo, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+
+	account, err := user.Lookup(app.User)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("lookup user %q: %w", app.User, err)
+	}
+	keyPath := filepath.Join(account.HomeDir, ".ssh", fmt.Sprintf("ogp-app-%d", app.ID))
+	knownHosts := filepath.Join(account.HomeDir, ".ssh", "known_hosts")
+	info := DeployKeyInfo{
+		KeyPath:    keyPath,
+		KnownHosts: knownHosts,
+		Host:       repositorySSHHost(cfg.Repository),
+	}
+
+	if data, err := os.ReadFile(keyPath + ".pub"); err == nil {
+		info.PublicKey = strings.TrimSpace(string(data))
+		info.Generated = info.PublicKey != ""
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return info, fmt.Errorf("read deploy public key: %w", err)
+	}
+
+	if info.Host != "" {
+		cmd := exec.Command("ssh-keygen", "-F", info.Host, "-f", knownHosts)
+		if err := cmd.Run(); err == nil {
+			info.HostKnown = true
+		}
+	}
+	return info, nil
+}
+
+func (m *Manager) EnsureDeployKey(ctx context.Context, id int64) (DeployKeyInfo, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	account, err := user.Lookup(app.User)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("lookup user %q: %w", app.User, err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("parse uid: %w", err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("parse gid: %w", err)
+	}
+
+	sshDir := filepath.Join(account.HomeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("create deploy SSH directory: %w", err)
+	}
+	if err := os.Chown(sshDir, uid, gid); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("chown deploy SSH directory: %w", err)
+	}
+	if err := os.Chmod(sshDir, 0700); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("chmod deploy SSH directory: %w", err)
+	}
+
+	keyPath := filepath.Join(sshDir, fmt.Sprintf("ogp-app-%d", app.ID))
+	if _, err := os.Stat(keyPath); errors.Is(err, os.ErrNotExist) {
+		if _, err := exec.LookPath("ssh-keygen"); err != nil {
+			return DeployKeyInfo{}, errors.New("ssh-keygen is not installed")
+		}
+		if _, err := runAsUser(ctx, app.User, account.HomeDir, "ssh-keygen",
+			"-q", "-t", "ed25519", "-N", "", "-C", fmt.Sprintf("open-go-panel-app-%d", app.ID), "-f", keyPath); err != nil {
+			return DeployKeyInfo{}, err
+		}
+	} else if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("inspect deploy key: %w", err)
+	}
+	_ = os.Chmod(keyPath, 0600)
+	_ = os.Chmod(keyPath+".pub", 0644)
+	_ = os.Chown(keyPath, uid, gid)
+	_ = os.Chown(keyPath+".pub", uid, gid)
+	return m.DeployKeyInfo(id)
+}
+
+func (m *Manager) TrustDeployHost(ctx context.Context, id int64) (DeployKeyInfo, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	host := repositorySSHHost(cfg.Repository)
+	if host == "" {
+		return DeployKeyInfo{}, errors.New("repository is not an SSH Git URL")
+	}
+	if _, err := exec.LookPath("ssh-keyscan"); err != nil {
+		return DeployKeyInfo{}, errors.New("ssh-keyscan is not installed")
+	}
+	account, err := user.Lookup(app.User)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("lookup user %q: %w", app.User, err)
+	}
+	uid, _ := strconv.Atoi(account.Uid)
+	gid, _ := strconv.Atoi(account.Gid)
+	sshDir := filepath.Join(account.HomeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return DeployKeyInfo{}, err
+	}
+	_ = os.Chown(sshDir, uid, gid)
+	_ = os.Chmod(sshDir, 0700)
+
+	out, err := exec.CommandContext(ctx, "ssh-keyscan", "-H", "-T", "5", host).CombinedOutput()
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("scan SSH host %s: %w: %s", host, err, strings.TrimSpace(string(out)))
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return DeployKeyInfo{}, fmt.Errorf("ssh-keyscan returned no keys for %s", host)
+	}
+
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	existing, _ := os.ReadFile(knownHosts)
+	content := strings.TrimRight(string(existing), "\n")
+	if content != "" {
+		content += "\n"
+	}
+	content += strings.TrimSpace(string(out)) + "\n"
+	if err := os.WriteFile(knownHosts, []byte(content), 0600); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("write known_hosts: %w", err)
+	}
+	_ = os.Chown(knownHosts, uid, gid)
+	return m.DeployKeyInfo(id)
+}
+
+func repositorySSHHost(repository string) string {
+	repository = strings.TrimSpace(repository)
+	if strings.HasPrefix(repository, "ssh://") {
+		u, err := url.Parse(repository)
+		if err == nil {
+			return u.Hostname()
+		}
+		return ""
+	}
+	if at := strings.Index(repository, "@"); at >= 0 {
+		rest := repository[at+1:]
+		if colon := strings.Index(rest, ":"); colon > 0 {
+			return rest[:colon]
+		}
+	}
+	return ""
+}
+
+func (m *Manager) gitEnvironment(id int64, repository string) ([]string, error) {
+	if repositorySSHHost(repository) == "" {
+		return nil, nil
+	}
+	info, err := m.DeployKeyInfo(id)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Generated {
+		return nil, errors.New("private SSH repository requires a deploy key; generate one first")
+	}
+	if !info.HostKnown {
+		return nil, fmt.Errorf("SSH host %q is not trusted yet", info.Host)
+	}
+	command := "ssh -i " + info.KeyPath + " -o IdentitiesOnly=yes -o UserKnownHostsFile=" + info.KnownHosts
+	return []string{"GIT_SSH_COMMAND=" + command}, nil
+}
+
+func runAsUserEnv(ctx context.Context, username, dir string, env []string, name string, args ...string) (string, error) {
+	runArgs := []string{"-u", username, "--"}
+	if len(env) > 0 {
+		runArgs = append(runArgs, "env")
+		runArgs = append(runArgs, env...)
+	}
+	runArgs = append(runArgs, name)
+	runArgs = append(runArgs, args...)
+	cmd := exec.CommandContext(ctx, "runuser", runArgs...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
 func (m *Manager) Deploy(ctx context.Context, id int64) error {
 	app, err := m.Get(id)
 	if err != nil {
@@ -293,18 +493,22 @@ func (m *Manager) Deploy(ctx context.Context, id int64) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		return errors.New("git is not installed")
 	}
+	gitEnv, err := m.gitEnvironment(id, cfg.Repository)
+	if err != nil {
+		return err
+	}
 
 	if _, err := os.Stat(filepath.Join(app.Root, ".git")); errors.Is(err, os.ErrNotExist) {
 		if _, err := runAsUser(ctx, app.User, app.Root, "git", "init"); err != nil {
 			return err
 		}
-		if _, err := runAsUser(ctx, app.User, app.Root, "git", "remote", "add", "origin", cfg.Repository); err != nil {
+		if _, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "remote", "add", "origin", cfg.Repository); err != nil {
 			return err
 		}
 	} else if err != nil {
 		return fmt.Errorf("inspect app repository: %w", err)
 	} else {
-		if _, err := runAsUser(ctx, app.User, app.Root, "git", "remote", "set-url", "origin", cfg.Repository); err != nil {
+		if _, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "remote", "set-url", "origin", cfg.Repository); err != nil {
 			return err
 		}
 	}
@@ -314,7 +518,7 @@ func (m *Manager) Deploy(ctx context.Context, id int64) error {
 		previous = strings.TrimSpace(out)
 	}
 
-	if _, err := runAsUser(ctx, app.User, app.Root, "git", "fetch", "--prune", "origin", cfg.Branch); err != nil {
+	if _, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "fetch", "--prune", "origin", cfg.Branch); err != nil {
 		return err
 	}
 	targetOut, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "FETCH_HEAD")
