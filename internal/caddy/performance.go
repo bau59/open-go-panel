@@ -121,6 +121,14 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 		if json.Unmarshal(scanner.Bytes(), &env) != nil { continue }
 		entry, ok := parseCaddyLog(env.Message)
 		if !ok || entry.Kind != "access" || entry.Time.Before(f.Since) || entry.Time.After(f.Until) { continue }
+		// A missing duration must not be counted as a measured zero.
+		var timing struct {
+			Duration *float64 `json:"duration"`
+		}
+		if json.Unmarshal([]byte(entry.Raw), &timing) != nil || timing.Duration == nil ||
+			*timing.Duration < 0 || math.IsNaN(*timing.Duration) || math.IsInf(*timing.Duration, 0) {
+			continue
+		}
 		route := cleanPerformanceRoute(entry.URI)
 		if f.Domain != "" && !strings.EqualFold(entry.Domain, f.Domain) { continue }
 		if f.Method != "" && !strings.EqualFold(entry.Method, f.Method) { continue }
