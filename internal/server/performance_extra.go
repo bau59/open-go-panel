@@ -81,12 +81,14 @@ func performanceCollectorPanel(s caddy.CollectorStatus)string{
  status:="No successful collection yet"
  if !s.LastSuccess.IsZero(){status=s.LastSuccess.Local().Format("2006-01-02 15:04:05")}
  warning:=""
- if s.LastError!=""{warning=`<div class="alert">Collector: `+html.EscapeString(s.LastError)+`</div>`}
+ if s.Backlog{warning=`<div class="alert">The collector hit its per-cycle read budget; unprocessed log entries may remain in the source.</div>`}
+ if s.LastError!=""{warning+=`<div class="alert">Collector: `+html.EscapeString(s.LastError)+`</div>`}
  return `<section class="panel panel-pad" style="margin-bottom:16px">
  <h2>Background collector</h2>
  <p class="note">Source: `+html.EscapeString(s.Source)+` · Latest successful batch: `+html.EscapeString(status)+` · Persisted requests: `+fmt.Sprintf("%d",s.Stored)+
  ` · Journal entries scanned: `+fmt.Sprintf("%d",s.Scanned)+` · Parse errors: `+
- fmt.Sprintf("%d",s.ParseErrors)+` · Metric loss/overflow indicators: `+fmt.Sprintf("%d",s.Dropped)+`</p>`+warning+
+ fmt.Sprintf("%d",s.ParseErrors)+` · Metric loss/overflow indicators: `+fmt.Sprintf("%d",s.Dropped)+
+ ` · Stored quota: `+fmt.Sprintf("%d / 200000",s.Stored)+` · Panel SQLite + WAL: `+fmt.Sprintf("%.1f MiB",float64(s.SQLiteBytes)/1048576)+`</p>`+warning+
  `<p class="note">The journal reader runs in bounded batches independently from the HTTP request path. Metrics can be incomplete if upstream logs are missing, rotation removes unread records, or the storage cap is reached.</p></section>`
 }
 
