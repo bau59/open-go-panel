@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +37,31 @@ type terminalClientMessage struct {
 	Cols uint16 `json:"cols,omitempty"`
 }
 
+const terminalAssetsDir = "/var/lib/open-go-panel/web-assets/xterm"
+
 func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+	for path, asset := range map[string]struct {
+		File        string
+		ContentType string
+	}{
+		"/assets/xterm/xterm.css":          {"xterm.css", "text/css; charset=utf-8"},
+		"/assets/xterm/xterm.js":           {"xterm.js", "application/javascript; charset=utf-8"},
+		"/assets/xterm/xterm-addon-fit.js": {"xterm-addon-fit.js", "application/javascript; charset=utf-8"},
+	} {
+		path := path
+		asset := asset
+		mux.Handle("GET "+path, requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			filePath := filepath.Join(terminalAssetsDir, asset.File)
+			info, err := os.Stat(filePath)
+			if err != nil || !info.Mode().IsRegular() {
+				http.Error(w, "terminal frontend asset is not installed; rerun the Open Go Panel installer", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", asset.ContentType)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			http.ServeFile(w, r, filePath)
+		})))
+	}
 	mux.Handle("GET /terminal", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !terminalRequestIsLocal(r) {
 			writeHTML(w, cfg.Logger, http.StatusForbidden, terminalUnavailablePage())
@@ -285,7 +311,7 @@ func terminalPage(data terminalPageData) string {
 	}
 
 	head := strings.Replace(pageHead("Terminal"), "</head>", `
-	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+	<link rel="stylesheet" href="/assets/xterm/xterm.css">
 </head>`, 1)
 
 	rootWarning := ""
@@ -327,8 +353,8 @@ func terminalPage(data terminalPageData) string {
 		</section>
 	</main>
 
-	<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+	<script src="/assets/xterm/xterm.js"></script>
+	<script src="/assets/xterm/xterm-addon-fit.js"></script>
 	<script>
 	(() => {
 		const screen = document.getElementById('terminal-screen');
