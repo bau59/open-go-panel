@@ -36,6 +36,9 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
+      - name: Shell syntax
+        run: bash -n install.sh uninstall.sh
+
       - name: Vet
         run: go vet ./...
 
@@ -106,6 +109,28 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server redis-tools
           sudo systemctl enable --now redis-server.service
           curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/databases/redis | grep -q "<h1>Redis</h1>"
+
+      - name: Verify automatic binary rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p broken-dist
+          printf '#!/usr/bin/env bash\nexit 42\n' > broken-dist/open-go-panel-linux-amd64
+          chmod 0755 broken-dist/open-go-panel-linux-amd64
+          cp smoke-dist/xterm.css smoke-dist/xterm.js smoke-dist/xterm-addon-fit.js broken-dist/
+          (cd broken-dist && sha256sum open-go-panel-linux-amd64 xterm.css xterm.js xterm-addon-fit.js > SHA256SUMS)
+          python3 -m http.server 18081 --directory broken-dist >/tmp/ogp-broken-http.log 2>&1 &
+          sleep 1
+          if sudo env \
+            OGP_BINARY_URL=http://127.0.0.1:18081/open-go-panel-linux-amd64 \
+            OGP_CHECKSUMS_URL=http://127.0.0.1:18081/SHA256SUMS \
+            OGP_ASSET_BASE_URL=http://127.0.0.1:18081 \
+            bash ./install.sh; then
+            echo "Broken update unexpectedly succeeded" >&2
+            exit 1
+          fi
+          sleep 1
+          curl -fsS http://127.0.0.1:8443/health | grep -qx ok
 
   build:
     needs:
