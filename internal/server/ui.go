@@ -296,9 +296,35 @@ const baseStyles = `
 	.docker-actions form{display:inline-flex}
 	.docker-actions button,.docker-actions summary{white-space:nowrap}
 	.docker-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
-	.docker-create-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start;margin-top:18px}
+	.docker-create-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start;margin-top:18px;min-width:0}
+	.docker-fold{min-width:0}
+	.docker-fold>form{min-width:0}
+	.docker-fold>form>.docker-create-grid{min-width:0}
+	.docker-create-grid>div{min-width:0}
+	.docker-create-grid label{display:block;margin-bottom:6px}
+	.docker-create-grid .check-row{display:inline-flex;align-items:center}
+	.docker-create-grid .check-row label{margin:0}
+	.docker-rebuild-dialog{position:fixed;inset:0;margin:auto;width:min(540px,calc(100vw - 32px));max-height:min(86vh,780px);overflow:auto;padding:24px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.5)}
+	.docker-rebuild-dialog::backdrop{background:rgba(0,0,0,.68)}
+	.docker-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:20px}
+	.docker-dialog-head h2{font-size:19px;margin:0 0 5px}
+	.docker-rebuild-form{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-width:0;max-width:none;width:100%;margin:0;padding:0;border:0;background:transparent;box-shadow:none}
+	.docker-rebuild-form label{display:block;font-size:12px;white-space:normal}
+	.docker-rebuild-form input{display:block;width:100%;min-width:0;margin-top:6px}
+	.docker-dialog-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:0}
+	.docker-dialog-grid label{min-width:0}
+	.docker-port{display:flex;flex-direction:column;gap:3px;margin-bottom:5px;white-space:nowrap}
+	.docker-port strong{font-size:12px;font-weight:600}
+	.docker-port small{font-size:10px;color:var(--muted);line-height:1.35}
+	.docker-backups{margin:0 0 16px}
+	.docker-backups>summary{padding:14px 18px;cursor:pointer;font-weight:600}
+	.docker-backups>summary .note{margin-left:8px;font-weight:400}
 	.docker-create-grid>div:not(.docker-runtime-fields):not(.docker-toggle-row){min-width:0}
 	.docker-create-grid input,.docker-create-grid textarea{width:100%;min-width:0}
+	.docker-key-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;max-width:720px}
+	.docker-key-form>div{min-width:0}
+	.docker-key-form input{width:100%;min-width:0}
+	.docker-key-form .docker-create-submit{align-self:end}
 	.docker-create-submit{display:flex;align-items:end}
 	.docker-add-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
 	.docker-fold{scroll-margin-top:18px}
@@ -315,9 +341,7 @@ const baseStyles = `
 	.docker-row-rebuild{position:relative}
 	.docker-row-rebuild summary{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;list-style:none}
 	.docker-row-rebuild summary::-webkit-details-marker{display:none}
-	.docker-rebuild-form{display:grid;gap:8px;max-width:320px;min-width:220px;margin-top:9px;padding:14px;border:1px solid var(--border);background:var(--surface);border-radius:12px}
-	.docker-rebuild-form label{font-size:11px;white-space:normal}
-	.docker-rebuild-form input{margin-top:5px;width:100%;min-width:0}
+
 	.docker-rebuild-form .note{white-space:normal;line-height:1.5}
 	.docker-usage{font-variant-numeric:tabular-nums;white-space:nowrap}
 	.docker-usage small{display:block;color:var(--muted-2);font-size:11px}
@@ -477,6 +501,9 @@ const baseStyles = `
 		.docker-toggle-row{align-items:flex-start;flex-direction:column;gap:6px}
 		.docker-shm-field{width:100%}
 		.docker-fold>summary span{display:none}
+		.docker-dialog-grid{grid-template-columns:1fr}
+		.docker-key-form{grid-template-columns:1fr}
+		.docker-rebuild-dialog{padding:18px}
 		.docker-runtime-fields{grid-template-columns:1fr}
 		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
 		.table-path{max-width:180px}
