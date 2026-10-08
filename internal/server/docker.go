@@ -26,6 +26,23 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
         http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
 
+    mux.Handle("POST /docker/create", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid request", http.StatusBadRequest)
+            return
+        }
+        if err := cfg.Docker.Create(
+            r.Context(),
+            r.FormValue("name"),
+            r.FormValue("image"),
+            r.FormValue("ports"),
+            r.FormValue("autostart") == "1",
+        ); err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker", http.StatusSeeOther)
+    })))
     mux.Handle("POST /docker/service/restart", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         if err := cfg.Docker.RestartService(r.Context()); err != nil {
             writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
@@ -161,12 +178,27 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     <main class="shell">
         <div class="page-head">
             <div><p class="eyebrow">Containers</p><h1>Docker</h1><p class="sub">Start, stop, restart, remove and configure container autostart.</p></div>
-            <div class="actions"><span class="badge">Docker ` + html.EscapeString(status.Version) + `</span><form method="post" action="/docker/service/restart"><button class="secondary">Restart Docker</button></form></div>
+            <div class="page-control-cluster">
+                <div class="service-state"><span>Docker ` + html.EscapeString(status.Version) + `</span><span class="state-text ok"><i></i>running</span></div>
+                <form method="post" action="/docker/service/restart"><button class="secondary">Restart Docker</button></form>
+            </div>
         </div>
         ` + alert + serviceAlert + `
         <section class="metrics-grid docker-metrics" style="margin-bottom:16px">
             <div class="metric"><span>Containers</span><strong>` + fmt.Sprintf("%d", len(containers)) + `</strong><small>all containers</small></div>
             <div class="metric"><span>Running</span><strong>` + fmt.Sprintf("%d", runningCount) + `</strong><small>currently active</small></div>
+        </section>
+        <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
+            <div class="section-title">
+                <div><h2>Run container</h2><p class="note" style="margin:6px 0 0">Paste an image or registry reference such as <code>nginx:latest</code> or <code>ghcr.io/org/app:latest</code>.</p></div>
+            </div>
+            <form method="post" action="/docker/create" class="docker-create-grid">
+                <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
+                <div><label>Image / registry reference</label><input name="image" placeholder="redis:7 or ghcr.io/org/app:latest" required></div>
+                <div><label>Ports</label><input name="ports" placeholder="8080:80, 8443:443"></div>
+                <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                <div class="docker-create-submit"><button class="button">Pull & run</button></div>
+            </form>
         </section>
         <section class="panel">
             <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">Autostart maps to Docker restart policy <code>unless-stopped</code>.</p></div></div>
