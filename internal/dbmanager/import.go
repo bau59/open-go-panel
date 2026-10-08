@@ -50,38 +50,36 @@ func (m *Manager) ClearImportTask() {
 }
 
 func (m *Manager) StartRemoteImport(id int64, connection string) error {
-	m.importMu.Lock()
-	if m.importTask.Running {
-		current := m.importTask
-		m.importMu.Unlock()
-		return fmt.Errorf("database import for #%d is already running", current.DatabaseID)
-	}
-	m.importTask = RemoteImportTask{}
-	m.importMu.Unlock()
-
-	target, err := m.Get(id)
-	if err != nil {
-		return err
-	}
 	source, err := parseRemoteConnection(connection)
 	if err != nil {
 		return err
 	}
+	if !m.operationMu.TryLock() {
+		return errOperationInProgress
+	}
+
+	target, err := m.Get(id)
+	if err != nil {
+		m.operationMu.Unlock()
+		return err
+	}
 	if source.Engine != target.Engine {
+		m.operationMu.Unlock()
 		return fmt.Errorf("source is %s but target database is %s", source.Engine, target.Engine)
 	}
 
 	m.importMu.Lock()
 	m.importTask = RemoteImportTask{
 		DatabaseID: id,
-		Engine: target.Engine,
+		Engine:     target.Engine,
 		SourceHost: source.Host,
-		Running: true,
-		StartedAt: time.Now(),
+		Running:    true,
+		StartedAt:  time.Now(),
 	}
 	m.importMu.Unlock()
 
 	go func() {
+		defer m.operationMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
 		backupPath, importErr := m.remoteImport(ctx, target, source)
@@ -104,7 +102,7 @@ func (m *Manager) remoteImport(ctx context.Context, target Database, source remo
 	if err := probeRemoteDatabase(ctx, source); err != nil {
 		return "", err
 	}
-	preBackup, err := m.Backup(ctx, target.ID)
+	preBackup, err := m.backupUnlocked(ctx, target.ID)
 	if err != nil {
 		return "", fmt.Errorf("create safety backup before import: %w", err)
 	}
@@ -124,7 +122,7 @@ func (m *Manager) remoteImport(ctx context.Context, target Database, source remo
 		return preBackup.Path, fmt.Errorf("reset local database: %w", err)
 	}
 	if err := restoreCompressedDump(ctx, target, importPath); err != nil {
-		rollbackErr := m.Restore(context.Background(), target.ID, preBackup.Path)
+		rollbackErr := m.restoreUnlocked(context.Background(), target.ID, preBackup.Path)
 		if rollbackErr != nil {
 			return preBackup.Path, fmt.Errorf("remote import failed: %v; safety-backup rollback also failed: %v", err, rollbackErr)
 		}
