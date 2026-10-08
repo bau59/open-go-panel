@@ -212,6 +212,10 @@ const baseStyles = `
 	.health-state.danger{color:#ffabb4}
 	.app-form-row{display:grid;gap:8px}
 	.app-form-row-deploy{grid-template-columns:minmax(0,1fr) 160px auto}
+	.app-promotion-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:12px;align-items:end;margin-top:14px}
+	.app-promotion-grid>div{min-width:0}
+	.app-promotion-grid select,.app-promotion-grid input{width:100%;min-width:0}
+	.app-promotion-grid button{white-space:nowrap}
 	.app-form-row-db{grid-template-columns:minmax(0,1fr) 170px auto}
 	.service-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 	.service-summary>div{min-width:0;padding:13px 14px;border:1px solid var(--border);border-radius:13px;background:#0d121b}
