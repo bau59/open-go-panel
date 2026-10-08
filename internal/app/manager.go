@@ -76,6 +76,8 @@ type DeployConfig struct {
 	CurrentCommit  string
 	PreviousCommit string
 	AutoDeploy     bool
+	AutoDeployIntervalSeconds int
+	LastCheckedAt  time.Time
 	DeployedAt     time.Time
 }
 
@@ -244,13 +246,16 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
 	var cfg DeployConfig
 	var deployedAt string
+	var lastCheckedAt string
 	err := m.store.DB().QueryRow(`
-		SELECT repository, branch, current_commit, previous_commit, auto_deploy, deployed_at
+		SELECT repository, branch, current_commit, previous_commit,
+			auto_deploy, auto_deploy_interval_sec, last_checked_at, deployed_at
 		FROM deployments
 		WHERE app_id = ?
-	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit, &cfg.AutoDeploy, &deployedAt)
+	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit,
+		&cfg.AutoDeploy, &cfg.AutoDeployIntervalSeconds, &lastCheckedAt, &deployedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DeployConfig{Branch: "main"}, nil
+		return DeployConfig{Branch: "main", AutoDeployIntervalSeconds: DefaultAutoDeployIntervalSeconds}, nil
 	}
 	if err != nil {
 		return cfg, fmt.Errorf("read deployment config: %w", err)
@@ -258,10 +263,26 @@ func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
 	if deployedAt != "" {
 		cfg.DeployedAt, _ = time.Parse(time.RFC3339Nano, deployedAt)
 	}
+	if lastCheckedAt != "" {
+		cfg.LastCheckedAt, _ = time.Parse(time.RFC3339Nano, lastCheckedAt)
+	}
 	return cfg, nil
 }
 
+const (
+	DefaultAutoDeployIntervalSeconds = 300
+	MinAutoDeployIntervalSeconds     = 30
+	MaxAutoDeployIntervalSeconds     = 86400
+)
+
 func (m *Manager) SetDeployConfig(id int64, repository, branch string, autoDeploy bool) error {
+	return m.SetDeployConfigInterval(id, repository, branch, autoDeploy, DefaultAutoDeployIntervalSeconds)
+}
+
+func (m *Manager) SetDeployConfigInterval(id int64, repository, branch string, autoDeploy bool, intervalSeconds int) error {
+	if intervalSeconds < MinAutoDeployIntervalSeconds || intervalSeconds > MaxAutoDeployIntervalSeconds {
+		return fmt.Errorf("auto deploy interval must be between %d and %d seconds", MinAutoDeployIntervalSeconds, MaxAutoDeployIntervalSeconds)
+	}
 	repository = strings.TrimSpace(repository)
 	branch = strings.TrimSpace(branch)
 	if repository == "" {
@@ -280,13 +301,20 @@ func (m *Manager) SetDeployConfig(id int64, repository, branch string, autoDeplo
 		return err
 	}
 	_, err := m.store.DB().Exec(`
-		INSERT INTO deployments(app_id, repository, branch, auto_deploy)
-		VALUES(?, ?, ?, ?)
+		INSERT INTO deployments(app_id, repository, branch, auto_deploy, auto_deploy_interval_sec)
+		VALUES(?, ?, ?, ?, ?)
 		ON CONFLICT(app_id) DO UPDATE SET
+			last_checked_at=CASE
+				WHEN deployments.repository <> excluded.repository
+					OR deployments.branch <> excluded.branch
+					OR deployments.auto_deploy <> excluded.auto_deploy
+					OR deployments.auto_deploy_interval_sec <> excluded.auto_deploy_interval_sec
+				THEN '' ELSE deployments.last_checked_at END,
 			repository=excluded.repository,
 			branch=excluded.branch,
-			auto_deploy=excluded.auto_deploy
-	`, id, repository, branch, autoDeploy)
+			auto_deploy=excluded.auto_deploy,
+			auto_deploy_interval_sec=excluded.auto_deploy_interval_sec
+	`, id, repository, branch, autoDeploy, intervalSeconds)
 	if err != nil {
 		return fmt.Errorf("save deployment config: %w", err)
 	}
