@@ -312,7 +312,7 @@ const baseStyles = `
 	.terminal-shell{width:min(1220px,calc(100% - 32px))}
 	.terminal-panel{overflow:hidden}
 	.terminal-toolbar{display:flex;align-items:end;justify-content:space-between;gap:14px;padding:16px;border-bottom:1px solid var(--border);background:#0d121b}
-	.terminal-toolbar form{display:grid;grid-template-columns:180px minmax(260px,1fr) auto;gap:10px;align-items:end;flex:1}
+	.terminal-toolbar form{display:grid;grid-template-columns:180px minmax(260px,1fr);gap:10px;align-items:end;flex:1}
 	.terminal-toolbar label{margin-bottom:5px}
 	.terminal-connect{display:flex;align-items:end}
 	.terminal-target-meta{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;padding-bottom:3px}
@@ -363,6 +363,10 @@ const baseStyles = `
 		.toolbar-4,.toolbar-3{grid-template-columns:1fr 1fr}
 		main{padding-top:30px}
 		.page-head{align-items:flex-start;flex-direction:column}
+		.page-control-cluster{justify-content:flex-start;width:100%}
+		.service-state{min-height:38px}
+		.docker-create-grid{grid-template-columns:1fr 1fr}
+
 		h1{font-size:28px}
 		table{display:block;overflow-x:auto}
 		.inline-popover.wide{width:min(460px,82vw)}
@@ -402,6 +406,14 @@ const baseStyles = `
 		.danger-zone-body{align-items:flex-start;flex-direction:column}
 		.caddy-log-filters{grid-template-columns:1fr}
 		.terminal-toolbar form{grid-template-columns:1fr}
+		.terminal-target-meta{align-items:flex-start;flex-direction:column}
+		.page-control-cluster{align-items:stretch;flex-direction:column}
+		.service-state{justify-content:space-between;width:100%}
+		.db-service-facts{grid-template-columns:1fr}
+		.db-service-facts .span-2{grid-column:auto}
+		.db-service-facts>div:nth-last-child(-n+2){border-bottom:1px solid rgba(255,255,255,.045)}
+		.db-service-facts>div:last-child{border-bottom:0}
+
 		.terminal-screen{min-height:420px;height:68vh}
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
 		.redis-toolbar{grid-template-columns:1fr}
