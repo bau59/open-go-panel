@@ -286,7 +286,8 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				editorValue = defaultTemplate
 			}
 			placeholderNote := `<code>{domain}</code> and <code>{port}</code>`
-			if site.Kind == "static" || site.Port == 0 {
+			if site.Kind == "parked" { placeholderNote = `<code>{domain}</code>` }
+			if site.Kind == "static" {
 				placeholderNote = `<code>{domain}</code> and <code>{root}</code>`
 			}
 			selectedEditor = `
@@ -430,6 +431,9 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 }
 
 func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panelcaddy.GlobalSettings) string {
+	if site.Kind == "parked" {
+		return "{domain} {\n respond \"Domain not configured\" 404\n}"
+	}
 	if site.Kind == "static" || site.Port == 0 {
 		address := "{domain}"
 		if !settings.HTTPS {
