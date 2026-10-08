@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"os/user"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -193,6 +194,32 @@ func (m *Manager) AddStandaloneDomain(ctx context.Context, domain string) error 
 }
 
 // RenameSite changes the hostname while retaining the site's target and custom template.
+func (m *Manager) SetStandaloneRedirect(ctx context.Context, id int64, destination string) error {
+	if id >= 0 { return errors.New("redirect requires an independent domain") }
+	destination = strings.TrimSpace(destination)
+	if destination != "" {
+		u, err := url.Parse(destination)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") ||
+			u.Hostname() == "" || u.User != nil || strings.ContainsAny(destination, "\r\n\t {}") {
+			return errors.New("invalid redirect destination")
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sites, err := m.load()
+	if err != nil { return err }
+	for i := range sites {
+		if sites[i].AppID != id { continue }
+		if strings.TrimSpace(sites[i].Template) != "" {
+			return errors.New("remove custom Caddy override before setting a redirect")
+		}
+		sites[i].Kind, sites[i].Root = "parked", ""
+		if destination != "" { sites[i].Kind, sites[i].Root = "redirect", destination }
+		return m.apply(ctx, sites)
+	}
+	return errors.New("domain not found")
+}
+
 func (m *Manager) RenameSite(ctx context.Context, id int64, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -585,6 +612,9 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 		if site.Kind == "parked" {
 			siteTemplate = "{domain} {\n respond \"Domain not configured\" 404\n}"
 		}
+		if site.Kind == "redirect" {
+			siteTemplate = "{domain} {\n redir {root} 301\n}"
+		}
 		if strings.TrimSpace(site.Template) != "" {
 			siteTemplate = site.Template
 		}
@@ -688,6 +718,10 @@ func validateSiteTemplate(value string, site Site) error {
 		return errors.New("Caddy template must contain {domain}")
 	}
 	if site.Kind == "parked" {
+		return nil
+	}
+	if site.Kind == "redirect" {
+		if !strings.Contains(value, "{root}") { return errors.New("redirect template must contain {root}") }
 		return nil
 	}
 	if site.Kind == "static" || site.Port == 0 {
@@ -903,6 +937,7 @@ func (s Site) Target() string {
 	if s.Kind == "parked" {
 		return "Unassigned"
 	}
+	if s.Kind == "redirect" { return s.Root }
 	if s.Kind == "static" || s.Port == 0 {
 		return s.Root
 	}
