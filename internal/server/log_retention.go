@@ -153,7 +153,17 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
    for _,app:=range apps{
     label:="Shared default (raw unit or disabled)"
     if app.Service.Mode!="raw" && app.Service.LogRetentionDays>0{label=fmt.Sprintf("%d days (dedicated namespace)",app.Service.LogRetentionDays)}
-    fmt.Fprintf(&b,`<tr><td>%s</td><td>%s</td><td><a class="secondary" href="/apps/%d">Application settings</a></td></tr>`,html.EscapeString(app.Name),html.EscapeString(label),app.ID)
+    controls:=`<span class="note">Not managed here</span>`
+    if app.Type!="static" && app.Service.Mode!="raw" {
+     choices:=strings.Builder{}
+     for _,n:=range []int{1,3,7,14,30,60,90} {
+      mark:=""
+      if n==app.Service.LogRetentionDays{mark=" selected"}
+      fmt.Fprintf(&choices,`<option value="%d"%s>%d days</option>`,n,mark,n)
+     }
+     controls=fmt.Sprintf(`<form method="post" action="/log-retention/app/%d" class="compact-form"><select name="days" aria-label="Application journal retention">%s</select><button class="secondary">Save</button></form>`,app.ID,choices.String())
+    }
+    fmt.Fprintf(&b,`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,html.EscapeString(app.Name),html.EscapeString(label),controls)
    }
    appRows=b.String()
   }
