@@ -46,9 +46,14 @@ type Site struct {
 }
 
 type GlobalSettings struct {
-	HTTPS       bool
-	Compression bool
-	AccessLog   bool
+	HTTPS                       bool
+	Compression                 bool
+	AccessLog                   bool
+	SecurityHeaders             bool
+	FrameProtection             bool
+	HSTS                        bool
+	ProxyDialTimeoutSeconds     int
+	ProxyHeaderTimeoutSeconds   int
 }
 
 func defaultGlobalSettings() GlobalSettings {
@@ -353,7 +358,9 @@ func (m *Manager) GlobalSettings() (GlobalSettings, error) {
 	settings := defaultGlobalSettings()
 	rows, err := m.store.DB().Query(`
 		SELECT key, value FROM settings
-		WHERE key IN ('caddy.https','caddy.compression','caddy.access_log')
+		WHERE key IN ('caddy.https','caddy.compression','caddy.access_log',
+			'caddy.security_headers','caddy.frame_protection','caddy.hsts',
+			'caddy.proxy_dial_timeout','caddy.proxy_header_timeout')
 	`)
 	if err != nil {
 		return settings, err
@@ -373,12 +380,25 @@ func (m *Manager) GlobalSettings() (GlobalSettings, error) {
 			settings.Compression = enabled
 		case "caddy.access_log":
 			settings.AccessLog = enabled
+		case "caddy.security_headers":
+			settings.SecurityHeaders = enabled
+		case "caddy.frame_protection":
+			settings.FrameProtection = enabled
+		case "caddy.hsts":
+			settings.HSTS = enabled
+		case "caddy.proxy_dial_timeout":
+			settings.ProxyDialTimeoutSeconds, _ = strconv.Atoi(value)
+		case "caddy.proxy_header_timeout":
+			settings.ProxyHeaderTimeoutSeconds, _ = strconv.Atoi(value)
 		}
 	}
 	return settings, rows.Err()
 }
 
 func (m *Manager) SetGlobalSettings(ctx context.Context, settings GlobalSettings) error {
+	if err := validateGlobalSettings(settings); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -400,8 +420,13 @@ func (m *Manager) SetGlobalSettings(ctx context.Context, settings GlobalSettings
 		values := map[string]string{
 			"caddy.https":        boolSetting(s.HTTPS),
 			"caddy.compression":  boolSetting(s.Compression),
-			"caddy.access_log":   boolSetting(s.AccessLog),
-			"caddy.site_template": template,
+			"caddy.access_log":          boolSetting(s.AccessLog),
+			"caddy.security_headers":   boolSetting(s.SecurityHeaders),
+			"caddy.frame_protection":   boolSetting(s.FrameProtection),
+			"caddy.hsts":               boolSetting(s.HSTS),
+			"caddy.proxy_dial_timeout": strconv.Itoa(s.ProxyDialTimeoutSeconds),
+			"caddy.proxy_header_timeout": strconv.Itoa(s.ProxyHeaderTimeoutSeconds),
+			"caddy.site_template":      template,
 		}
 		for key, value := range values {
 			if _, err := tx.Exec(`
@@ -437,6 +462,42 @@ func boolSetting(v bool) string {
 	return "0"
 }
 
+// Caddy's built-in transport and header directives are used; no plugins required.
+// Zero timeout means Caddy's native default (3s for dial, unlimited for response headers).
+func validateGlobalSettings(settings GlobalSettings) error {
+	if settings.HSTS && !settings.HTTPS {
+		return errors.New("HSTS requires Automatic HTTPS")
+	}
+	allowedDial := map[int]bool{0: true, 3: true, 5: true, 10: true, 30: true}
+	if !allowedDial[settings.ProxyDialTimeoutSeconds] {
+		return errors.New("invalid reverse proxy connection timeout")
+	}
+	allowedHeader := map[int]bool{0: true, 10: true, 30: true, 60: true, 120: true}
+	if !allowedHeader[settings.ProxyHeaderTimeoutSeconds] {
+		return errors.New("invalid reverse proxy response-header timeout")
+	}
+	return nil
+}
+
+func securityHeaderLines(settings GlobalSettings) []string {
+	var headers []string
+	if settings.SecurityHeaders {
+		headers = append(headers, "\t\tX-Content-Type-Options nosniff",
+			"\t\tReferrer-Policy strict-origin-when-cross-origin")
+	}
+	if settings.FrameProtection {
+		headers = append(headers, "\t\tX-Frame-Options SAMEORIGIN")
+	}
+	if settings.HSTS && settings.HTTPS {
+		// A short, opt-in max-age; do not force includeSubDomains or preload.
+		headers = append(headers, "\t\tStrict-Transport-Security \"max-age=604800\"")
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return append(append([]string{"\theader {"}, headers...), "\t}")
+}
+
 func managedProxyTemplate(settings GlobalSettings) string {
 	address := "{domain}"
 	if !settings.HTTPS {
@@ -447,7 +508,20 @@ func managedProxyTemplate(settings GlobalSettings) string {
 	if settings.Compression {
 		lines = append(lines, "\tencode zstd gzip")
 	}
-	lines = append(lines, "\treverse_proxy 127.0.0.1:{port}")
+	lines = append(lines, securityHeaderLines(settings)...)
+	if settings.ProxyDialTimeoutSeconds == 0 && settings.ProxyHeaderTimeoutSeconds == 0 {
+		lines = append(lines, "\treverse_proxy 127.0.0.1:{port}")
+	} else {
+		lines = append(lines, "\treverse_proxy 127.0.0.1:{port} {",
+			"\t\ttransport http {")
+		if settings.ProxyDialTimeoutSeconds > 0 {
+			lines = append(lines, fmt.Sprintf("\t\t\tdial_timeout %ds", settings.ProxyDialTimeoutSeconds))
+		}
+		if settings.ProxyHeaderTimeoutSeconds > 0 {
+			lines = append(lines, fmt.Sprintf("\t\t\tresponse_header_timeout %ds", settings.ProxyHeaderTimeoutSeconds))
+		}
+		lines = append(lines, "\t\t}", "\t}")
+	}
 	if settings.AccessLog {
 		lines = append(lines, "\tlog")
 	}
@@ -465,6 +539,7 @@ func managedStaticTemplate(settings GlobalSettings) string {
 	if settings.Compression {
 		lines = append(lines, "\tencode zstd gzip")
 	}
+	lines = append(lines, securityHeaderLines(settings)...)
 	lines = append(lines, "\troot * {root}", "\tfile_server")
 	if settings.AccessLog {
 		lines = append(lines, "\tlog")
