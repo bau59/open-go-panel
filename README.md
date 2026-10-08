@@ -108,6 +108,25 @@ UFW
 
 Application files remain under the Linux owner's home directory. Removing an app from the panel preserves its application files.
 
+### Git deployment safety
+
+Git deployments and rollbacks now build a separate copy alongside the active
+application directory. They prepare dependencies in that staging directory,
+atomically exchange the prepared release with the active path on Linux
+(`renameat2(RENAME_EXCHANGE)`), restart the service, and check the service
+state/listener before recording the new commit. If activation fails, the panel
+atomically switches back to the previous files and attempts to restart the
+previous service. On filesystems that cannot exchange directories atomically,
+the deploy is refused instead of falling back to unsafe in-place replacement.
+
+**Store persistent application data outside the Git release directory.**
+Staging copies the current directory at one moment in time; writes to files
+inside it while a deployment is in progress can be lost when the new release
+is activated. Use a separate data directory or object storage for uploads,
+databases, and other mutable files. Filesystem activation is atomic, but a
+systemd restart still entails a brief application interruption; it is not
+zero-downtime blue/green traffic switching.
+
 Caddy-managed sites are isolated in:
 
 ```text
