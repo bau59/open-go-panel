@@ -71,3 +71,40 @@ func TestDockerBuildOutputIsBounded(t *testing.T) {
 		t.Fatal("output tail was not preserved")
 	}
 }
+
+func TestParseGitHubKnownHostsAcceptsLargeMetadata(t *testing.T) {
+	// GitHub returns many IP ranges alongside ssh_keys. The old 128-KiB
+	// LimitReader produced unexpected EOF when /meta exceeded its limit.
+	payload := `{"ssh_keys":["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBogusKeyForTest"],"web":"` +
+		strings.Repeat("0", 200<<10) + `"}`
+	if len(payload) <= 128<<10 {
+		t.Fatal("fixture must exceed the old 128-KiB limit")
+	}
+	keys, err := parseGitHubKnownHosts(strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("valid GitHub metadata rejected: %v", err)
+	}
+	if len(keys) != 1 || keys[0] != "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBogusKeyForTest" {
+		t.Fatalf("unexpected known_hosts entries: %v", keys)
+	}
+}
+
+func TestParseGitHubKnownHostsRejectsInvalidResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "truncated JSON", body: `{"ssh_keys":["ssh-ed25519 AAAA"]`},
+		{name: "missing keys", body: `{"web":["192.0.2.0/24"]}`},
+		{name: "empty keys", body: `{"ssh_keys":[]}`},
+		{name: "wrong key format", body: `{"ssh_keys":["not-an-ssh-key"]}`},
+		{name: "oversized response", body: `{"ssh_keys":["ssh-ed25519 AAAA"],"web":"` + strings.Repeat("A", maxGitHubMetadataBytes) + `"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseGitHubKnownHosts(strings.NewReader(tc.body)); err == nil {
+				t.Fatalf("invalid response %q accepted", tc.name)
+			}
+		})
+	}
+}
