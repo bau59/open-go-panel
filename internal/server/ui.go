@@ -211,6 +211,25 @@ const baseStyles = `
 	.log-details{position:relative}
 	.log-popover{top:100%;right:0}
 	.log-error-message{margin:0 0 10px;color:#ff9aa5;font-size:12px;line-height:1.5}
+	.runtime-port-row{display:flex;align-items:center;gap:8px}
+	.runtime-port-row .mini-link{color:#9a90ff;font-size:11px;font-weight:800;cursor:pointer}
+	.runtime-port-row details{position:relative}
+	.deploy-key-block>summary{display:inline-flex}
+	.deploy-key-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}
+	.deploy-key-value{min-height:86px;resize:none}
+	.terminal-shell{width:min(1440px,calc(100% - 32px))}
+	.terminal-panel{overflow:hidden}
+	.terminal-toolbar{display:flex;align-items:end;justify-content:space-between;gap:16px;padding:16px;border-bottom:1px solid var(--border);background:#0d121b}
+	.terminal-toolbar form{display:grid;grid-template-columns:180px minmax(260px,1fr) auto;gap:10px;align-items:end;flex:1}
+	.terminal-toolbar label{margin-bottom:5px}
+	.terminal-connect{display:flex;align-items:end}
+	.terminal-target-meta{display:flex;align-items:center;gap:10px;min-width:0}
+	.terminal-target-meta code{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+	.terminal-warning{padding:10px 16px;border-bottom:1px solid rgba(246,196,83,.2);background:var(--warning-soft);color:#f7d884;font-size:12px}
+	.terminal-screen{height:min(72vh,760px);min-height:460px;padding:10px;background:#080c12}
+	.terminal-screen .xterm{height:100%}
+	.terminal-screen .xterm-viewport{overscroll-behavior:contain}
+	.terminal-loading{display:grid;height:100%;place-items:center;color:var(--muted)}
 	.app-runtime-card .runtime-facts>div{padding:2px 14px;border:0;border-left:1px solid var(--border);border-radius:0;background:transparent}
 	.app-runtime-card .runtime-facts>div:first-child{padding-left:0;border-left:0}
 	.app-card .domain-summary>div{padding:3px 0 10px;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent}
@@ -243,6 +262,9 @@ const baseStyles = `
 		.runtime-head{align-items:flex-start;flex-direction:column}
 		.runtime-actions{justify-content:flex-start}
 		.caddy-log-filters{grid-template-columns:1fr 1fr}
+		.terminal-toolbar{align-items:stretch;flex-direction:column}
+		.terminal-toolbar form{width:100%}
+		.terminal-target-meta{justify-content:space-between;width:100%}
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid{grid-template-columns:1fr}
@@ -261,6 +283,9 @@ const baseStyles = `
 		.app-card .domain-summary{grid-template-columns:1fr}
 		.danger-zone-body{align-items:flex-start;flex-direction:column}
 		.caddy-log-filters{grid-template-columns:1fr}
+		.terminal-toolbar form{grid-template-columns:1fr}
+		.terminal-screen{min-height:420px;height:68vh}
+		.deploy-key-head{align-items:flex-start;flex-direction:column}
 	}
 `
 
@@ -340,6 +365,7 @@ func appHeader(active string) string {
 		{"databases", "/databases", "Databases"},
 		{"caddy", "/caddy", "Caddy"},
 		{"security", "/security", "Security"},
+		{"terminal", "/terminal", "Terminal"},
 		{"activity", "/activity", "Activity"},
 	}
 
