@@ -5,6 +5,7 @@ import (
     "encoding/json"
     "errors"
     "fmt"
+    "net/url"
     "os/exec"
     "regexp"
     "sort"
@@ -130,7 +131,7 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
 
 func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart bool) error {
     name = strings.TrimSpace(name)
-    image = strings.TrimSpace(image)
+    image = normalizeImageReference(image)
     if !containerNamePattern.MatchString(name) {
         return errors.New("container name may contain only letters, digits, dot, underscore and hyphen")
     }
@@ -201,6 +202,35 @@ func dockerCommand(ctx context.Context, args ...string) error {
         return fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
     }
     return nil
+}
+
+func normalizeImageReference(value string) string {
+    value = strings.TrimSpace(value)
+    if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+        if u, err := url.Parse(value); err == nil && u.Host != "" {
+            host := strings.ToLower(u.Hostname())
+            path := strings.Trim(strings.TrimSpace(u.Path), "/")
+            switch host {
+            case "hub.docker.com", "www.hub.docker.com":
+                if strings.HasPrefix(path, "_/") {
+                    path = strings.TrimPrefix(path, "_/")
+                } else if strings.HasPrefix(path, "r/") {
+                    path = strings.TrimPrefix(path, "r/")
+                }
+                value = path
+            default:
+                value = u.Host + "/" + path
+            }
+        }
+    }
+    if value != "" && !strings.Contains(value, "@") {
+        lastSlash := strings.LastIndex(value, "/")
+        lastColon := strings.LastIndex(value, ":")
+        if lastColon <= lastSlash {
+            value += ":latest"
+        }
+    }
+    return value
 }
 
 func defaultRestartPolicy(value string) string {
