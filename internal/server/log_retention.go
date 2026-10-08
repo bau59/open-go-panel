@@ -212,7 +212,7 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  if problem!=""{alert=`<div class="alert">`+html.EscapeString(problem)+`</div>`}
  return pageHead("Log retention")+`<body>`+appHeader("log-retention")+`<main class="shell">
  <div class="page-head"><div><p class="eyebrow">Observability / retention</p><h1>Log retention</h1>
- <p class="sub">One place to understand log sources, retention boundaries and their actual scope.</p></div><a class="secondary" href="/performance">HTTP performance</a></div>`+alert+switchPanel+`
+ <p class="sub">One place to disable optional logs and set retention. Essential service errors remain available.</p></div><a class="secondary" href="/performance">HTTP performance</a></div>`+alert+switchPanel+`
  <section class="panel panel-pad" style="margin-bottom:16px">
  <h2>System journal (shared limit)</h2>
  <p class="note">Caddy access/error logs and non-namespaced systemd services share this quota. Managed Go applications with dedicated journal namespaces have their own retention policy and are not governed by this shared limit.</p>
@@ -225,21 +225,15 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  <p class="note">Applies via /etc/systemd/journald.conf.d. Restarting journald is required; existing archived journals are not vacuumed by this action. If journald uses volatile storage, SystemMaxUse may not govern its disk allocation.</p>
  <button class="button" type="submit" onclick="return confirm('Apply shared system journal limits and restart systemd-journald?')">Apply journal limits</button></form></section>
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Caddy HTTP metrics source</h2>
- <p class="note">Choose the already configured JSON access-log destination. Journal mode reads caddy.service from journald; file mode reads a JSON-lines file in /var/log/caddy/. Collector offsets and journal cursors are persisted for restart-safe continuation. Switching sources may import overlapping entries from both sources.</p>
+ <p class="note">Choose the already configured JSON access-log destination. Journal mode reads caddy.service from journald; file mode reads a JSON-lines file in /var/log/caddy/. No background collector is running. Reports read a bounded portion of the selected source only when requested.</p>
  <form method="post" action="/log-retention/source" style="margin-top:14px">
  <div class="caddy-timeouts"><div><label>Driver</label><select name="source">
  <option value="journal"`+selected(source,"journal")+`>systemd-journald</option>
  <option value="file"`+selected(source,"file")+`>JSON file</option></select></div>
  <div><label>Caddy JSON file path</label><input name="file_path" value="`+html.EscapeString(filePath)+`" placeholder="/var/log/caddy/access.log"></div></div>
  <button class="secondary" style="margin-top:12px">Save metrics source</button></form></section>
- <section class="panel panel-pad" style="margin-bottom:16px"><h2>HTTP performance history</h2>
- <p class="note">SQLite metrics are collected in the background. Detailed requests expire after the selected period; hourly request counts and duration sums are retained separately for long-term history. Total raw history is additionally capped at 200,000 requests. Once detail rows expire, historical request percentiles cannot be reconstructed exactly.</p>
- <form method="post" action="/log-retention/performance" style="max-width:700px;margin-top:14px">
- <div class="caddy-timeouts"><div><label>Detailed HTTP requests</label><select name="detail_days">`+
- option(detailDays,1,"1 day")+option(detailDays,3,"3 days")+option(detailDays,7,"7 days")+option(detailDays,14,"14 days")+option(detailDays,30,"30 days")+`</select></div>
- <div><label>Hourly aggregates</label><select name="aggregate_days">`+
- option(aggregateDays,7,"7 days")+option(aggregateDays,14,"14 days")+option(aggregateDays,30,"30 days")+option(aggregateDays,60,"60 days")+option(aggregateDays,90,"90 days")+`</select></div></div>
- <button class="secondary" style="margin-top:12px">Save HTTP retention</button></form></section>
+ <section class="panel panel-pad" style="margin-bottom:16px"><h2>HTTP performance reports</h2>
+ <p class="note">Reports read Caddy's existing JSON logs only on demand. There is no continuous importer, duplicate SQLite request history or separate retention policy for performance metrics.</p></section>
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Panel audit trail (SQLite)</h2>
  <p class="note">Audit records have their own retention window, independent of systemd-journald. Expired events are deleted immediately on save and on subsequent audit writes.</p>
  <form method="post" action="/log-retention/audit" class="compact-form" style="max-width:640px">
@@ -247,7 +241,7 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  option(auditDays,7,"7 days")+option(auditDays,14,"14 days")+option(auditDays,30,"30 days")+option(auditDays,90,"90 days")+option(auditDays,365,"365 days") +`</select>
  <button class="secondary">Save audit retention</button></form></section>
  <section class="panel" style="margin-bottom:16px"><div class="panel-pad"><h2>Managed application journal retention</h2>
- <p class="note">Existing per-app retention policies use separate journald namespaces. Settings are managed in each application's service configuration; this overview does not change running applications.</p></div>
+ <p class="note">Existing per-app retention policies use separate journald namespaces. Capture can be disabled per application. The new setting takes effect on its next start, or you can explicitly choose Restart now.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Application</th><th>Retention</th><th></th></tr></thead><tbody>`+appRows+`</tbody></table></div></section>
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Redis SLOWLOG memory buffer</h2>
  <p class="note">Redis retains a bounded number of slow commands in memory, independent of journald. The limit is per Redis instance, not per logical database. Changes use CONFIG SET and CONFIG REWRITE.</p>
@@ -256,7 +250,7 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  <section class="panel panel-pad"><h2>Source-specific logging and retention</h2>
  <p class="note">Separate controls are shown only where the underlying service genuinely supports an independent policy.</p>
  <div class="table-scroll"><table><thead><tr><th>Log source</th><th>Storage / retention scope</th><th>Configure</th></tr></thead><tbody>
- <tr><td>Caddy access and error</td><td>Shared system journal. HTTP performance is calculated on demand and does not store a second raw log.</td><td><a class="secondary" href="/caddy/logs">Caddy logs</a></td></tr>
+ <tr><td>Caddy access and error</td><td>Shared journald or custom Caddy file. Performance reads existing logs without copying them.</td><td><a class="secondary" href="/caddy/logs">Caddy logs</a></td></tr>
  <tr><td>Managed application journals</td><td>Per-app journald namespaces with existing LogRetentionDays settings (except raw units). See each application for configuration.</td><td><a class="secondary" href="/apps">Applications</a></td></tr>
  <tr><td>MySQL slow queries</td><td>MySQL FILE/TABLE slow-log output, independent of journald. Rotation and table cleanup require separate server policy.</td><td><a class="secondary" href="/databases">Databases</a></td></tr>
  <tr><td>PostgreSQL slow queries</td><td>PostgreSQL file log; retention follows the host logrotate/logging configuration.</td><td><a class="secondary" href="/databases">Databases</a></td></tr>
