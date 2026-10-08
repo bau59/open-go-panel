@@ -387,6 +387,15 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</label>`
 	}
 
+	customTemplateNote := ""
+	globalSettingsConfirm := ""
+	if strings.TrimSpace(template) != "" &&
+		strings.TrimSpace(template) != strings.TrimSpace(panelcaddy.ManagedSiteTemplate(
+			panelcaddy.Site{Kind: "proxy", Port: 1}, settings)) {
+		customTemplateNote = `<p class="note" style="margin:0 0 16px"><strong>Custom global template detected.</strong> Saving these defaults will replace the custom global proxy template. Per-domain overrides will remain unchanged.</p>`
+		globalSettingsConfirm = ` onsubmit="return confirm('Replace the custom global Caddy template with generated defaults?')"`
+	}
+
 	return pageHead("Caddy") + `<body>` + appHeader("caddy") + `
 	<main class="shell">
 		<div class="page-head">
@@ -427,7 +436,8 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<p class="note" style="margin:6px 0 0">Defaults for domains using generated Caddy configuration. Advanced custom overrides are preserved.</p>
 				</div>
 			</div>
-			<form method="post" action="/caddy/settings">
+			` + customTemplateNote + `
+			<form method="post" action="/caddy/settings"` + globalSettingsConfirm + `>
 				<div class="settings-list">
 					` + switchRow("https", "Automatic HTTPS", "Issue and renew TLS certificates automatically.", settings.HTTPS) + `
 					` + switchRow("compression", "Response compression", "Enable zstd and gzip for supported clients.", settings.Compression) + `
