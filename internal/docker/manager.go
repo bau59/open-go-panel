@@ -30,6 +30,10 @@ type Container struct {
     RestartPolicy string
     Ports         string
     Created       time.Time
+    Repository    string
+    Branch        string
+    Dockerfile    string
+    Commit        string
 }
 
 var (
@@ -87,6 +91,7 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
         Created string `json:"Created"`
         Config  struct {
             Image string `json:"Image"`
+            Labels map[string]string `json:"Labels"`
         } `json:"Config"`
         State struct {
             Status  string `json:"Status"`
@@ -124,6 +129,10 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
             RestartPolicy: defaultRestartPolicy(item.HostConfig.RestartPolicy.Name),
             Ports: formatPorts(item.NetworkSettings.Ports),
             Created: created,
+            Repository: item.Config.Labels["org.open-go-panel.github.repository"],
+            Branch: item.Config.Labels["org.open-go-panel.github.branch"],
+            Dockerfile: item.Config.Labels["org.open-go-panel.github.dockerfile"],
+            Commit: item.Config.Labels["org.open-go-panel.github.commit"],
         })
     }
     sort.Slice(containers, func(i, j int) bool {
