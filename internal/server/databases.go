@@ -251,12 +251,6 @@ func databasesPage(data databasePageData) string {
 		alert = `<div class="alert">` + html.EscapeString(data.Message) + `</div>`
 	}
 
-	badge := func(ok bool) string {
-		if ok {
-			return `<span class="status-badge ok">active</span>`
-		}
-		return `<span class="status-badge warn">inactive</span>`
-	}
 	stateText := func(ok bool) string {
 		if ok {
 			return `<span class="state-text ok"><i></i>active</span>`
