@@ -91,6 +91,9 @@ const baseStyles = `
 	.card h2{margin-bottom:7px}
 	.card p{margin:0;color:var(--muted);font-size:13px;line-height:1.55}
 	.toolbar{display:grid;gap:10px;padding:16px;border-bottom:1px solid var(--border)}
+	.toolbar-4{grid-template-columns:1fr 1fr 1fr auto}
+	.toolbar-3{grid-template-columns:1fr 1fr auto}
+	.table-actions{justify-content:flex-start}
 	.field,input,select,textarea{width:100%;border:1px solid var(--border-strong);border-radius:11px;background:#0d121b;color:var(--text);outline:none;transition:.15s ease}
 	input,select{height:42px;padding:0 12px}
 	select{
@@ -281,6 +284,7 @@ const baseStyles = `
 		.shell{width:min(100% - 20px,1220px)}
 		.topbar{height:auto;min-height:60px;padding:10px 12px;flex-wrap:wrap}
 		.nav{order:3;width:100%;overflow:auto;justify-content:flex-start}
+		.toolbar-4,.toolbar-3{grid-template-columns:1fr 1fr}
 		main{padding-top:30px}
 		.page-head{align-items:flex-start;flex-direction:column}
 		h1{font-size:28px}
@@ -300,7 +304,7 @@ const baseStyles = `
 		.terminal-target-meta{justify-content:space-between;width:100%}
 	}
 	@media(max-width:520px){
-		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid{grid-template-columns:1fr}
+		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid,.toolbar-4,.toolbar-3{grid-template-columns:1fr}
 		.service-form-grid .span-2{grid-column:auto}
 		.setting-switch{align-items:flex-start}
 		.list-toolbar{align-items:stretch;flex-direction:column}
