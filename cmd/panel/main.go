@@ -128,6 +128,7 @@ func main() {
 			Software:      softwareManager,
 			Docker:        dockerManager,
 			State:         stateStore,
+			ClosePanel:    schedulePanelStop,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
