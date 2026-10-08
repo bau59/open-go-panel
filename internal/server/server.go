@@ -18,6 +18,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/dbmanager"
 	"github.com/bau59/open-go-panel/internal/security"
+	"github.com/bau59/open-go-panel/internal/software"
 	"github.com/bau59/open-go-panel/internal/systeminfo"
 	"github.com/bau59/open-go-panel/internal/state"
 )
@@ -37,6 +38,7 @@ type Config struct {
 	Security      *security.Manager
 	Databases     *dbmanager.Manager
 	Adminer       *adminer.Manager
+	Software      *software.Manager
 	State         *state.Store
 }
 
@@ -166,6 +168,9 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Adminer != nil {
 		registerAdminerRoutes(mux, store, cfg)
+	}
+	if cfg.Software != nil {
+		registerSoftwareRoutes(mux, store, cfg)
 	}
 	if cfg.State != nil {
 		registerActivityRoutes(mux, store, cfg)
