@@ -25,7 +25,8 @@ Lightweight open-source Linux server control panel written in Go.
 - structured CrowdSec decisions, allowlist and alerts;
 - audit log for successful panel changes;
 - system-wide software management for Docker, Node.js LTS, Tailwind CLI, Go, Air, Git, build tools and common CLI utilities;
-- SSH-tunnel-only web terminal with root and managed-user shells;
+- Docker container management: list, start, stop, restart, remove and autostart policy;
+- authenticated web terminal with root and managed-user shells; SSH tunnel remains the recommended access method;
 - release checksum verification, post-update health checks and automatic binary rollback;
 - Linux amd64 and arm64 release builds.
 
@@ -170,7 +171,7 @@ Even purge mode intentionally leaves Linux users, application files, actual MySQ
 
 The panel is intended to be reached through an SSH tunnel and binds to localhost on new installations. Application traffic is exposed through Caddy. CrowdSec provides behavioral detection and dynamic bans; the official firewall bouncer enforces decisions through nftables; UFW provides the static inbound policy.
 
-The panel currently uses a single administrator account and in-memory web sessions. Login attempts are throttled, HTML responses carry restrictive browser security headers, and the root-capable terminal is available only from a loopback connection (normally an SSH tunnel). It should not be treated as a public multi-tenant hosting control panel.
+The panel currently uses a single administrator account and in-memory web sessions. Login attempts are throttled, HTML responses carry restrictive browser security headers, and terminal WebSocket connections require the authenticated same-origin panel session. Because the terminal can open a root shell, SSH-tunneled or otherwise protected panel access is strongly recommended. It should not be treated as a public multi-tenant hosting control panel.
 
 ## Release safety
 
