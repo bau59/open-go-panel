@@ -245,6 +245,23 @@ const baseStyles = `
 	.log-popover{top:100%;right:0}
 	.log-error-message{margin:0 0 10px;color:#ff9aa5;font-size:12px;line-height:1.5}
 	.resource-value{display:inline-flex;align-items:center;min-width:48px;font-variant-numeric:tabular-nums;color:#d8deea;font-weight:700}
+	.compact-action{height:34px;padding:0 10px;border-radius:9px;font-size:12px}
+	.app-quick-actions{justify-content:flex-start;flex-wrap:nowrap}
+	.app-quick-actions form{display:inline-flex}
+	.table-path{display:block;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+	.db-services-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+	.db-service-card{display:flex;min-height:190px;flex-direction:column}
+	.db-service-card .note{margin:10px 0 0;line-height:1.45}
+	.db-service-card>form{margin-top:auto;padding-top:16px}
+	.db-service-actions{justify-content:flex-start;margin-top:auto;padding-top:16px;flex-wrap:wrap}
+	.backup-settings-grid{display:grid;grid-template-columns:minmax(130px,.7fr) minmax(150px,1fr) minmax(150px,1fr) auto;gap:16px;align-items:end}
+	.backup-enabled{height:42px;margin:0}
+	.backup-save{display:flex;align-items:end}
+	.database-list-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px}
+	.import-status{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+	.import-status p{margin:5px 0 0;line-height:1.45}
+	.import-status.success{border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc}
+	.import-status form{flex:0 0 auto}
 	.actions>form{display:inline-flex}
 	.actions>a,.actions>button,.actions>form>button{flex:0 0 auto}
 	.section-title>.secondary,.section-title>.button,.section-title>.danger{flex:0 0 auto}
@@ -326,6 +343,9 @@ const baseStyles = `
 		.terminal-target-meta{justify-content:space-between;width:100%}
 		.software-grid{grid-template-columns:1fr}
 		.redis-toolbar{grid-template-columns:140px minmax(220px,1fr)}
+		.backup-settings-grid{grid-template-columns:1fr 1fr}
+		.backup-save{align-items:stretch}
+		.app-quick-actions{flex-wrap:wrap}
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid,.toolbar-4,.toolbar-3{grid-template-columns:1fr}
@@ -348,6 +368,9 @@ const baseStyles = `
 		.terminal-screen{min-height:420px;height:68vh}
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
 		.redis-toolbar{grid-template-columns:1fr}
+		.db-services-grid,.backup-settings-grid{grid-template-columns:1fr}
+		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
+		.table-path{max-width:180px}
 	}
 `
 
