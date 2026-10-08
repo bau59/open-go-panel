@@ -571,7 +571,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 		</div>
 		` + alert + `
 		<section class="panel">
-			<form class="toolbar" method="post" action="/apps" style="grid-template-columns:1fr 1fr 1fr auto">
+			<form class="toolbar toolbar-4" method="post" action="/apps">
 				<select name="user" required` + disabled + `>
 					<option value="">Owner</option>
 					` + userOptions.String() + `
@@ -1253,7 +1253,7 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<section class="panel panel-pad app-card app-card-wide">
+		<section class="panel panel-pad app-card app-card-wide app-card-health">
 			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Each layer is checked independently. HTTP 5xx is treated as unhealthy.</p></div></div>
 			<div class="health-grid">
 				` + processCard + portCard + localHTTPCard + publicCard + `
