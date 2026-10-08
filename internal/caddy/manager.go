@@ -193,7 +193,7 @@ func (m *Manager) AddStandaloneDomain(ctx context.Context, domain string) error 
 	return m.apply(ctx, sites)
 }
 
-// RenameSite changes the hostname while retaining the site's target and custom template.
+// SetStandaloneRedirect switches a standalone domain between redirect and parked modes.
 func (m *Manager) SetStandaloneRedirect(ctx context.Context, id int64, destination string) error {
 	if id >= 0 { return errors.New("redirect requires an independent domain") }
 	destination = strings.TrimSpace(destination)
@@ -220,6 +220,7 @@ func (m *Manager) SetStandaloneRedirect(ctx context.Context, id int64, destinati
 	return errors.New("domain not found")
 }
 
+// RenameSite changes the hostname while preserving the existing target and template.
 func (m *Manager) RenameSite(ctx context.Context, id int64, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -280,6 +281,9 @@ func (m *Manager) AttachStandaloneDomain(ctx context.Context, standaloneID, appI
 	for i := range sites {
 		if sites[i].AppID != standaloneID {
 			continue
+		}
+		if strings.TrimSpace(sites[i].Template) != "" {
+			return errors.New("remove the custom Caddy override before attaching this domain to an app")
 		}
 		sites[i].AppID = appID
 		sites[i].Port = port
@@ -796,6 +800,9 @@ func (m *Manager) load() ([]Site, error) {
 	}
 	if err := standaloneRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate standalone domains: %w", err)
+	}
+	if err := standaloneRows.Close(); err != nil {
+		return nil, fmt.Errorf("close standalone domains rows: %w", err)
 	}
 
 	if len(sites) > 0 {
