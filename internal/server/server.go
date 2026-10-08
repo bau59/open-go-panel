@@ -209,9 +209,9 @@ func New(cfg Config) http.Handler {
 	}
 
 	if cfg.State != nil {
-		return auditMutations(cfg.State, mux)
+		return csrfProtection(store, auditMutations(cfg.State, mux))
 	}
-	return mux
+	return csrfProtection(store, mux)
 }
 
 
@@ -219,6 +219,8 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
+
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *statusRecorder) WriteHeader(status int) {
 	w.status = status
@@ -378,6 +380,7 @@ func secureEqual(got, want string) bool {
 }
 
 func writeHTML(w http.ResponseWriter, logger *slog.Logger, status int, body string) {
+	body = injectCSRFForms(body, csrfTokenForWriter(w))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
