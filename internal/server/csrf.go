@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -129,4 +128,3 @@ func sameOriginMutation(r *http.Request) bool {
 // remain available when responses are wrapped.
 var _ http.Flusher = (*csrfResponseWriter)(nil)
 var _ http.Hijacker = (*csrfResponseWriter)(nil)
-var _ = errors.Is
