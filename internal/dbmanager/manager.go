@@ -623,17 +623,16 @@ ORDER BY table_schema;
 
 func (m *Manager) PostgresDatabaseSizes(ctx context.Context) ([]DatabaseSize, error) {
 	query := "SELECT datname, pg_database_size(datname) FROM pg_database WHERE datistemplate = false ORDER BY datname;"
-	out, err := exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "psql", "-At", "-F", "	", "-d", "postgres", "-c", query).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "psql", "-At", "-F", "\t", "-d", "postgres", "-c", query).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("read PostgreSQL database sizes: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var sizes []DatabaseSize
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "
-") {
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		fields := strings.Split(line, "	")
+		fields := strings.Split(line, "\t")
 		if len(fields) != 2 {
 			continue
 		}
