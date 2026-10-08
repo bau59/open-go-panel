@@ -350,7 +350,12 @@ const baseStyles = `
 	.deploy-key-block>summary{display:inline-flex}
 	.deploy-key-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}
 	.deploy-key-value{min-height:86px;resize:none}
-	.deploy-auto-switch{margin-top:12px;padding:12px 0 0;border-top:1px solid var(--border)}
+	.deploy-auto-switch{margin:0;padding:0;border:0;flex:1}
+	.auto-deploy-controls{display:flex;gap:24px;align-items:center;flex-wrap:wrap;margin-top:12px;padding:14px 0;border-top:1px solid var(--border)}
+	.auto-deploy-interval{flex:0 0 310px;min-width:225px}
+	.auto-deploy-interval label{font-size:12px}
+	.auto-deploy-interval input{width:100%;max-width:165px;font-variant-numeric:tabular-nums}
+	.auto-deploy-interval .note{margin:6px 0 0;line-height:1.4}
 
 	.terminal-shell{width:min(1220px,calc(100% - 32px))}
 	.terminal-panel{overflow:hidden}
@@ -440,6 +445,8 @@ const baseStyles = `
 		.app-promotion-grid{grid-template-columns:1fr}
 		.service-form-grid .span-2{grid-column:auto}
 		.setting-switch{align-items:flex-start}
+		.auto-deploy-controls{align-items:stretch;flex-direction:column;gap:12px}
+		.auto-deploy-interval{flex:1;min-width:0}
 		.list-toolbar{align-items:stretch;flex-direction:column}
 		.list-toolbar input{max-width:none}
 		.pager{align-items:flex-start;flex-direction:column}

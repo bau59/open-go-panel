@@ -76,6 +76,8 @@ type DeployConfig struct {
 	CurrentCommit  string
 	PreviousCommit string
 	AutoDeploy     bool
+	AutoDeployIntervalSeconds int
+	LastCheckedAt  time.Time
 	DeployedAt     time.Time
 }
 
@@ -244,13 +246,16 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
 	var cfg DeployConfig
 	var deployedAt string
+	var lastCheckedAt string
 	err := m.store.DB().QueryRow(`
-		SELECT repository, branch, current_commit, previous_commit, auto_deploy, deployed_at
+		SELECT repository, branch, current_commit, previous_commit,
+			auto_deploy, auto_deploy_interval_sec, last_checked_at, deployed_at
 		FROM deployments
 		WHERE app_id = ?
-	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit, &cfg.AutoDeploy, &deployedAt)
+	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit,
+		&cfg.AutoDeploy, &cfg.AutoDeployIntervalSeconds, &lastCheckedAt, &deployedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DeployConfig{Branch: "main"}, nil
+		return DeployConfig{Branch: "main", AutoDeployIntervalSeconds: DefaultAutoDeployIntervalSeconds}, nil
 	}
 	if err != nil {
 		return cfg, fmt.Errorf("read deployment config: %w", err)
@@ -258,10 +263,26 @@ func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
 	if deployedAt != "" {
 		cfg.DeployedAt, _ = time.Parse(time.RFC3339Nano, deployedAt)
 	}
+	if lastCheckedAt != "" {
+		cfg.LastCheckedAt, _ = time.Parse(time.RFC3339Nano, lastCheckedAt)
+	}
 	return cfg, nil
 }
 
+const (
+	DefaultAutoDeployIntervalSeconds = 300
+	MinAutoDeployIntervalSeconds     = 30
+	MaxAutoDeployIntervalSeconds     = 86400
+)
+
 func (m *Manager) SetDeployConfig(id int64, repository, branch string, autoDeploy bool) error {
+	return m.SetDeployConfigInterval(id, repository, branch, autoDeploy, DefaultAutoDeployIntervalSeconds)
+}
+
+func (m *Manager) SetDeployConfigInterval(id int64, repository, branch string, autoDeploy bool, intervalSeconds int) error {
+	if intervalSeconds < MinAutoDeployIntervalSeconds || intervalSeconds > MaxAutoDeployIntervalSeconds {
+		return fmt.Errorf("auto deploy interval must be between %d and %d seconds", MinAutoDeployIntervalSeconds, MaxAutoDeployIntervalSeconds)
+	}
 	repository = strings.TrimSpace(repository)
 	branch = strings.TrimSpace(branch)
 	if repository == "" {
@@ -280,13 +301,20 @@ func (m *Manager) SetDeployConfig(id int64, repository, branch string, autoDeplo
 		return err
 	}
 	_, err := m.store.DB().Exec(`
-		INSERT INTO deployments(app_id, repository, branch, auto_deploy)
-		VALUES(?, ?, ?, ?)
+		INSERT INTO deployments(app_id, repository, branch, auto_deploy, auto_deploy_interval_sec)
+		VALUES(?, ?, ?, ?, ?)
 		ON CONFLICT(app_id) DO UPDATE SET
+			last_checked_at=CASE
+				WHEN deployments.repository <> excluded.repository
+					OR deployments.branch <> excluded.branch
+					OR deployments.auto_deploy <> excluded.auto_deploy
+					OR deployments.auto_deploy_interval_sec <> excluded.auto_deploy_interval_sec
+				THEN '' ELSE deployments.last_checked_at END,
 			repository=excluded.repository,
 			branch=excluded.branch,
-			auto_deploy=excluded.auto_deploy
-	`, id, repository, branch, autoDeploy)
+			auto_deploy=excluded.auto_deploy,
+			auto_deploy_interval_sec=excluded.auto_deploy_interval_sec
+	`, id, repository, branch, autoDeploy, intervalSeconds)
 	if err != nil {
 		return fmt.Errorf("save deployment config: %w", err)
 	}
@@ -522,6 +550,14 @@ func (m *Manager) RemoteCommit(ctx context.Context, id int64) (string, error) {
 }
 
 func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
+	return m.RunAutoDeploysDue(ctx, time.Now())
+}
+
+// RunAutoDeploysDue checks only applications whose persisted interval has
+// elapsed. Check timestamps survive panel restarts, and are recorded before
+// contacting Git so repeated failures do not hammer remote repositories.
+func (m *Manager) RunAutoDeploysDue(ctx context.Context, now time.Time) (int, error) {
+	now = now.UTC()
 	apps, err := m.List()
 	if err != nil {
 		return 0, err
@@ -539,7 +575,18 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 		if app.Type == "go" && app.Service.RunMode == "go-binary" {
 			continue
 		}
-		if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
+		if !autoDeployCheckDue(cfg, now) {
+			continue
+		}
+		// Claim the check before fetching, but only if the saved settings
+		// still match this snapshot. A changed interval or branch should
+		// take effect immediately rather than executing stale work.
+		claimed, err := m.claimAutoDeployCheck(app.ID, cfg, now)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: schedule check: %v", app.Name, err))
+			continue
+		}
+		if !claimed {
 			continue
 		}
 		remote, err := m.RemoteCommit(ctx, app.ID)
@@ -576,10 +623,40 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 	return deployed, nil
 }
 
+func autoDeployCheckDue(cfg DeployConfig, now time.Time) bool {
+	if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
+		return false
+	}
+	interval := cfg.AutoDeployIntervalSeconds
+	if interval < MinAutoDeployIntervalSeconds || interval > MaxAutoDeployIntervalSeconds {
+		interval = DefaultAutoDeployIntervalSeconds
+	}
+	return cfg.LastCheckedAt.IsZero() || !now.Before(cfg.LastCheckedAt.Add(time.Duration(interval)*time.Second))
+}
+
+func (m *Manager) claimAutoDeployCheck(id int64, cfg DeployConfig, now time.Time) (bool, error) {
+	expected := ""
+	if !cfg.LastCheckedAt.IsZero() {
+		expected = cfg.LastCheckedAt.UTC().Format(time.RFC3339Nano)
+	}
+	result, err := m.store.DB().Exec(`
+		UPDATE deployments SET last_checked_at = ?
+		WHERE app_id = ? AND auto_deploy = 1 AND repository = ? AND branch = ?
+			AND auto_deploy_interval_sec = ? AND last_checked_at = ?
+	`, now.Format(time.RFC3339Nano), id, cfg.Repository, cfg.Branch,
+		cfg.AutoDeployIntervalSeconds, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
+}
+
 func shouldContinueAutoDeploy(before, after DeployConfig, remote string) bool {
 	return after.AutoDeploy &&
 		after.Repository == before.Repository &&
 		after.Branch == before.Branch &&
+		after.AutoDeployIntervalSeconds == before.AutoDeployIntervalSeconds &&
 		after.CurrentCommit != remote
 }
 // Rollback and Deploy must never mutate the same working tree concurrently.
