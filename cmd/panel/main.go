@@ -100,6 +100,15 @@ func main() {
 			} else if ran {
 				logger.Info("scheduled database backup completed")
 			}
+
+			deployCtx, deployCancel := context.WithTimeout(context.Background(), 20*time.Minute)
+			deployed, deployErr := apps.RunAutoDeploys(deployCtx)
+			deployCancel()
+			if deployErr != nil {
+				logger.Error("automatic app deploy check failed", "err", deployErr)
+			} else if deployed > 0 {
+				logger.Info("automatic app deploy completed", "count", deployed)
+			}
 			<-ticker.C
 		}
 	}()
