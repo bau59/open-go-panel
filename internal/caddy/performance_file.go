@@ -47,6 +47,10 @@ func (m *Manager) CollectConfiguredPerformance(ctx context.Context)error{
 
 func (m *Manager) CollectPerformanceFile(ctx context.Context,path string)error{
  if !ValidCaddyLogPath(path){return fmt.Errorf("unsafe Caddy log path")}
+ return m.collectPerformanceFile(ctx,path)
+}
+
+func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
  file,err:=os.Open(path)
  if err!=nil{return m.setPerformanceFileError(ctx,err)}
  defer func(){_ = file.Close()}()
