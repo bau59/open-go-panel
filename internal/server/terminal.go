@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -36,6 +37,10 @@ type terminalClientMessage struct {
 
 func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	mux.Handle("GET /terminal", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !terminalRequestIsLocal(r) {
+			writeHTML(w, cfg.Logger, http.StatusForbidden, terminalUnavailablePage())
+			return
+		}
 		users, err := cfg.Users.List(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -74,6 +79,10 @@ func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 	}
 
 	mux.Handle("GET /terminal/ws", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !terminalRequestIsLocal(r) {
+			http.Error(w, "terminal is available only through a local connection or SSH tunnel", http.StatusForbidden)
+			return
+		}
 		users, err := cfg.Users.List(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -161,6 +170,33 @@ func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			}
 		}
 	})))
+}
+
+func terminalRequestIsLocal(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = strings.TrimSpace(r.RemoteAddr)
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func terminalUnavailablePage() string {
+	return pageHead("Terminal") + `<body>` + appHeader("terminal") + `
+	<main class="shell">
+		<div class="page-head">
+			<div><p class="eyebrow">Server shell</p><h1>Terminal</h1><p class="sub">The web terminal is intentionally disabled over a public panel connection.</p></div>
+		</div>
+		<section class="panel panel-pad">
+			<h2>Connect through an SSH tunnel</h2>
+			<p class="sub">This protects the root-capable terminal from being exposed directly to the Internet.</p>
+			<pre class="security-output" style="margin-top:16px">ssh -L 8443:127.0.0.1:8443 root@SERVER_IP
+
+Then open:
+http://127.0.0.1:8443/terminal</pre>
+		</section>
+	</main>
+</body></html>`
 }
 
 func timeNowPlusSecond() time.Time {
@@ -273,11 +309,11 @@ func terminalPage(data terminalPageData) string {
 				<form method="get" action="/terminal" id="terminal-target-form">
 					<div>
 						<label>User</label>
-						<select name="user" id="terminal-user">` + userOptions.String() + `</select>
+						<select name="user" id="terminal-user" onchange="this.form.submit()">` + userOptions.String() + `</select>
 					</div>
 					<div>
 						<label>Working directory</label>
-						<select name="app" id="terminal-app"` + func() string { if data.SelectedUser == "root" { return " disabled" }; return "" }() + `>` + appOptions.String() + `</select>
+						<select name="app" id="terminal-app" onchange="this.form.submit()"` + func() string { if data.SelectedUser == "root" { return " disabled" }; return "" }() + `>` + appOptions.String() + `</select>
 					</div>
 					<div class="terminal-connect"><button class="secondary">Switch terminal</button></div>
 				</form>
