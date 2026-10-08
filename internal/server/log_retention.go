@@ -55,6 +55,24 @@ func applyJournalPolicy(ctx context.Context,sizeMB,days int)error{
 }
 
 func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Config){
+ mux.Handle("POST /log-retention/performance",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
+  detail,e1:=strconv.Atoi(r.FormValue("detail_days"))
+  aggregate,e2:=strconv.Atoi(r.FormValue("aggregate_days"))
+  if e1!=nil||e2!=nil||detail<1||detail>30||aggregate<detail||aggregate>90{
+   http.Error(w,"invalid HTTP metrics retention",400);return
+  }
+  if err:=cfg.State.SetSetting("performance.detail_days",strconv.Itoa(detail));err!=nil{
+   http.Error(w,err.Error(),500);return
+  }
+  if err:=cfg.State.SetSetting("performance.aggregate_days",strconv.Itoa(aggregate));err!=nil{
+   http.Error(w,err.Error(),500);return
+  }
+  ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
+  if err:=cfg.Caddy.PrunePerformance(ctx);err!=nil{http.Error(w,err.Error(),500);return}
+  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
+ })))
+
  mux.Handle("POST /log-retention/redis",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
   n,err:=strconv.Atoi(r.FormValue("length"));if err!=nil{http.Error(w,"invalid SLOWLOG limit",400);return}
@@ -101,7 +119,10 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
    }
    appRows=b.String()
   }
-  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows))
+  detailDays,aggregateDays:=7,30
+  if v,ok,_:=cfg.State.Setting("performance.detail_days");ok{if n,e:=strconv.Atoi(v);e==nil&&n>=1&&n<=30{detailDays=n}}
+  if v,ok,_:=cfg.State.Setting("performance.aggregate_days");ok{if n,e:=strconv.Atoi(v);e==nil&&n>=detailDays&&n<=90{aggregateDays=n}}
+  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,detailDays,aggregateDays))
  })))
  mux.Handle("POST /log-retention/journal",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
@@ -116,7 +137,9 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
  })))
 }
 
-func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows string)string{
+func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows string,metricsDays ...int)string{
+ detailDays,aggregateDays:=7,30
+ if len(metricsDays)>=2{detailDays,aggregateDays=metricsDays[0],metricsDays[1]}
  option:=func(current,value int,label string)string{
   attr:="";if current==value{attr=" selected"}
   return fmt.Sprintf(`<option value="%d"%s>%s</option>`,value,attr,label)
@@ -137,6 +160,14 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  option(days,1,"1 day")+option(days,3,"3 days")+option(days,7,"7 days")+option(days,14,"14 days")+option(days,30,"30 days")+`</select></div></div>
  <p class="note">Applies via /etc/systemd/journald.conf.d. Restarting journald is required; existing archived journals are not vacuumed by this action. If journald uses volatile storage, SystemMaxUse may not govern its disk allocation.</p>
  <button class="button" type="submit" onclick="return confirm('Apply shared system journal limits and restart systemd-journald?')">Apply journal limits</button></form></section>
+ <section class="panel panel-pad" style="margin-bottom:16px"><h2>HTTP performance history</h2>
+ <p class="note">SQLite metrics are collected in the background. Detailed requests expire after the selected period; hourly request counts and duration sums are retained separately for long-term history. Total raw history is additionally capped at 200,000 requests. Once detail rows expire, historical request percentiles cannot be reconstructed exactly.</p>
+ <form method="post" action="/log-retention/performance" style="max-width:700px;margin-top:14px">
+ <div class="caddy-timeouts"><div><label>Detailed HTTP requests</label><select name="detail_days">`+
+ option(detailDays,1,"1 day")+option(detailDays,3,"3 days")+option(detailDays,7,"7 days")+option(detailDays,14,"14 days")+option(detailDays,30,"30 days")+`</select></div>
+ <div><label>Hourly aggregates</label><select name="aggregate_days">`+
+ option(aggregateDays,7,"7 days")+option(aggregateDays,14,"14 days")+option(aggregateDays,30,"30 days")+option(aggregateDays,60,"60 days")+option(aggregateDays,90,"90 days")+`</select></div></div>
+ <button class="secondary" style="margin-top:12px">Save HTTP retention</button></form></section>
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Panel audit trail (SQLite)</h2>
  <p class="note">Audit records have their own retention window, independent of systemd-journald. Expired events are deleted immediately on save and on subsequent audit writes.</p>
  <form method="post" action="/log-retention/audit" class="compact-form" style="max-width:640px">
