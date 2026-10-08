@@ -257,6 +257,12 @@ func databasesPage(data databasePageData) string {
 		}
 		return `<span class="status-badge warn">inactive</span>`
 	}
+	stateText := func(ok bool) string {
+		if ok {
+			return `<span class="state-text ok"><i></i>active</span>`
+		}
+		return `<span class="state-text warn"><i></i>inactive</span>`
+	}
 
 	installMySQL := ""
 	if !data.Status.MySQLInstalled {
@@ -303,19 +309,59 @@ func databasesPage(data databasePageData) string {
 		importNotice = `<div class="alert import-status success"><div><strong>Remote database import completed</strong><p>Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	}
 
-	mysqlMetrics := ""
+	mysqlDetails := `<div class="db-service-facts">
+		<div><span>Port</span><strong>3306</strong></div>
+		<div><span>Version</span><strong>—</strong></div>
+		<div><span>Uptime</span><strong>—</strong></div>
+		<div><span>Connections</span><strong>—</strong></div>
+	</div>`
 	if data.Status.MySQLActive {
 		buffer := "—"
 		if data.MySQLMetrics.BufferPoolBytes > 0 {
 			buffer = formatBytes(uint64(data.MySQLMetrics.BufferPoolUsed)) + " / " + formatBytes(uint64(data.MySQLMetrics.BufferPoolBytes))
 		}
-		mysqlMetrics = `
-		<section class="metrics-grid" style="margin-bottom:16px">
-			<div class="metric"><span>MySQL version</span><strong>` + html.EscapeString(data.MySQLMetrics.Version) + `</strong><small>uptime ` + formatDuration(time.Duration(data.MySQLMetrics.UptimeSeconds)*time.Second) + `</small></div>
-			<div class="metric"><span>Connections</span><strong>` + fmt.Sprintf("%d", data.MySQLMetrics.ThreadsConnected) + `</strong><small>peak ` + fmt.Sprintf("%d", data.MySQLMetrics.MaxUsedConnections) + `</small></div>
-			<div class="metric"><span>InnoDB buffer</span><strong>` + buffer + `</strong><small>used / allocated</small></div>
-			<div class="metric"><span>Slow queries</span><strong>` + fmt.Sprintf("%d", data.MySQLMetrics.SlowQueries) + `</strong><small>` + fmt.Sprintf("%d", data.MySQLMetrics.Questions) + ` total questions</small></div>
-		</section>`
+		mysqlDetails = `<div class="db-service-facts">
+			<div><span>Port</span><strong>3306</strong></div>
+			<div><span>Version</span><strong title="` + html.EscapeString(data.MySQLMetrics.Version) + `">` + html.EscapeString(data.MySQLMetrics.Version) + `</strong></div>
+			<div><span>Uptime</span><strong>` + formatDuration(time.Duration(data.MySQLMetrics.UptimeSeconds)*time.Second) + `</strong></div>
+			<div><span>Connections</span><strong>` + fmt.Sprintf("%d", data.MySQLMetrics.ThreadsConnected) + ` / peak ` + fmt.Sprintf("%d", data.MySQLMetrics.MaxUsedConnections) + `</strong></div>
+			<div class="span-2"><span>InnoDB buffer</span><strong>` + html.EscapeString(buffer) + `</strong></div>
+			<div><span>Slow queries</span><strong>` + fmt.Sprintf("%d", data.MySQLMetrics.SlowQueries) + `</strong></div>
+		</div>`
+	}
+
+	postgresDetails := `<div class="db-service-facts">
+		<div><span>Port</span><strong>5432</strong></div>
+		<div><span>Version</span><strong>—</strong></div>
+		<div><span>Uptime</span><strong>—</strong></div>
+		<div><span>Connections</span><strong>—</strong></div>
+	</div>`
+	if data.Status.PostgresActive {
+		postgresDetails = `<div class="db-service-facts">
+			<div><span>Port</span><strong>5432</strong></div>
+			<div><span>Version</span><strong title="` + html.EscapeString(data.PostgresMetrics.Version) + `">` + html.EscapeString(data.PostgresMetrics.Version) + `</strong></div>
+			<div><span>Uptime</span><strong>` + formatDuration(time.Duration(data.PostgresMetrics.UptimeSeconds)*time.Second) + `</strong></div>
+			<div><span>Connections</span><strong>` + fmt.Sprintf("%d", data.PostgresMetrics.Connections) + `</strong></div>
+			<div><span>Databases</span><strong>` + fmt.Sprintf("%d", data.PostgresMetrics.Databases) + `</strong></div>
+			<div><span>Total size</span><strong>` + formatBytes(uint64(maxInt64(data.PostgresMetrics.TotalBytes, 0))) + `</strong></div>
+		</div>`
+	}
+
+	redisDetails := `<div class="db-service-facts">
+		<div><span>Port</span><strong>6379</strong></div>
+		<div><span>Version</span><strong>—</strong></div>
+		<div><span>Uptime</span><strong>—</strong></div>
+		<div><span>Clients</span><strong>—</strong></div>
+	</div>`
+	if data.Status.RedisActive {
+		redisDetails = `<div class="db-service-facts">
+			<div><span>Port</span><strong>6379</strong></div>
+			<div><span>Version</span><strong>` + html.EscapeString(data.RedisMetrics.Version) + `</strong></div>
+			<div><span>Uptime</span><strong>` + formatDuration(time.Duration(data.RedisMetrics.UptimeSeconds)*time.Second) + `</strong></div>
+			<div><span>Clients</span><strong>` + fmt.Sprintf("%d", data.RedisMetrics.ConnectedClients) + `</strong></div>
+			<div><span>Keys</span><strong>` + fmt.Sprintf("%d", data.RedisMetrics.TotalKeys) + `</strong></div>
+			<div><span>Memory</span><strong>` + formatBytes(uint64(maxInt64(data.RedisMetrics.UsedMemoryBytes, 0))) + `</strong></div>
+		</div>`
 	}
 
 	var rows strings.Builder
@@ -461,12 +507,19 @@ func databasesPage(data databasePageData) string {
 		` + alert + importNotice + `
 
 		<section class="db-services-grid" style="margin-bottom:16px">
-			<div class="metric db-service-card"><span>MySQL</span><strong>3306</strong><small>` + badge(data.Status.MySQLActive) + `</small><p class="note">Local SQL server</p>` + engineControls("mysql", data.Status.MySQLInstalled, data.Status.MySQLActive, installMySQL) + `</div>
-			<div class="metric db-service-card"><span>PostgreSQL</span><strong>5432</strong><small>` + badge(data.Status.PostgresActive) + `</small><p class="note">Local SQL server</p>` + engineControls("postgres", data.Status.PostgresInstalled, data.Status.PostgresActive, installPostgres) + `</div>
-			<div class="metric db-service-card"><span>Redis</span><strong>6379</strong><small>` + badge(data.Status.RedisActive) + `</small><p class="note">Local cache / key-value store</p>` + engineControls("redis", data.Status.RedisInstalled, data.Status.RedisActive, installRedis) + `</div>
+			<div class="panel panel-pad db-service-card">
+				<div class="db-service-head"><div><p class="eyebrow">SQL server</p><h2>MySQL</h2></div>` + stateText(data.Status.MySQLActive) + `</div>
+				` + mysqlDetails + engineControls("mysql", data.Status.MySQLInstalled, data.Status.MySQLActive, installMySQL) + `
+			</div>
+			<div class="panel panel-pad db-service-card">
+				<div class="db-service-head"><div><p class="eyebrow">SQL server</p><h2>PostgreSQL</h2></div>` + stateText(data.Status.PostgresActive) + `</div>
+				` + postgresDetails + engineControls("postgres", data.Status.PostgresInstalled, data.Status.PostgresActive, installPostgres) + `
+			</div>
+			<div class="panel panel-pad db-service-card">
+				<div class="db-service-head"><div><p class="eyebrow">Cache / key-value</p><h2>Redis</h2></div>` + stateText(data.Status.RedisActive) + `</div>
+				` + redisDetails + engineControls("redis", data.Status.RedisInstalled, data.Status.RedisActive, installRedis) + `
+			</div>
 		</section>
-
-		` + mysqlMetrics + `
 
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
