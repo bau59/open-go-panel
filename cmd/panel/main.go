@@ -88,64 +88,8 @@ func main() {
 		}
 	}
 
-	// Metrics ingestion uses a bounded journal batch and its own deadline. A
-	// collector failure never prevents the panel or managed apps from serving.
-	metricsCtx, stopMetrics := context.WithCancel(context.Background())
-	defer stopMetrics()
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		pruneAt := time.Time{}
-		observeAt := time.Time{}
-		for {
-			select {
-			case <-metricsCtx.Done():
-				return
-			default:
-			}
-			pollCtx, cancel := context.WithTimeout(metricsCtx, 12*time.Second)
-			if err := caddyManager.CollectConfiguredPerformance(pollCtx); err != nil && metricsCtx.Err() == nil {
-				logger.Warn("HTTP metrics collection failed", "error", err)
-			}
-			cancel()
-			if time.Since(observeAt)>=15*time.Second {
-				targets,err:=apps.List()
-				if err==nil {
-					observed:=make([]panelcaddy.ServiceTarget,0,len(targets))
-					var airApps []panelcaddy.ServiceTarget
-					for _,app:=range targets {
-						target:=panelcaddy.ServiceTarget{AppID:app.ID,Name:app.Name}
-						observed=append(observed,target)
-						if app.Service.RunMode=="go-air" {airApps=append(airApps,target)}
-					}
-					observeCtx,done:=context.WithTimeout(metricsCtx,8*time.Second)
-					if err:=caddyManager.ObserveProcessStarts(observeCtx,observed);err!=nil && metricsCtx.Err()==nil {
-						logger.Warn("observe systemd app starts failed","err",err)
-					}
-					if len(airApps)>0 && observeCtx.Err()==nil {
-						if err:=caddyManager.ObserveAirRuns(observeCtx,airApps);err!=nil && metricsCtx.Err()==nil {
-							logger.Warn("observe Air run markers failed","err",err)
-						}
-					}
-					done()
-				}
-				observeAt=time.Now()
-			}
-			if time.Since(pruneAt) >= time.Hour {
-				pruneCtx, pruneCancel := context.WithTimeout(metricsCtx, 15*time.Second)
-				if err := caddyManager.PrunePerformance(pruneCtx); err != nil && metricsCtx.Err() == nil {
-					logger.Warn("HTTP metrics retention failed", "error", err)
-				}
-				pruneCancel()
-				pruneAt = time.Now()
-			}
-			select {
-			case <-metricsCtx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
+	// HTTP diagnostics are computed on demand from Caddy logs. No continuous
+	// metrics importer, SQLite duplication, or systemd/Air polling is started.
 
 	// Backups and Git deployment checks run independently. A long backup
 	// must not delay the 30-second interval configured for an application.
