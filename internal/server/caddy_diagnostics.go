@@ -70,6 +70,31 @@ func registerCaddyDiagnostics(mux *http.ServeMux, store *sessionStore, cfg Confi
 			}
 			_ = conn.Close()
 		}
+		traffic := "Access logs are unavailable."
+		result, logErr := cfg.Caddy.QueryStructuredLogs(ctx, panelcaddy.LogQuery{
+			Domain: site.Domain,
+			Kind: "access",
+			Since: time.Now().Add(-24*time.Hour).Format("2006-01-02 15:04:05"),
+			PerPage: 200,
+		})
+		if logErr == nil {
+			var success, redirects, clientErrors, serverErrors int
+			for _, entry := range result.Entries {
+				switch {
+				case entry.Status >= 500:
+					serverErrors++
+				case entry.Status >= 400:
+					clientErrors++
+				case entry.Status >= 300:
+					redirects++
+				case entry.Status >= 200:
+					success++
+				}
+			}
+			traffic = fmt.Sprintf("Last %d matching requests (maximum 200): 2xx %d · 3xx %d · 4xx %d · 5xx %d",
+				len(result.Entries), success, redirects, clientErrors, serverErrors)
+			if result.HasNext { traffic += ". More than 200 requests exist; counts are a sample." }
+		}
 		body := pageHead("Domain diagnostics") + `<body>` + appHeader("caddy") + `
 		<main class="shell">
 			<div class="page-head">
@@ -80,9 +105,14 @@ func registerCaddyDiagnostics(mux *http.ServeMux, store *sessionStore, cfg Confi
 				<h2>DNS records (A / AAAA)</h2>
 				<p style="overflow-wrap:anywhere">` + html.EscapeString(dnsText) + `</p>
 			</section>
-			<section class="panel panel-pad">
+			<section class="panel panel-pad" style="margin-bottom:16px">
 				<h2>HTTPS certificate</h2>
 				<p style="overflow-wrap:anywhere">` + html.EscapeString(tlsText) + `</p>
+			</section>
+			<section class="panel panel-pad">
+				<h2>HTTP traffic (past 24 hours)</h2>
+				<p>` + html.EscapeString(traffic) + `</p>
+				<a class="secondary" href="/caddy/logs?domain=` + html.EscapeString(site.Domain) + `">View traffic logs</a>
 			</section>
 		</main></body></html>`
 		writeHTML(w, cfg.Logger, http.StatusOK, body)
