@@ -15,6 +15,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/dbmanager"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/security"
+	"github.com/bau59/open-go-panel/internal/software"
 	"github.com/bau59/open-go-panel/internal/state"
 )
 
@@ -106,6 +107,7 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		Security:      security.New(),
 		Databases:     dbmanager.New(store, t.TempDir()+"/databases.json"),
 		Adminer:       adminer.New(),
+		Software:      software.New(),
 	})
 
 	for _, path := range []string{
@@ -115,6 +117,7 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		"/db-admin/",
 		"/apps/1",
 		"/terminal",
+		"/software",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
