@@ -166,6 +166,104 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 	return m.apply(ctx, sites)
 }
 
+// AddStandaloneDomain creates an unbound Caddy site. Negative IDs are reserved
+// for standalone domains so existing app/domain associations remain unchanged.
+func (m *Manager) AddStandaloneDomain(ctx context.Context, domain string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if !domainRE.MatchString(domain) {
+		return errors.New("invalid domain")
+	}
+	sites, err := m.load()
+	if err != nil {
+		return err
+	}
+	id := int64(-1)
+	for _, site := range sites {
+		if site.Domain == domain {
+			return fmt.Errorf("domain %q is already configured", domain)
+		}
+		if site.AppID <= id {
+			id = site.AppID - 1
+		}
+	}
+	sites = append(sites, Site{AppID: id, Domain: domain, Kind: "parked"})
+	return m.apply(ctx, sites)
+}
+
+// RenameSite changes the hostname while retaining the site's target and custom template.
+func (m *Manager) RenameSite(ctx context.Context, id int64, domain string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if !domainRE.MatchString(domain) {
+		return errors.New("invalid domain")
+	}
+	sites, err := m.load()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, site := range sites {
+		if site.Domain == domain && site.AppID != id {
+			return fmt.Errorf("domain %q is already configured", domain)
+		}
+	}
+	for i := range sites {
+		if sites[i].AppID == id {
+			sites[i].Domain = domain
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("domain not found")
+	}
+	return m.apply(ctx, sites)
+}
+
+// AttachStandaloneDomain converts a parked domain into the app's managed site.
+// An app may still have only one domain, matching the existing UI and schema.
+func (m *Manager) AttachStandaloneDomain(ctx context.Context, standaloneID, appID int64, port int, root, kind string) error {
+	if standaloneID >= 0 || appID <= 0 {
+		return errors.New("invalid domain or application")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sites, err := m.load()
+	if err != nil {
+		return err
+	}
+	if kind == "static" {
+		if port != 0 || !filepath.IsAbs(root) {
+			return errors.New("invalid static application target")
+		}
+		if err := prepareStaticRoot(ctx, root); err != nil {
+			return err
+		}
+	} else if port < 1 || port > 65535 {
+		return errors.New("invalid application port")
+	}
+	for _, site := range sites {
+		if site.AppID == appID {
+			return errors.New("application already has a domain; disconnect it first")
+		}
+	}
+	for i := range sites {
+		if sites[i].AppID != standaloneID {
+			continue
+		}
+		sites[i].AppID = appID
+		sites[i].Port = port
+		sites[i].Root = root
+		sites[i].Kind = kind
+		sites[i].Template = ""
+		return m.apply(ctx, sites)
+	}
+	return errors.New("standalone domain not found")
+}
+
 func (m *Manager) SetSiteTemplate(ctx context.Context, appID int64, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -484,6 +582,9 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 			}
 			siteTemplate = managedStaticTemplate(settings)
 		}
+		if site.Kind == "parked" {
+			siteTemplate = "{domain} {\n respond \"Domain not configured\" 404\n}"
+		}
 		if strings.TrimSpace(site.Template) != "" {
 			siteTemplate = site.Template
 		}
@@ -585,6 +686,9 @@ func renderSite(template string, site Site) string {
 func validateSiteTemplate(value string, site Site) error {
 	if !strings.Contains(value, "{domain}") {
 		return errors.New("Caddy template must contain {domain}")
+	}
+	if site.Kind == "parked" {
+		return nil
 	}
 	if site.Kind == "static" || site.Port == 0 {
 		if !strings.Contains(value, "{root}") {
@@ -740,6 +844,9 @@ func (m *Manager) save(sites []Site) error {
 }
 
 func (s Site) Target() string {
+	if s.Kind == "parked" {
+		return "Unassigned"
+	}
 	if s.Kind == "static" || s.Port == 0 {
 		return s.Root
 	}
