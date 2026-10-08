@@ -120,8 +120,8 @@ func logRetentionPage(sizeMB,days,auditDays int,problem string)string{
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Panel audit trail (SQLite)</h2>
  <p class="note">Audit records have their own retention window, independent of systemd-journald. Expired events are deleted immediately on save and on subsequent audit writes.</p>
  <form method="post" action="/log-retention/audit" class="compact-form" style="max-width:640px">
- <select name="days" aria-label="Audit log retention">§+
- option(auditDays,7,"7 days")+option(auditDays,14,"14 days")+option(auditDays,30,"30 days")+option(auditDays,90,"90 days")+option(auditDays,365,"365 days")+§</select>
+ <select name="days" aria-label="Audit log retention">`+
+ option(auditDays,7,"7 days")+option(auditDays,14,"14 days")+option(auditDays,30,"30 days")+option(auditDays,90,"90 days")+option(auditDays,365,"365 days") +`</select>
  <button class="secondary">Save audit retention</button></form></section>
  <section class="panel panel-pad"><h2>Source-specific logging and retention</h2>
  <p class="note">Separate controls are shown only where the underlying service genuinely supports an independent policy.</p>
