@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -31,6 +32,7 @@ type SlowLogInfo struct {
 	Engine     string
 	Enabled    bool
 	Threshold  string
+	ThresholdMS int
 	Source     string
 	Notice     string
 }
@@ -114,6 +116,7 @@ func mysqlSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQuer
 	}
 	info.Enabled = fields[0] == "1" || strings.EqualFold(fields[0], "ON")
 	info.Threshold = fields[1] + " seconds (server-wide)"
+	if secs, err := strconv.ParseFloat(fields[1], 64); err == nil { info.ThresholdMS = int(secs*1000 + 0.5) }
 	if !info.Enabled || !strings.Contains(strings.ToUpper(fields[2]), "TABLE") {
 		info.Notice = "Per-database query history requires MySQL slow_query_log=ON with TABLE output. " +
 			"Enable it below to retain the existing FILE output and start collecting new entries."
@@ -169,6 +172,7 @@ func postgresSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQ
 		return info, nil, errors.New("unexpected PostgreSQL logging settings output")
 	}
 	info.Threshold = strings.TrimSpace(lines[0])
+	if d, err := time.ParseDuration(info.Threshold); err == nil { info.ThresholdMS = int(d / time.Millisecond) }
 	prefix := strings.TrimSpace(lines[1])
 	info.Enabled = info.Threshold != "-1" && info.Threshold != "-1ms"
 	if !info.Enabled {
