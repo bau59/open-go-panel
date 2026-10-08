@@ -190,7 +190,7 @@ func usersPage(users []linuxuser.User, message string) string {
 		</div>
 		` + alert + `
 		<section class="panel">
-			<form class="toolbar" method="post" action="/users" style="grid-template-columns:1fr 1fr auto">
+			<form class="toolbar toolbar-3" method="post" action="/users">
 				<input name="username" pattern="[a-z_][a-z0-9_-]{0,31}" placeholder="Username" required>
 				<input name="password" type="password" minlength="8" placeholder="Password, minimum 8 characters" required>
 				<button class="button">Create user</button>
