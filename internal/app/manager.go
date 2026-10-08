@@ -100,6 +100,8 @@ type RuntimeHealth struct {
 type Manager struct {
 	mu              sync.Mutex
 	deployMu        sync.Mutex
+	promotionMu     sync.Mutex
+	promotionTask   PromotionTask
 	store           *state.Store
 	legacyStateFile string
 	serviceDir      string
@@ -532,6 +534,11 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 			failures = append(failures, fmt.Sprintf("app %d: %v", app.ID, err))
 			continue
 		}
+		// Prebuilt production binaries are promoted from a separate Air
+		// development application, never from an independent Git fetch.
+		if app.Type == "go" && app.Service.RunMode == "go-binary" {
+			continue
+		}
 		if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
 			continue
 		}
@@ -628,6 +635,11 @@ func (m *Manager) prepareDeployment(ctx context.Context, app App) error {
 			return err
 		}
 	case "go":
+		// Air resolves/rebuilds source in the development service. A binary-only
+		// production service does not need module resolution at runtime.
+		if app.Service.RunMode == "go-air" || app.Service.RunMode == "go-binary" {
+			return nil
+		}
 		if _, err := os.Stat(filepath.Join(app.Root, "go.mod")); err == nil {
 			// runuser inherits the panel service's PATH, which may not
 			// contain /usr/local/go/bin even when Go is installed and
@@ -1323,12 +1335,12 @@ func validateServiceConfig(appType string, cfg *ServiceConfig) error {
 	switch cfg.RunMode {
 	case "":
 		cfg.RunMode = "custom"
-	case "custom", "go-air", "go-build", "go-run", "node-npm":
+	case "custom", "go-air", "go-build", "go-run", "go-binary", "node-npm":
 	default:
 		return errors.New("unsupported run mode")
 	}
 
-	if (cfg.RunMode == "go-air" || cfg.RunMode == "go-build" || cfg.RunMode == "go-run") && appType != "go" {
+	if (cfg.RunMode == "go-air" || cfg.RunMode == "go-build" || cfg.RunMode == "go-run" || cfg.RunMode == "go-binary") && appType != "go" {
 		return errors.New("selected run mode is only available for Go apps")
 	}
 	if cfg.RunMode == "node-npm" && appType != "node" {
@@ -1367,6 +1379,8 @@ func runnerCommand(app App) string {
 	switch app.Service.RunMode {
 	case "go-air":
 		return "exec air"
+	case "go-binary":
+		return "exec ./.ogp-app"
 	case "go-build":
 		return "go build -o .ogp-app . && exec ./.ogp-app"
 	case "go-run":

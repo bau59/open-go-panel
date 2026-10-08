@@ -140,6 +140,9 @@ func (m *Manager) deployStaged(ctx context.Context, id int64, rollback bool) err
 	if err != nil {
 		return err
 	}
+	if app.Type == "go" && app.Service.RunMode == "go-binary" {
+		return errors.New("production binary application is updated using Build → Production from its Air development app")
+	}
 	cfg, err := m.DeployConfig(id)
 	if err != nil {
 		return err
