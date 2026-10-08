@@ -11,13 +11,13 @@ Lightweight open-source Linux server control panel written in Go.
 - Linux users and SSH keys;
 - applications with systemd services, resource limits and live journal logs;
 - application health checks;
-- Git deploy and one-step rollback;
+- Git deploy, one-step rollback and optional automatic deployment when the configured branch changes;
 - domains, automatic TLS and per-domain Caddy configuration;
 - MySQL and PostgreSQL provisioning;
 - Redis installation, metrics, key browser and cache controls;
 - one-time remote MySQL/PostgreSQL snapshot import with automatic pre-import safety backup;
 - application ↔ database attachments;
-- MySQL server metrics and resource-aware tuning preset;
+- MySQL, PostgreSQL and Redis runtime metrics plus resource-aware MySQL tuning preset;
 - database backups, restore and daily retention schedule;
 - Adminer behind the panel session;
 - CrowdSec Security Engine and nftables firewall bouncer;
@@ -25,7 +25,7 @@ Lightweight open-source Linux server control panel written in Go.
 - structured CrowdSec decisions, allowlist and alerts;
 - audit log for successful panel changes;
 - system-wide software management for Docker, Node.js LTS, Tailwind CLI, Go, Air, Git, build tools and common CLI utilities;
-- Docker container management: list, start, stop, restart, remove and autostart policy;
+- Docker container management: pull/run from image or registry URL, list, start, stop, restart, remove and autostart policy;
 - authenticated web terminal with root and managed-user shells; SSH tunnel remains the recommended access method;
 - release checksum verification, post-update health checks and automatic binary rollback;
 - Linux amd64 and arm64 release builds.
