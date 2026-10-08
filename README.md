@@ -293,6 +293,44 @@ CPU and memory from Docker every ten seconds. **Run container** and
 clicked. Closing the panel interrupts an in-progress rebuild, so wait for the
 build task to finish before using **Close panel**.
 
+## Go development (Air) → production binary
+
+Create two **Go** applications with separate roots and ports:
+
+1. Set your development application's Service settings → **Go: Air live
+   reload (development)**. It runs `air` directly and reloads the local
+   source code. Git updates to an Air app no longer run a separate `go mod
+   download` staging step; Air is responsible for its own runtime build.
+2. Create a separate production application. Set Service settings →
+   **Go: prebuilt production binary**. Keep its own environment variables,
+   Caddy domain, port, persistent data and autostart settings.
+3. Open the **development** application → **Dev → Production**. Select the
+   production application and the Go main-package directory (normally `.`,
+   or `./cmd/server`). Click **Build → Production**.
+
+The panel copies the current development tree to a temporary directory, runs
+`go build` there as the development Linux user, and copies **only the compiled
+executable** into a separately staged copy of the production app. The live
+Air working tree is never modified and never stopped. Once compilation
+succeeds, the production app directory is atomically exchanged; the panel
+restarts its existing systemd service and checks that it is active and
+listening. If activation fails, the previous production files are exchanged
+back and the service is restarted.
+
+The production environment, ports, domains and data are **not copied from
+development**. Do not place production secrets in a development Git checkout.
+The build task runs within the panel process: wait for completion before
+closing the panel or restarting it. Go is required on the server to compile
+the production executable, but is **not required at runtime** for the
+prebuilt production mode.
+
+Production binaries cannot be changed by the panel's ordinary Git Deploy
+or Auto Deploy actions. Create a separate production app and use
+**Build → Production** instead. The release switch is not a database
+transaction: manage database schema changes separately. In a production
+app with no listener yet, ensure the new program binds to the target
+application's `PORT` environment variable for readiness checks.
+
 ## Service
 
 ```bash
