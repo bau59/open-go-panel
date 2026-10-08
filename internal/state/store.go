@@ -152,6 +152,61 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at
 	ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS http_perf_requests (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_key TEXT NOT NULL UNIQUE,
+	time_ns INTEGER NOT NULL,
+	app_id INTEGER NOT NULL DEFAULT 0,
+	domain TEXT NOT NULL,
+	method TEXT NOT NULL,
+	route TEXT NOT NULL,
+	protocol TEXT NOT NULL DEFAULT '',
+	status INTEGER NOT NULL,
+	duration_ms REAL NOT NULL,
+	response_bytes INTEGER NOT NULL,
+	request_id TEXT NOT NULL DEFAULT '',
+	server_timings TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_perf_time ON http_perf_requests(time_ns);
+CREATE INDEX IF NOT EXISTS idx_perf_domain_time ON http_perf_requests(domain,time_ns);
+CREATE INDEX IF NOT EXISTS idx_perf_app_time ON http_perf_requests(app_id,time_ns);
+
+CREATE TABLE IF NOT EXISTS http_perf_rollup (
+	hour_ns INTEGER NOT NULL,
+	domain TEXT NOT NULL,
+	app_id INTEGER NOT NULL DEFAULT 0,
+	method TEXT NOT NULL,
+	route TEXT NOT NULL,
+	requests INTEGER NOT NULL DEFAULT 0,
+	total_ms REAL NOT NULL DEFAULT 0,
+	errors_5xx INTEGER NOT NULL DEFAULT 0,
+	slow_500 INTEGER NOT NULL DEFAULT 0,
+	max_ms REAL NOT NULL DEFAULT 0,
+	PRIMARY KEY(hour_ns,domain,app_id,method,route)
+);
+
+CREATE TABLE IF NOT EXISTS http_perf_cursor (
+	driver TEXT PRIMARY KEY,
+	cursor TEXT NOT NULL DEFAULT '',
+	scanned INTEGER NOT NULL DEFAULT 0,
+	parse_errors INTEGER NOT NULL DEFAULT 0,
+	dropped INTEGER NOT NULL DEFAULT 0,
+	last_success_ns INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS http_perf_restarts (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	app_id INTEGER NOT NULL,
+	started_ns INTEGER NOT NULL,
+	service TEXT NOT NULL,
+	source TEXT NOT NULL,
+	reason TEXT NOT NULL DEFAULT '',
+	UNIQUE(app_id,started_ns,source)
+);
+CREATE INDEX IF NOT EXISTS idx_perf_restarts_time ON http_perf_restarts(started_ns);
+
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate sqlite state: %w", err)
