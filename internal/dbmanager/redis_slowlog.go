@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -58,4 +57,3 @@ func parseRedisSlowQueries(data []byte) ([]RedisSlowQuery, error) {
 	return entries, nil
 }
 
-var _ = strconv.Itoa
