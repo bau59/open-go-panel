@@ -282,6 +282,13 @@ func activateProductionBinary(root,prepared string,activate func()error,recoverO
 	return nil
 }
 
+func (m *Manager) HasProductionRollback(id int64) bool {
+	app,err:=m.Get(id)
+	if err!=nil||app.Type!="go"||app.Service.RunMode!="go-binary" {return false}
+	info,err:=os.Lstat(filepath.Join(app.Root,".ogp-app.previous"))
+	return err==nil && info.Mode().IsRegular()
+}
+
 // RollbackProductionBinary swaps the most recent promoted executable back
 // atomically, with the same service restart and health checks as promotion.
 func (m *Manager) RollbackProductionBinary(ctx context.Context,id int64)error{
