@@ -75,6 +75,7 @@ type DeployConfig struct {
 	Branch         string
 	CurrentCommit  string
 	PreviousCommit string
+	AutoDeploy     bool
 	DeployedAt     time.Time
 }
 
@@ -98,6 +99,7 @@ type RuntimeHealth struct {
 
 type Manager struct {
 	mu              sync.Mutex
+	deployMu        sync.Mutex
 	store           *state.Store
 	legacyStateFile string
 	serviceDir      string
@@ -241,10 +243,10 @@ func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
 	var cfg DeployConfig
 	var deployedAt string
 	err := m.store.DB().QueryRow(`
-		SELECT repository, branch, current_commit, previous_commit, deployed_at
+		SELECT repository, branch, current_commit, previous_commit, auto_deploy, deployed_at
 		FROM deployments
 		WHERE app_id = ?
-	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit, &deployedAt)
+	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit, &cfg.AutoDeploy, &deployedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeployConfig{Branch: "main"}, nil
 	}
@@ -257,7 +259,7 @@ func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
 	return cfg, nil
 }
 
-func (m *Manager) SetDeployConfig(id int64, repository, branch string) error {
+func (m *Manager) SetDeployConfig(id int64, repository, branch string, autoDeploy bool) error {
 	repository = strings.TrimSpace(repository)
 	branch = strings.TrimSpace(branch)
 	if repository == "" {
@@ -276,12 +278,13 @@ func (m *Manager) SetDeployConfig(id int64, repository, branch string) error {
 		return err
 	}
 	_, err := m.store.DB().Exec(`
-		INSERT INTO deployments(app_id, repository, branch)
-		VALUES(?, ?, ?)
+		INSERT INTO deployments(app_id, repository, branch, auto_deploy)
+		VALUES(?, ?, ?, ?)
 		ON CONFLICT(app_id) DO UPDATE SET
 			repository=excluded.repository,
-			branch=excluded.branch
-	`, id, repository, branch)
+			branch=excluded.branch,
+			auto_deploy=excluded.auto_deploy
+	`, id, repository, branch, autoDeploy)
 	if err != nil {
 		return fmt.Errorf("save deployment config: %w", err)
 	}
@@ -479,6 +482,13 @@ func runAsUserEnv(ctx context.Context, username, dir string, env []string, name 
 }
 
 func (m *Manager) Deploy(ctx context.Context, id int64) error {
+	m.deployMu.Lock()
+	defer m.deployMu.Unlock()
+
+	return m.deployUnlocked(ctx, id)
+}
+
+func (m *Manager) deployUnlocked(ctx context.Context, id int64) error {
 	app, err := m.Get(id)
 	if err != nil {
 		return err
@@ -557,6 +567,71 @@ func (m *Manager) Deploy(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (m *Manager) RemoteCommit(ctx context.Context, id int64) (string, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return "", err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return "", err
+	}
+	if cfg.Repository == "" {
+		return "", errors.New("Git repository is not configured")
+	}
+	gitEnv, err := m.gitEnvironment(id, cfg.Repository)
+	if err != nil {
+		return "", err
+	}
+	out, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "ls-remote", cfg.Repository, "refs/heads/"+cfg.Branch)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 1 || len(fields[0]) != 40 {
+		return "", fmt.Errorf("branch %q was not found in remote repository", cfg.Branch)
+	}
+	return fields[0], nil
+}
+
+func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
+	apps, err := m.List()
+	if err != nil {
+		return 0, err
+	}
+	deployed := 0
+	var failures []string
+	for _, app := range apps {
+		cfg, err := m.DeployConfig(app.ID)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("app %d: %v", app.ID, err))
+			continue
+		}
+		if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
+			continue
+		}
+		remote, err := m.RemoteCommit(ctx, app.ID)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", app.Name, err))
+			continue
+		}
+		if remote == cfg.CurrentCommit {
+			continue
+		}
+		m.deployMu.Lock()
+		err = m.deployUnlocked(ctx, app.ID)
+		m.deployMu.Unlock()
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", app.Name, err))
+			continue
+		}
+		deployed++
+	}
+	if len(failures) > 0 {
+		return deployed, errors.New(strings.Join(failures, "; "))
+	}
+	return deployed, nil
+}
 func (m *Manager) Rollback(ctx context.Context, id int64) error {
 	app, err := m.Get(id)
 	if err != nil {
