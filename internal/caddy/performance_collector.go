@@ -22,6 +22,7 @@ const (
 )
 
 type CollectorStatus struct {
+ Source string
  Scanned, ParseErrors, Dropped int64
  LastSuccess time.Time
  LastError string
@@ -33,8 +34,12 @@ var allowedRequestID = regexp.MustCompile("^[A-Za-z0-9_.-]{1,128}$")
 func (m *Manager) PerformanceCollectorStatus(ctx context.Context) (CollectorStatus,error) {
  var s CollectorStatus
  var timestamp int64
+ source,ok,readErr:=m.store.Setting("performance.source")
+ if readErr!=nil{return s,readErr}
+ if !ok||source!="file"{source="journal"}
+ s.Source=source
  err:=m.store.DB().QueryRowContext(ctx,`SELECT scanned,parse_errors,dropped,last_success_ns,last_error
- FROM http_perf_cursor WHERE driver='journal'`).Scan(&s.Scanned,&s.ParseErrors,&s.Dropped,&timestamp,&s.LastError)
+ FROM http_perf_cursor WHERE driver=?`,source).Scan(&s.Scanned,&s.ParseErrors,&s.Dropped,&timestamp,&s.LastError)
  if err!=nil && !errors.Is(err,sql.ErrNoRows){return s,err}
  if timestamp>0{s.LastSuccess=time.Unix(0,timestamp)}
  if err=m.store.DB().QueryRowContext(ctx,"SELECT count(*) FROM http_perf_requests").Scan(&s.Stored);err!=nil{return s,err}
