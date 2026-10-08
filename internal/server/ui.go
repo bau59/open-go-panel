@@ -590,6 +590,8 @@ func appHeader(active string) string {
 		{"users", "/users", "Users"},
 		{"databases", "/databases", "Databases"},
 		{"caddy", "/caddy", "Caddy"},
+		{"performance", "/performance", "Performance"},
+		{"log-retention", "/log-retention", "Logs"},
 		{"security", "/security", "Security"},
 		{"software", "/software", "Software"},
 		{"docker", "/docker", "Docker"},
