@@ -242,9 +242,14 @@ type buildRequest struct {
 	Ports      string
 	Autostart  bool
 	Public     bool
+	Runtime    RuntimeConfig
 }
 
 func (m *Manager) StartGitHubBuild(name, repository, branch, dockerfile, ports string, autostart, public bool) error {
+	return m.StartGitHubBuildConfigured(name, repository, branch, dockerfile, ports, autostart, public, RuntimeConfig{})
+}
+
+func (m *Manager) StartGitHubBuildConfigured(name, repository, branch, dockerfile, ports string, autostart, public bool, runtime RuntimeConfig) error {
 	repo, err := parseGitHubRepository(repository)
 	if err != nil {
 		return err
@@ -264,6 +269,9 @@ func (m *Manager) StartGitHubBuild(name, repository, branch, dockerfile, ports s
 	if _, err := publishedPortArgs(ports, public); err != nil {
 		return err
 	}
+	if _, _, err := runtime.validate(); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return errors.New("Docker is not installed")
 	}
@@ -271,7 +279,7 @@ func (m *Manager) StartGitHubBuild(name, repository, branch, dockerfile, ports s
 		return errors.New("Git is not installed")
 	}
 	req := buildRequest{Name: name, Repository: repo, Branch: branch,
-		Dockerfile: dockerfile, Ports: ports, Autostart: autostart, Public: public}
+		Dockerfile: dockerfile, Ports: ports, Autostart: autostart, Public: public, Runtime: runtime}
 	m.buildMu.Lock()
 	if m.buildTask.Running {
 		m.buildMu.Unlock()
@@ -359,7 +367,7 @@ func (m *Manager) buildGitHubImage(ctx context.Context, req buildRequest) (strin
 		return "", fmt.Errorf("Docker build failed: %w", err)
 	}
 	m.buildStep("Creating container")
-	if err := m.runImage(ctx, req.Name, image, req.Ports, req.Autostart, req.Public, false); err != nil {
+	if err := m.runImage(ctx, req.Name, image, req.Ports, req.Autostart, req.Public, false, req.Runtime); err != nil {
 		return image, fmt.Errorf("image %s built but container launch failed: %w", image, err)
 	}
 	return image, nil

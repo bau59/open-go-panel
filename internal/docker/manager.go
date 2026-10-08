@@ -135,10 +135,14 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
 }
 
 func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart, publicPorts bool) error {
-    return m.runImage(ctx, name, image, ports, autostart, publicPorts, true)
+    return m.CreateConfigured(ctx, name, image, ports, autostart, publicPorts, RuntimeConfig{})
 }
 
-func (m *Manager) runImage(ctx context.Context, name, image, ports string, autostart, publicPorts, pull bool) error {
+func (m *Manager) CreateConfigured(ctx context.Context, name, image, ports string, autostart, publicPorts bool, cfg RuntimeConfig) error {
+    return m.runImage(ctx, name, image, ports, autostart, publicPorts, true, cfg)
+}
+
+func (m *Manager) runImage(ctx context.Context, name, image, ports string, autostart, publicPorts, pull bool, cfg RuntimeConfig) error {
     name = strings.TrimSpace(name)
     image = normalizeImageReference(image)
     if !containerNamePattern.MatchString(name) {
@@ -157,6 +161,10 @@ func (m *Manager) runImage(ctx context.Context, name, image, ports string, autos
     if err != nil {
         return err
     }
+    environment, volumes, err := cfg.validate()
+    if err != nil {
+        return err
+    }
     args = append(args, portArgs...)
 
     if pull {
@@ -164,6 +172,12 @@ func (m *Manager) runImage(ctx context.Context, name, image, ports string, autos
             return err
         }
     }
+    runtimeFlags, cleanup, err := runtimeArgs(cfg, environment, volumes)
+    if err != nil {
+        return err
+    }
+    defer cleanup()
+    args = append(args, runtimeFlags...)
     args = append(args, image)
     return dockerCommand(ctx, args...)
 }

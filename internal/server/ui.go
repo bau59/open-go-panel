@@ -294,6 +294,12 @@ const baseStyles = `
 	.docker-create-grid{display:grid;grid-template-columns:minmax(160px,.75fr) minmax(260px,1.5fr) minmax(180px,1fr) auto auto;gap:10px;align-items:end}
 	.docker-autostart{height:42px;margin:0;padding:0 8px}
 	.docker-create-submit{display:flex;align-items:end}
+	.docker-runtime-fields{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;padding:14px 0 4px;border-top:1px solid var(--border);align-items:start}
+	.docker-runtime-fields textarea{width:100%;min-height:118px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+	.docker-runtime-fields .note{margin:6px 0 0;line-height:1.5}
+	.docker-runtime-settings{display:flex;align-items:center;gap:18px;grid-column:1/-1;flex-wrap:wrap}
+	.docker-runtime-settings>div{min-width:180px}
+	.docker-runtime-settings input[name="shm_size"]{width:160px}
 
 	.empty-state-card{max-width:720px}
 	.db-service-card .note{margin:10px 0 0;line-height:1.45}
@@ -428,6 +434,7 @@ const baseStyles = `
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
 		.redis-toolbar{grid-template-columns:1fr}
 		.db-services-grid,.backup-settings-grid,.docker-metrics,.docker-create-grid{grid-template-columns:1fr}
+		.docker-runtime-fields{grid-template-columns:1fr}
 		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
 		.table-path{max-width:180px}
 	}
