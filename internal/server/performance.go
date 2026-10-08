@@ -44,10 +44,18 @@ func registerPerformanceRoutes(mux *http.ServeMux, store *sessionStore, cfg Conf
   if appID<0{appID=0}
   f:=caddy.PerformanceFilter{Since:from,Until:now,AppID:appID,Domain:v.Get("domain"),Method:v.Get("method"),Route:v.Get("route"),
    Status:status,SlowOnly:v.Get("slow")=="1",ThresholdMS:threshold,Page:page,PerPage:50,Sort:v.Get("sort")}
-  ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
-  data,err:=cfg.Caddy.QueryPerformance(ctx,f)
+  data:=caddy.PerformanceResult{}
   errMsg:=""
-  if err!=nil {errMsg=err.Error()}
+  if v.Get("run")=="1" {
+   ctx,cancel:=context.WithTimeout(r.Context(),12*time.Second)
+   defer cancel()
+   source,ok,_:=cfg.State.Setting("performance.source")
+   if !ok||source!="file"{source="journal"}
+   path,_,_:=cfg.State.Setting("performance.file_path")
+   var err error
+   data,err=cfg.Caddy.QueryPerformanceFromLogs(ctx,f,source,path)
+   if err!=nil {errMsg=err.Error()}
+  }
   extra:=performanceExtras{Global:getPerformanceThresholds(cfg.State,0),PerApp:map[int64]performanceThresholds{}}
   if apps,err:=cfg.Apps.List();err==nil{
    for _,app:=range apps{
@@ -55,12 +63,6 @@ func registerPerformanceRoutes(mux *http.ServeMux, store *sessionStore, cfg Conf
     extra.PerApp[app.ID]=getPerformanceThresholds(cfg.State,app.ID)
    }
   }
-  if status,err:=cfg.Caddy.PerformanceCollectorStatus(ctx);err==nil{extra.Collector=status}
-  if rollups,err:=cfg.Caddy.PerformanceRollups(ctx,f);err==nil{extra.Rollups=rollups}
-  if restarts,err:=cfg.Caddy.PerformanceRestarts(ctx,from,now);err==nil{extra.Restarts=restarts}
-  if events,err:=cfg.Caddy.PerformanceLifecycle(ctx,from,now);err==nil{extra.Lifecycle=events}
-  if cold,err:=cfg.Caddy.ColdStartupSamples(ctx,from,now);err==nil{extra.Cold=cold}
-  if idle,err:=cfg.Caddy.IdlePerformanceSamples(ctx,from,now);err==nil{extra.Idle=idle}
   writeHTML(w,cfg.Logger,http.StatusOK,performancePage(period,v,f,data,errMsg,extra))
  })))
 }
@@ -156,11 +158,12 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  for _,b:=range data.Buckets{fmt.Fprintf(&buckets,`<tr><td>%s</td><td>%d</td><td>%.2f</td><td>%.2f</td><td>%.2f</td></tr>`,
  html.EscapeString(b.Time.Local().Format("2006-01-02 15:04")),b.Count,b.P50,b.P95,b.P99)}
  if buckets.Len()==0 {buckets.WriteString(`<tr><td colspan="5" class="empty">No measured time buckets.</td></tr>`)}
- return pageHead("Performance")+`<body>`+appHeader("performance")+`<main class="shell">
- <div class="page-head"><div><p class="eyebrow">Observability / HTTP</p><h1>Performance</h1><p class="sub">Measured Caddy HTTP handling time, not isolated Go, DNS, TLS or browser rendering time.</p></div>
+ if values.Get("run")!="1" {caution+=`<p class="note">Select a period and press Generate report. Caddy logs are read only when requested.</p>`}
+ return pageHead("Performance")+``<body>`+appHeader("performance")+`<main class="shell">
+ <div class="page-head"><div><p class="eyebrow">Observability / HTTP</p><h1>Performance</h1><p class="sub">On-demand Caddy log report. No continuous importer or duplicate request storage. Values are Caddy durations, not isolated Go, DNS, TLS or browser time.</p></div>
  <a href="/log-retention" class="secondary">Log retention</a></div>`+caution+performanceCollectorPanel(extra.Collector)+`
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Filters</h2>
- <form method="get" action="/performance" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:14px">
+ <form method="get" action="/performance" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:14px"><input type="hidden" name="run" value="1">
  <div><label>Period</label><select name="period">`+opt("period","5m","Last 5 minutes")+opt("period","1h","Last hour")+opt("period","24h","Last 24 hours")+opt("period","7d","Last 7 days")+opt("period","custom","Custom window")+`</select></div>
  <div><label>Domain</label><input name="domain" placeholder="Any domain" value="`+html.EscapeString(f.Domain)+`"></div>
  <div><label>Application</label><select name="app">`+appOptions.String()+`</select></div>
@@ -171,7 +174,7 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  <div><label>Sort requests</label><select name="sort">`+opt("sort","","Newest first")+opt("sort","duration","Slowest first")+`</select></div>
  <div><label>From (custom)</label><input type="datetime-local" name="from" value="`+html.EscapeString(values.Get("from"))+`"></div>
  <div><label>Until (custom)</label><input type="datetime-local" name="to" value="`+html.EscapeString(values.Get("to"))+`"></div>
- <div><label style="margin-top:8px"><input type="checkbox" style="width:auto;height:auto" name="slow" value="1"`+checked(f.SlowOnly)+`> Only slow</label><button class="button">Apply</button></div>
+ <div><label style="margin-top:8px"><input type="checkbox" style="width:auto;height:auto" name="slow" value="1"`+checked(f.SlowOnly)+`> Only slow</label><button class="button">Generate report</button></div>
  </form></section>
  <section class="metrics-grid" style="margin-bottom:16px">`+
  stat("Measured requests",strconv.Itoa(data.Total))+stat("Average",ms(data.Average))+
@@ -186,6 +189,6 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  <section class="panel"><div class="panel-pad"><h2>Request log</h2><p class="note">Query strings and client IP addresses are not retained in performance results.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th><th>Size</th><th></th></tr></thead><tbody>`+rows.String()+`</tbody></table></div>
  <div class="pager" style="padding:16px"><span class="pager-info">Page `+strconv.Itoa(f.Page)+`</span><div class="pager-actions">`+prev+next+`</div></div></section>
- `+performanceRollupPanel(extra)+performanceColdPanel(extra,f.AppID)+performanceThresholdForm(func()performanceThresholds{if f.AppID>0 {return extra.PerApp[f.AppID]};return extra.Global}(),f.AppID,extra.Apps)+`
+ `+performanceThresholdForm(func()performanceThresholds{if f.AppID>0 {return extra.PerApp[f.AppID]};return extra.Global}(),f.AppID,extra.Apps)+`
  </main></body></html>`
 }
