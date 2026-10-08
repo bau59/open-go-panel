@@ -251,6 +251,40 @@ background operation in the **panel process**; do not close or restart the
 panel before it finishes. Private clone and build require outbound access
 to GitHub over SSH (port 22) and HTTPS (GitHub host-key metadata).
 
+## Updating a Docker container built from GitHub
+
+Open **Docker → Containers → Rebuild GitHub** on the corresponding row.
+For builds created before source labels were recorded, supply the GitHub
+repository (for example `bau59/deepseek-web-api-bridge`), branch and Dockerfile
+manually the first time. New builds retain repository, branch, Dockerfile
+and commit metadata in the image labels.
+
+**Rebuild & deploy** is an asynchronous operation. It clones and builds a
+fresh image first; a failed Git clone or Docker build does not touch the running
+container. After a successful build, the panel inspects the existing container
+and preserves its environment (including existing encryption keys), published
+host/IP ports, bind/named volumes, restart policy, init, shared memory, user and
+working directory. It stops the old container, renames it to an
+`ogp-prev-...` backup, disables that backup's autostart, then creates the new
+container using the new image. If the new process exits promptly or its Docker
+HEALTHCHECK fails, the panel attempts to remove that replacement and return
+the previous container to its original name and state.
+
+**This is not a zero-downtime or database-transaction rollback.** There is a
+short restart window. Without a Docker HEALTHCHECK only process survival is
+verified for three seconds, not full application readiness. Back up application
+data before deploying breaking schema updates. The previous Docker container
+is retained but shares any attached persistent volumes with the new one;
+an application data migration cannot automatically be undone. Special
+networking, privileges and unsupported mount configurations are rejected
+rather than silently lost.
+
+The Docker landing page lists containers before creation controls. It samples
+CPU and memory from Docker every ten seconds. **Run container** and
+**Build from GitHub** creation forms are collapsed until their buttons are
+clicked. Closing the panel interrupts an in-progress rebuild, so wait for the
+build task to finish before using **Close panel**.
+
 ## Service
 
 ```bash
