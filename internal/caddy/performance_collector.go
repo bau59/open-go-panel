@@ -200,6 +200,7 @@ func (m *Manager) PrunePerformance(ctx context.Context) error {
  if _,err=tx.ExecContext(ctx,"DELETE FROM http_perf_requests WHERE time_ns < ?",cutoff);err!=nil{return err}
  if _,err=tx.ExecContext(ctx,"DELETE FROM http_perf_rollup WHERE hour_ns < ?",time.Now().AddDate(0,0,-aggregates).UnixNano());err!=nil{return err}
  if _,err=tx.ExecContext(ctx,"DELETE FROM http_perf_restarts WHERE started_ns < ?",time.Now().AddDate(0,0,-aggregates).UnixNano());err!=nil{return err}
+ if _,err=tx.ExecContext(ctx,"DELETE FROM http_perf_lifecycle WHERE event_ns < ?",time.Now().AddDate(0,0,-aggregates).UnixNano());err!=nil{return err}
  var count int64
  if err=tx.QueryRowContext(ctx,"SELECT count(*) FROM http_perf_requests").Scan(&count);err!=nil{return err}
  if count>performanceStorageMaxRows {
