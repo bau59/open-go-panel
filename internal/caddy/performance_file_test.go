@@ -13,7 +13,7 @@ import (
 )
 
 func fixtureAccessLine(ts int64,uri string)string {
- return fmt.Sprintf(`{"level":"info","logger":"http.log.access","ts":%d.1,"request":{"host":"example.com","method":"GET","uri":%q,"proto":"HTTP/2.0"},"status":200,"duration":0.03535112,"size":9728,"resp_headers":{"Server-Timing":["db;dur=8.2"]}}\n`,ts,uri)
+ return fmt.Sprintf(`{"level":"info","logger":"http.log.access","ts":%d.1,"request":{"host":"example.com","method":"GET","uri":%q,"proto":"HTTP/2.0"},"status":200,"duration":0.03535112,"size":9728,"resp_headers":{"Server-Timing":["db;dur=8.2"]}}`,ts,uri)+"\n"
 }
 
 func TestPerformanceFileResumeDedupAndRotation(t *testing.T){
