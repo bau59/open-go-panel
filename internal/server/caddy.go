@@ -454,10 +454,16 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 }
 
 func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panelcaddy.GlobalSettings) string {
-	if site.Kind == "parked" {
-		return "{domain} {\n respond \"Domain not configured\" 404\n}"
+	if site.Kind == "parked" || site.Kind == "redirect" {
+		address := "{domain}"
+		if !settings.HTTPS {
+			address = "http://{domain}"
+		}
+		if site.Kind == "parked" {
+			return address + " {\n respond \"Domain not configured\" 404\n}"
+		}
+		return address + " {\n redir {root} 301\n}"
 	}
-	if site.Kind == "redirect" { return "{domain} {\n redir {root} 301\n}" }
 	if site.Kind == "static" || site.Port == 0 {
 		address := "{domain}"
 		if !settings.HTTPS {
