@@ -89,6 +89,9 @@ func (m *Manager) StartRemoteImport(id int64, connection string) error {
 }
 
 func (m *Manager) remoteImport(ctx context.Context, target Database, source remoteConnection) (string, error) {
+	if err := probeRemoteDatabase(ctx, source); err != nil {
+		return "", err
+	}
 	preBackup, err := m.Backup(ctx, target.ID)
 	if err != nil {
 		return "", fmt.Errorf("create safety backup before import: %w", err)
@@ -122,6 +125,44 @@ func parseRemoteConnection(raw string) (remoteConnection, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return remoteConnection{}, errors.New("remote database connection is required")
+	}
+
+	mysqlDSN := raw
+	if strings.HasPrefix(mysqlDSN, "mysql://") {
+		mysqlDSN = strings.TrimPrefix(mysqlDSN, "mysql://")
+	}
+	if at := strings.Index(mysqlDSN, "@tcp("); at > 0 {
+		credentials := mysqlDSN[:at]
+		rest := mysqlDSN[at+5:]
+		closeParen := strings.Index(rest, ")/")
+		if closeParen > 0 {
+			hostPort := rest[:closeParen]
+			database := rest[closeParen+2:]
+			query := ""
+			if q := strings.IndexByte(database, '?'); q >= 0 {
+				query = database[q+1:]
+				database = database[:q]
+			}
+			user, password, ok := strings.Cut(credentials, ":")
+			if !ok || strings.TrimSpace(user) == "" || strings.TrimSpace(database) == "" {
+				return remoteConnection{}, errors.New("invalid MySQL DSN")
+			}
+			host, port, err := net.SplitHostPort(hostPort)
+			if err != nil {
+				host = hostPort
+				port = "3306"
+			}
+			sslMode := ""
+			if query != "" {
+				if values, err := url.ParseQuery(query); err == nil {
+					sslMode = values.Get("ssl-mode")
+				}
+			}
+			return remoteConnection{
+				Engine: "mysql", Host: host, Port: port, User: user,
+				Password: password, Database: database, SSLMode: sslMode,
+			}, nil
+		}
 	}
 
 	if strings.HasPrefix(raw, "mysql://") || strings.HasPrefix(raw, "postgres://") || strings.HasPrefix(raw, "postgresql://") {
@@ -161,32 +202,24 @@ func parseRemoteConnection(raw string) (remoteConnection, error) {
 		}, nil
 	}
 
-	if at := strings.Index(raw, "@tcp("); at > 0 {
-		credentials := raw[:at]
-		rest := raw[at+5:]
-		closeParen := strings.Index(rest, ")/")
-		if closeParen > 0 {
-			hostPort := rest[:closeParen]
-			database := rest[closeParen+2:]
-			if q := strings.IndexByte(database, '?'); q >= 0 {
-				database = database[:q]
-			}
-			user, password, ok := strings.Cut(credentials, ":")
-			if !ok || user == "" || database == "" {
-				return remoteConnection{}, errors.New("invalid MySQL DSN")
-			}
-			host, port, err := net.SplitHostPort(hostPort)
-			if err != nil {
-				host = hostPort
-				port = "3306"
-			}
-			return remoteConnection{
-				Engine: "mysql", Host: host, Port: port, User: user,
-				Password: password, Database: database,
-			}, nil
+	return remoteConnection{}, errors.New("supported formats: mysql://user:pass@host:3306/db, mysql://user:pass@tcp(host:3306)/db, user:pass@tcp(host:3306)/db, postgres://user:pass@host:5432/db?sslmode=require")
+}
+
+func probeRemoteDatabase(ctx context.Context, source remoteConnection) error {
+	address := net.JoinHostPort(source.Host, source.Port)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		label := "database"
+		if source.Engine == "mysql" {
+			label = "MySQL"
+		} else if source.Engine == "postgres" {
+			label = "PostgreSQL"
 		}
+		return fmt.Errorf("cannot reach remote %s at %s: %w", label, address, err)
 	}
-	return remoteConnection{}, errors.New("supported formats: mysql://user:pass@host:3306/db, user:pass@tcp(host:3306)/db, postgres://user:pass@host:5432/db?sslmode=require")
+	_ = conn.Close()
+	return nil
 }
 
 func dumpRemoteCompressed(ctx context.Context, source remoteConnection, path string) error {
