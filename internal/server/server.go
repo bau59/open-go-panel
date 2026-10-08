@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +26,11 @@ import (
 )
 
 const (
-	sessionCookieName = "ogp_session"
-	sessionTTL        = 24 * time.Hour
+	sessionCookieName  = "ogp_session"
+	sessionTTL         = 24 * time.Hour
+	loginWindow        = 5 * time.Minute
+	loginBlockDuration = 15 * time.Minute
+	maxLoginFailures   = 5
 )
 
 type Config struct {
@@ -47,10 +52,22 @@ type sessionStore struct {
 	sessions map[string]time.Time
 }
 
+type loginAttempt struct {
+	Failures     int
+	WindowStart  time.Time
+	BlockedUntil time.Time
+}
+
+type loginLimiter struct {
+	mu       sync.Mutex
+	attempts map[string]loginAttempt
+}
+
 func New(cfg Config) http.Handler {
 	store := &sessionStore{
 		sessions: make(map[string]time.Time),
 	}
+	limiter := &loginLimiter{attempts: make(map[string]loginAttempt)}
 
 	mux := http.NewServeMux()
 
@@ -73,6 +90,14 @@ func New(cfg Config) http.Handler {
 	})
 
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		loginKey := loginRemoteKey(r)
+		if allowed, retryAfter := limiter.allowed(loginKey); !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Round(time.Second).Seconds())))
+			cfg.Logger.Warn("login rate limited", "remote_addr", r.RemoteAddr)
+			writeHTML(w, cfg.Logger, http.StatusTooManyRequests, loginPage("Too many failed sign-in attempts. Try again later."))
+			return
+		}
+
 		if err := r.ParseForm(); err != nil {
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, loginPage("Invalid request"))
 			return
@@ -82,11 +107,13 @@ func New(cfg Config) http.Handler {
 		passwordOK := secureEqual(r.FormValue("password"), cfg.AdminPassword)
 
 		if !userOK || !passwordOK {
+			limiter.failure(loginKey)
 			cfg.Logger.Warn("login failed", "remote_addr", r.RemoteAddr)
 			writeHTML(w, cfg.Logger, http.StatusUnauthorized, loginPage("Invalid username or password"))
 			return
 		}
 
+		limiter.success(loginKey)
 		token, err := store.create()
 		if err != nil {
 			cfg.Logger.Error("create session failed", "err", err)
@@ -285,6 +312,58 @@ func (s *sessionStore) destroy(r *http.Request) {
 	s.mu.Unlock()
 }
 
+func loginRemoteKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (l *loginLimiter) allowed(key string) (bool, time.Duration) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	attempt, ok := l.attempts[key]
+	if !ok {
+		return true, 0
+	}
+	if !attempt.BlockedUntil.IsZero() {
+		if now.Before(attempt.BlockedUntil) {
+			return false, time.Until(attempt.BlockedUntil)
+		}
+		delete(l.attempts, key)
+		return true, 0
+	}
+	if now.Sub(attempt.WindowStart) > loginWindow {
+		delete(l.attempts, key)
+	}
+	return true, 0
+}
+
+func (l *loginLimiter) failure(key string) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	attempt := l.attempts[key]
+	if attempt.WindowStart.IsZero() || now.Sub(attempt.WindowStart) > loginWindow {
+		attempt = loginAttempt{WindowStart: now}
+	}
+	attempt.Failures++
+	if attempt.Failures >= maxLoginFailures {
+		attempt.BlockedUntil = now.Add(loginBlockDuration)
+	}
+	l.attempts[key] = attempt
+}
+
+func (l *loginLimiter) success(key string) {
+	l.mu.Lock()
+	delete(l.attempts, key)
+	l.mu.Unlock()
+}
+
 func secureEqual(got, want string) bool {
 	if len(got) != len(want) {
 		return false
@@ -299,6 +378,8 @@ func writeHTML(w http.ResponseWriter, logger *slog.Logger, status int, body stri
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self' data:")
 	w.WriteHeader(status)
 
 	if _, err := fmt.Fprint(w, body); err != nil {
