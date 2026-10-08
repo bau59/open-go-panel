@@ -159,9 +159,9 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  html.EscapeString(b.Time.Local().Format("2006-01-02 15:04")),b.Count,b.P50,b.P95,b.P99)}
  if buckets.Len()==0 {buckets.WriteString(`<tr><td colspan="5" class="empty">No measured time buckets.</td></tr>`)}
  if values.Get("run")!="1" {caution+=`<p class="note">Select a period and press Generate report. Caddy logs are read only when requested.</p>`}
- return pageHead("Performance")+``<body>`+appHeader("performance")+`<main class="shell">
+ return pageHead("Performance")+`<body>`+appHeader("performance")+`<main class="shell">
  <div class="page-head"><div><p class="eyebrow">Observability / HTTP</p><h1>Performance</h1><p class="sub">On-demand Caddy log report. No continuous importer or duplicate request storage. Values are Caddy durations, not isolated Go, DNS, TLS or browser time.</p></div>
- <a href="/log-retention" class="secondary">Log retention</a></div>`+caution+performanceCollectorPanel(extra.Collector)+`
+ <a href="/log-retention" class="secondary">Log retention</a></div>`+caution+`
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Filters</h2>
  <form method="get" action="/performance" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:14px"><input type="hidden" name="run" value="1">
  <div><label>Period</label><select name="period">`+opt("period","5m","Last 5 minutes")+opt("period","1h","Last hour")+opt("period","24h","Last 24 hours")+opt("period","7d","Last 7 days")+opt("period","custom","Custom window")+`</select></div>
