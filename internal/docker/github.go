@@ -184,11 +184,32 @@ func ensureGitHubKnownHosts(ctx context.Context, path string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GitHub SSH key metadata returned HTTP %d", resp.StatusCode)
 	}
+	lines, err := parseGitHubKnownHosts(resp.Body)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+}
+
+// GitHub's /meta response contains large IP-range lists unrelated to the SSH
+// keys. A 128-KiB LimitReader truncated the JSON and produced unexpected EOF.
+// Read the entire bounded response, and distinguish an oversized response from
+// invalid JSON instead of silently truncating it.
+const maxGitHubMetadataBytes = 8 << 20
+
+func parseGitHubKnownHosts(reader io.Reader) ([]string, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, maxGitHubMetadataBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read GitHub SSH key metadata: %w", err)
+	}
+	if len(body) > maxGitHubMetadataBytes {
+		return nil, fmt.Errorf("GitHub SSH key metadata exceeds %d bytes", maxGitHubMetadataBytes)
+	}
 	var metadata struct {
 		SSHKeys []string `json:"ssh_keys"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 128<<10)).Decode(&metadata); err != nil {
-		return fmt.Errorf("read GitHub SSH key metadata: %w", err)
+	if err := json.Unmarshal(body, &metadata); err != nil {
+		return nil, fmt.Errorf("decode GitHub SSH key metadata: %w", err)
 	}
 	var lines []string
 	for _, key := range metadata.SSHKeys {
@@ -197,14 +218,14 @@ func ensureGitHubKnownHosts(ctx context.Context, path string) error {
 			continue
 		}
 		if strings.ContainsAny(parts[1], "\r\n") {
-			return errors.New("invalid GitHub SSH key metadata")
+			return nil, errors.New("invalid GitHub SSH key metadata")
 		}
 		lines = append(lines, "github.com "+parts[0]+" "+parts[1])
 	}
 	if len(lines) == 0 {
-		return errors.New("GitHub SSH host key metadata contained no usable keys")
+		return nil, errors.New("GitHub SSH host key metadata contained no usable keys")
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+	return lines, nil
 }
 
 func (m *Manager) BuildStatus() BuildTask {
