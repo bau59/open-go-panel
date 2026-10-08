@@ -121,6 +121,14 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
     return containers, nil
 }
 
+func (m *Manager) RestartService(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "systemctl", "restart", "docker.service").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restart docker.service: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (m *Manager) Start(ctx context.Context, id string) error { return dockerCommand(ctx, "start", id) }
 func (m *Manager) Stop(ctx context.Context, id string) error { return dockerCommand(ctx, "stop", id) }
 func (m *Manager) Restart(ctx context.Context, id string) error { return dockerCommand(ctx, "restart", id) }
