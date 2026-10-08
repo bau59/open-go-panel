@@ -19,6 +19,7 @@ import (
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/dbmanager"
+	paneldocker "github.com/bau59/open-go-panel/internal/docker"
 	"github.com/bau59/open-go-panel/internal/security"
 	"github.com/bau59/open-go-panel/internal/software"
 	"github.com/bau59/open-go-panel/internal/systeminfo"
@@ -44,6 +45,7 @@ type Config struct {
 	Databases     *dbmanager.Manager
 	Adminer       *adminer.Manager
 	Software      *software.Manager
+	Docker        *paneldocker.Manager
 	State         *state.Store
 }
 
@@ -198,6 +200,9 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Software != nil {
 		registerSoftwareRoutes(mux, store, cfg)
+	}
+	if cfg.Docker != nil {
+		registerDockerRoutes(mux, store, cfg)
 	}
 	if cfg.State != nil {
 		registerActivityRoutes(mux, store, cfg)
@@ -460,7 +465,8 @@ func dashboardPage(info systeminfo.Info, appCount, userCount, activeApps int) st
 			</a>
 			<a class="card" href="/databases"><div class="card-icon">DB</div><h2>Databases</h2><p>Install MySQL or PostgreSQL, create databases and manage credentials.</p></a>
 			<a class="card" href="/software"><div class="card-icon">PKG</div><h2>Software</h2><p>Install and update Docker, Node.js, Tailwind, Go and shared build tools.</p></a>
-			<a class="card" href="/terminal"><div class="card-icon">TTY</div><h2>Terminal</h2><p>Open a root or managed-user shell through the SSH-tunneled panel.</p></a>
+			<a class="card" href="/docker"><div class="card-icon">CTR</div><h2>Docker</h2><p>Manage Docker containers, restart policy and lifecycle actions.</p></a>
+			<a class="card" href="/terminal"><div class="card-icon">TTY</div><h2>Terminal</h2><p>Open a root or managed-user shell from the authenticated panel.</p></a>
 		</section>
 		<div class="statline"><i></i>Open Go Panel is running</div>
 	</main>
