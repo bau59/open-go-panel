@@ -96,6 +96,7 @@ func main() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		pruneAt := time.Time{}
+		observeAt := time.Time{}
 		for {
 			select {
 			case <-metricsCtx.Done():
@@ -107,6 +108,21 @@ func main() {
 				logger.Warn("HTTP metrics collection failed", "error", err)
 			}
 			cancel()
+			if time.Since(observeAt)>=15*time.Second {
+				targets,err:=apps.List()
+				if err==nil {
+					observed:=make([]panelcaddy.ServiceTarget,0,len(targets))
+					for _,app:=range targets {
+						observed=append(observed,panelcaddy.ServiceTarget{AppID:app.ID,Name:app.Name})
+					}
+					observeCtx,done:=context.WithTimeout(metricsCtx,5*time.Second)
+					if err:=caddyManager.ObserveProcessStarts(observeCtx,observed);err!=nil && metricsCtx.Err()==nil {
+						logger.Warn("observe systemd app starts failed","err",err)
+					}
+					done()
+				}
+				observeAt=time.Now()
+			}
 			if time.Since(pruneAt) >= time.Hour {
 				pruneCtx, pruneCancel := context.WithTimeout(metricsCtx, 15*time.Second)
 				if err := caddyManager.PrunePerformance(pruneCtx); err != nil && metricsCtx.Err() == nil {
