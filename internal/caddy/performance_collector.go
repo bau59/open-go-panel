@@ -8,6 +8,7 @@ import (
  "errors"
  "fmt"
  "os/exec"
+ "os"
  "regexp"
  "strconv"
  "strings"
@@ -28,6 +29,7 @@ type CollectorStatus struct {
  LastSuccess time.Time
  LastError string
  Stored int64
+ SQLiteBytes int64
 }
 
 var allowedRequestID = regexp.MustCompile("^[A-Za-z0-9_.-]{1,128}$")
@@ -46,6 +48,13 @@ func (m *Manager) PerformanceCollectorStatus(ctx context.Context) (CollectorStat
  if err!=nil && !errors.Is(err,sql.ErrNoRows){return s,err}
  if timestamp>0{s.LastSuccess=time.Unix(0,timestamp)}
  if err=m.store.DB().QueryRowContext(ctx,"SELECT count(*) FROM http_perf_requests").Scan(&s.Stored);err!=nil{return s,err}
+ var seq int
+ var schemaName,dbPath string
+ if err=m.store.DB().QueryRowContext(ctx,"PRAGMA database_list").Scan(&seq,&schemaName,&dbPath);err==nil && dbPath!="" {
+  for _,path:=range []string{dbPath,dbPath+"-wal",dbPath+"-shm"} {
+   if stat,statErr:=os.Stat(path);statErr==nil{s.SQLiteBytes+=stat.Size()}
+  }
+ }
  return s,nil
 }
 
