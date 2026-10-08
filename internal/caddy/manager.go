@@ -744,6 +744,9 @@ func (m *Manager) load() ([]Site, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate domains state: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close domains rows: %w", err)
+	}
 
 	standaloneRows, err := m.store.DB().Query("SELECT id, domain, port, root, kind, template FROM standalone_domains ORDER BY domain")
 	if err != nil {
