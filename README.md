@@ -122,6 +122,39 @@ Database backups are stored in:
 /var/lib/open-go-panel/backups/databases/
 ```
 
+### Off-site database backup storage
+
+**Do not keep your only backup on the VPS.** Use a separate S3-compatible
+bucket (Backblaze B2, Cloudflare R2, AWS S3) or an independent SFTP server.
+Open Go Panel can upload each completed manual or scheduled database backup
+through [rclone](https://rclone.org/), and keeps the backup destination in
+panel settings. Provider access keys stay in rclone's root-owned config, not
+in the panel database.
+
+On the VPS:
+
+```bash
+sudo apt-get update && sudo apt-get install -y rclone
+sudo rclone config
+sudo chmod 600 /root/.config/rclone/rclone.conf
+sudo rclone lsd s3:
+```
+
+Choose the backend and credentials for **your** off-server storage when
+configuring the `s3` remote. The remote name can differ.
+
+In **Databases → Automatic backups → Off-site database backups**, enter a
+destination such as `s3:my-backup-bucket/open-go-panel` and save. New database
+snapshots are uploaded under `mysql/<database>/<timestamp>.sql.gz` or
+`postgres/<database>/<timestamp>.sql.gz`. An upload failure leaves the local
+snapshot on disk and reports an error; the scheduled batch does not prune
+that database's backups. The local retention limit does **not** delete remote
+objects: configure a separate storage-provider lifecycle policy.
+
+Run a real restore drill and enable provider-side encryption, credential
+least privilege, and object versioning/immutability where available. When no
+remote is configured, backups remain local only.
+
 Docker-published container ports bind to `127.0.0.1` by default. To publish
 ports on all interfaces, explicitly enable **Public ports** when creating a
 container. Public Docker ports may bypass UFW policy, so protect them separately.
