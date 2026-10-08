@@ -136,10 +136,21 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+		dialTimeout, dialErr := strconv.Atoi(defaultString(r.FormValue("proxy_dial_timeout"), "0"))
+		headerTimeout, headerErr := strconv.Atoi(defaultString(r.FormValue("proxy_header_timeout"), "0"))
+		if dialErr != nil || headerErr != nil {
+			http.Error(w, "invalid reverse proxy timeout", http.StatusBadRequest)
+			return
+		}
 		settings := panelcaddy.GlobalSettings{
-			HTTPS:       r.FormValue("https") == "1",
-			Compression: r.FormValue("compression") == "1",
-			AccessLog:   r.FormValue("access_log") == "1",
+			HTTPS:                     r.FormValue("https") == "1",
+			Compression:               r.FormValue("compression") == "1",
+			AccessLog:                 r.FormValue("access_log") == "1",
+			SecurityHeaders:           r.FormValue("security_headers") == "1",
+			FrameProtection:           r.FormValue("frame_protection") == "1",
+			HSTS:                      r.FormValue("hsts") == "1",
+			ProxyDialTimeoutSeconds:   dialTimeout,
+			ProxyHeaderTimeoutSeconds: headerTimeout,
 		}
 		if err := cfg.Caddy.SetGlobalSettings(r.Context(), settings); err != nil {
 			sites, _ := cfg.Caddy.Sites()
@@ -404,6 +415,44 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					` + switchRow("compression", "Response compression", "Enable zstd and gzip for supported clients.", settings.Compression) + `
 					` + switchRow("access_log", "Access log", "Write HTTP access events for diagnostics and CrowdSec.", settings.AccessLog) + `
 				</div>
+				<div class="caddy-setting-section">
+					<h3>HTTP security</h3>
+					<p class="note">Opt-in response headers for managed sites. Custom site templates remain unchanged.</p>
+					<div class="settings-list">
+						` + switchRow("security_headers", "Security headers", "Add X-Content-Type-Options: nosniff and a safer Referrer-Policy.", settings.SecurityHeaders) + `
+						` + switchRow("frame_protection", "Frame protection", "Set X-Frame-Options: SAMEORIGIN. Disable for sites embedded on other domains.", settings.FrameProtection) + `
+						` + switchRow("hsts", "HSTS (7 days)", "Tell browsers to use HTTPS. Only enable when every managed domain has working TLS.", settings.HSTS) + `
+					</div>
+				</div>
+				<div class="caddy-setting-section">
+					<h3>Reverse proxy</h3>
+					<p class="note">Defaults for app domains using the generated proxy template. Static sites are unaffected.</p>
+					<div class="caddy-timeouts">
+						<div>
+							<label for="caddy-dial-timeout">Backend connection timeout</label>
+							<select id="caddy-dial-timeout" name="proxy_dial_timeout">
+								<option value="0"` + selected(strconv.Itoa(settings.ProxyDialTimeoutSeconds), "0") + `>Caddy default (3 seconds)</option>
+								<option value="3"` + selected(strconv.Itoa(settings.ProxyDialTimeoutSeconds), "3") + `>3 seconds</option>
+								<option value="5"` + selected(strconv.Itoa(settings.ProxyDialTimeoutSeconds), "5") + `>5 seconds</option>
+								<option value="10"` + selected(strconv.Itoa(settings.ProxyDialTimeoutSeconds), "10") + `>10 seconds</option>
+								<option value="30"` + selected(strconv.Itoa(settings.ProxyDialTimeoutSeconds), "30") + `>30 seconds</option>
+							</select>
+							<p class="note">Time allowed to open a connection to an app.</p>
+						</div>
+						<div>
+							<label for="caddy-header-timeout">Backend response-header timeout</label>
+							<select id="caddy-header-timeout" name="proxy_header_timeout">
+								<option value="0"` + selected(strconv.Itoa(settings.ProxyHeaderTimeoutSeconds), "0") + `>Caddy default (no limit)</option>
+								<option value="10"` + selected(strconv.Itoa(settings.ProxyHeaderTimeoutSeconds), "10") + `>10 seconds</option>
+								<option value="30"` + selected(strconv.Itoa(settings.ProxyHeaderTimeoutSeconds), "30") + `>30 seconds</option>
+								<option value="60"` + selected(strconv.Itoa(settings.ProxyHeaderTimeoutSeconds), "60") + `>60 seconds</option>
+								<option value="120"` + selected(strconv.Itoa(settings.ProxyHeaderTimeoutSeconds), "120") + `>120 seconds</option>
+							</select>
+							<p class="note">Maximum wait for response headers; not the entire request duration.</p>
+						</div>
+					</div>
+				</div>
+				<p class="note" style="margin-top:16px">Saving regenerates the global managed proxy template. Individual custom Caddy overrides are preserved.</p>
 				<div class="actions" style="justify-content:flex-start;margin-top:16px"><button class="button">Save global settings</button></div>
 			</form>
 		</section>
