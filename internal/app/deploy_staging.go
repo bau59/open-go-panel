@@ -216,7 +216,14 @@ func (m *Manager) deployStaged(ctx context.Context, id int64, rollback bool) err
 func (m *Manager) waitForRelease(ctx context.Context, app App) error {
 	// A running systemd unit alone can be a false positive for an app that
 	// fails just after startup. Require that its listener is reachable too.
-	for i := 0; i < 30; i++ {
+	// Air starts its own compilation after systemd reports the service active.
+	// On a fresh install, downloading modules and compiling can take minutes.
+	// Keep the shorter window for already-built services.
+	attempts := 30
+	if app.Type == "go" && app.Service.RunMode == "go-air" {
+		attempts = 360 // approximately three minutes at 500 ms per attempt
+	}
+	for i := 0; i < attempts; i++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
