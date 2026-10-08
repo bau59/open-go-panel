@@ -35,6 +35,7 @@ type databasePageData struct {
 }
 
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+	registerDatabaseSlowLogRoutes(mux, store, cfg)
 	mux.Handle("GET /databases", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeDatabasesPage(w, r, cfg, http.StatusOK, "")
 	})))
@@ -463,6 +464,7 @@ func databasesPage(data databasePageData) string {
 			<td>
 				<div class="actions">
 					%s
+					<a class="secondary" href="/databases/%d/slow-queries">Slow queries</a>
 					<form method="post" action="/databases/%d/backup"><button class="secondary">Backup now</button></form>
 					<details>
 						<summary class="secondary">Backups</summary>
@@ -496,6 +498,7 @@ func databasesPage(data databasePageData) string {
 			html.EscapeString(item.User),
 			html.EscapeString(item.Password),
 			openAdminer,
+			item.ID,
 			item.ID,
 			backupRows.String(),
 			html.EscapeString(item.DSN()),
