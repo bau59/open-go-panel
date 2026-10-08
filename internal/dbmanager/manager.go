@@ -51,6 +51,8 @@ type Status struct {
 	MySQLActive       bool
 	PostgresInstalled bool
 	PostgresActive    bool
+	RedisInstalled    bool
+	RedisActive       bool
 }
 
 type MySQLMetrics struct {
@@ -87,6 +89,8 @@ type BackupSchedule struct {
 
 type Manager struct {
 	mu              sync.Mutex
+	importMu        sync.Mutex
+	importTask      RemoteImportTask
 	store           *state.Store
 	legacyStateFile string
 	mysqlConfigFile string
@@ -103,11 +107,14 @@ func New(store *state.Store, legacyStateFile string) *Manager {
 func (m *Manager) Status(ctx context.Context) Status {
 	_, mysqlErr := exec.LookPath("mysql")
 	_, psqlErr := exec.LookPath("psql")
+	_, redisErr := exec.LookPath("redis-server")
 	return Status{
 		MySQLInstalled:    mysqlErr == nil,
 		MySQLActive:       serviceActive(ctx, "mysql.service"),
 		PostgresInstalled: psqlErr == nil,
 		PostgresActive:    serviceActive(ctx, "postgresql.service"),
+		RedisInstalled:    redisErr == nil,
+		RedisActive:       serviceActive(ctx, "redis-server.service"),
 	}
 }
 
@@ -262,9 +269,32 @@ func (m *Manager) Install(ctx context.Context, engine string) error {
 		if err := run(ctx, "", "apt-get", "update"); err != nil { return err }
 		if err := run(ctx, "", "apt-get", "install", "-y", "postgresql", "postgresql-contrib"); err != nil { return err }
 		return run(ctx, "", "systemctl", "enable", "--now", "postgresql.service")
+	case "redis":
+		if err := run(ctx, "", "apt-get", "update"); err != nil { return err }
+		if err := run(ctx, "", "apt-get", "install", "-y", "redis-server", "redis-tools"); err != nil { return err }
+		return run(ctx, "", "systemctl", "enable", "--now", "redis-server.service")
 	default:
 		return errors.New("unsupported database engine")
 	}
+}
+
+func (m *Manager) RestartEngine(ctx context.Context, engine string) error {
+	var service string
+	switch strings.TrimSpace(engine) {
+	case "mysql":
+		service = "mysql.service"
+	case "postgres":
+		service = "postgresql.service"
+	case "redis":
+		service = "redis-server.service"
+	default:
+		return errors.New("unsupported database engine")
+	}
+	out, err := exec.CommandContext(ctx, "systemctl", "restart", service).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restart %s: %w: %s", engine, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (m *Manager) List() ([]Database, error) {
