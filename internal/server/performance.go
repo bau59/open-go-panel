@@ -55,11 +55,21 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  }
  var rows strings.Builder
  for _,entry:=range data.Rows{
+  timingText:="No data"
+  if len(entry.ServerTimings)>0{
+   var metrics []string
+   for _,metric:=range entry.ServerTimings{
+    metrics=append(metrics,fmt.Sprintf("%s %.2f ms",metric.Name,metric.DurationMS))
+   }
+   timingText=strings.Join(metrics,", ")
+  }
+  requestID:=entry.RequestID
+  if requestID==""{requestID="No data"}
   fmt.Fprintf(&rows,`<tr><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%d</td><td><strong>%.2f ms</strong></td><td>%d B</td><td><details><summary class="secondary">Details</summary><div class="inline-popover wide">
-  <p>Caddy: %.2f ms · Protocol: %s</p><p>Backend / Server-Timing: No data</p><p>Request ID: No data</p><p>Related restart: No data</p></div></details></td></tr>`,
+  <p>Caddy: %.2f ms · Protocol: %s</p><p>Backend / Server-Timing: %s</p><p>Request ID: %s</p><p>Related restart: No data</p></div></details></td></tr>`,
    html.EscapeString(entry.Time.Local().Format("01-02 15:04:05")),html.EscapeString(entry.Domain),
    html.EscapeString(entry.Method),html.EscapeString(entry.Route),entry.Status,entry.DurationMS,entry.Size,
-   entry.DurationMS,html.EscapeString(entry.Protocol))
+   entry.DurationMS,html.EscapeString(entry.Protocol),html.EscapeString(timingText),html.EscapeString(requestID))
  }
  if rows.Len()==0 {rows.WriteString(`<tr><td colspan="8" class="empty">No measured HTTP requests in the selected interval.</td></tr>`)}
  var routes strings.Builder
