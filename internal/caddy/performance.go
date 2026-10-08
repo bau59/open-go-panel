@@ -16,6 +16,7 @@ import (
 const performanceMaxRecords = 20000
 
 type PerformanceFilter struct {
+	AppID int64
 	Since time.Time
 	Until time.Time
 	Domain string
@@ -35,6 +36,7 @@ type ServerTimingMetric struct {
 }
 
 type PerformancePoint struct {
+	AppID int64
 	RequestID string
 	ServerTimings []ServerTimingMetric
 	Time time.Time
@@ -131,10 +133,11 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 	if f.ThresholdMS<=0 { f.ThresholdMS=500 }
 	if f.Page<1 { f.Page=1 }
 	if f.PerPage<1||f.PerPage>200 { f.PerPage=50 }
-	q:=`SELECT time_ns,domain,method,route,protocol,status,duration_ms,response_bytes,request_id,server_timings
+	q:=`SELECT time_ns,app_id,domain,method,route,protocol,status,duration_ms,response_bytes,request_id,server_timings
 	FROM http_perf_requests WHERE time_ns>=? AND time_ns<=?`
 	args:=[]any{f.Since.UnixNano(),f.Until.UnixNano()}
 	if f.Domain!="" {q+=" AND domain=?";args=append(args,f.Domain)}
+	if f.AppID>0 {q+=" AND app_id=?";args=append(args,f.AppID)}
 	if f.Method!="" {q+=" AND method=?";args=append(args,f.Method)}
 	if f.Route!="" {q+=" AND instr(lower(route),lower(?))>0";args=append(args,f.Route)}
 	if f.Status>0 {q+=" AND status BETWEEN ? AND ?";args=append(args,(f.Status/100)*100,(f.Status/100)*100+99)}
@@ -148,7 +151,7 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 		var point PerformancePoint
 		var nano int64
 		var timings string
-		if err=rows.Scan(&nano,&point.Domain,&point.Method,&point.Route,&point.Protocol,&point.Status,
+		if err=rows.Scan(&nano,&point.AppID,&point.Domain,&point.Method,&point.Route,&point.Protocol,&point.Status,
 			&point.DurationMS,&point.Size,&point.RequestID,&timings);err!=nil{break}
 		point.Time=time.Unix(0,nano).UTC()
 		_ = json.Unmarshal([]byte(timings),&point.ServerTimings)
