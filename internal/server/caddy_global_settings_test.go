@@ -52,3 +52,16 @@ func TestCaddyPagePrioritizesDomainList(t *testing.T) {
 		t.Fatalf("domains should precede global defaults: domains=%d global=%d", domains, global)
 	}
 }
+
+func TestCaddyPageWarnsBeforeReplacingCustomGlobalTemplate(t *testing.T) {
+	settings := panelcaddy.GlobalSettings{HTTPS: true, Compression: true, AccessLog: true}
+	page := caddyPage("active", nil, "", "{domain} {\n respond \"custom\" 200\n}", settings, 0, "")
+	for _, required := range []string{
+		"Custom global template detected.",
+		"Replace the custom global Caddy template with generated defaults?",
+	} {
+		if !strings.Contains(page, required) {
+			t.Errorf("custom template safety warning missing %q", required)
+		}
+	}
+}
