@@ -81,6 +81,10 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  if problem!="" {caution+=`<div class="alert">`+html.EscapeString(problem)+`</div>`}
  stat:=func(name string,value string) string {return `<div class="metric"><span>`+name+`</span><strong>`+value+`</strong></div>`}
  div:=func(n int)string{if n==0{return "—"};return fmt.Sprintf("%.1f%%",100*float64(data.Errors)/float64(n))}
+ ms:=func(value float64)string{
+  if data.Total==0{return "No data"}
+  return fmt.Sprintf("%.2f ms",value)
+ }
  var graphic strings.Builder
  maxv:=0.0
  for _,b:=range data.Buckets {maxv=math.Max(maxv,b.P99)}
@@ -129,9 +133,9 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  <div><label style="margin-top:8px"><input type="checkbox" style="width:auto;height:auto" name="slow" value="1"`+checked(f.SlowOnly)+`> Only slow</label><button class="button">Apply</button></div>
  </form></section>
  <section class="metrics-grid" style="margin-bottom:16px">`+
- stat("Measured requests",strconv.Itoa(data.Total))+stat("Average",fmt.Sprintf("%.2f ms",data.Average))+
- stat("P50",fmt.Sprintf("%.2f ms",data.P50))+stat("P95",fmt.Sprintf("%.2f ms",data.P95))+
- stat("P99",fmt.Sprintf("%.2f ms",data.P99))+stat("Slow requests",strconv.Itoa(data.Slow))+
+ stat("Measured requests",strconv.Itoa(data.Total))+stat("Average",ms(data.Average))+
+ stat("P50",ms(data.P50))+stat("P95",ms(data.P95))+
+ stat("P99",ms(data.P99))+stat("Slow requests",strconv.Itoa(data.Slow))+
  stat("HTTP 5xx",strconv.Itoa(data.Errors))+stat("5xx rate",div(data.Total))+`</section>
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Request duration trend</h2>
  <p class="note">Measured Caddy request durations; request counts and precise percentiles by time bucket appear below.</p>`+graphic.String()+`
