@@ -146,7 +146,7 @@ func mysqlSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQuer
 	return info, queries, nil
 }
 
-var postgresDurationRE = regexp.MustCompile(`(?i)LOG:s+duration:s+([0-9.]+)s+ms`)
+var postgresDurationRE = regexp.MustCompile(`(?i)\bLOG:\s+duration:\s+([0-9.]+)\s+ms\b`)
 
 func postgresSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQuery, error) {
 	info := SlowLogInfo{Engine: "postgres", Source: "PostgreSQL server log"}
