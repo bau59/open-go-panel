@@ -541,18 +541,11 @@ func (m *Manager) deployUnlocked(ctx context.Context, id int64) error {
 	}
 
 	if err := m.prepareDeployment(ctx, app); err != nil {
-		if previous != "" {
-			_, _ = runAsUser(context.Background(), app.User, app.Root, "git", "reset", "--hard", previous)
-		}
-		return err
+		return m.recoverDeployment(app, id, previous, fmt.Errorf("prepare deployment: %w", err))
 	}
 	if app.Type != "static" {
 		if err := m.Restart(ctx, id); err != nil {
-			if previous != "" {
-				_, _ = runAsUser(context.Background(), app.User, app.Root, "git", "reset", "--hard", previous)
-				_ = m.Restart(context.Background(), id)
-			}
-			return err
+			return m.recoverDeployment(app, id, previous, fmt.Errorf("restart deployment: %w", err))
 		}
 	}
 
@@ -562,7 +555,7 @@ func (m *Manager) deployUnlocked(ctx context.Context, id int64) error {
 		WHERE app_id = ?
 	`, target, previous, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
-		return fmt.Errorf("save deployment result: %w", err)
+		return m.recoverDeployment(app, id, previous, fmt.Errorf("save deployment result: %w", err))
 	}
 	return nil
 }
@@ -632,7 +625,11 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 	}
 	return deployed, nil
 }
+// Rollback and Deploy must never mutate the same working tree concurrently.
 func (m *Manager) Rollback(ctx context.Context, id int64) error {
+	m.deployMu.Lock()
+	defer m.deployMu.Unlock()
+
 	app, err := m.Get(id)
 	if err != nil {
 		return err
@@ -644,23 +641,59 @@ func (m *Manager) Rollback(ctx context.Context, id int64) error {
 	if cfg.PreviousCommit == "" {
 		return errors.New("no previous deployment is available")
 	}
+
+	originalOut, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("read current deployed commit: %w", err)
+	}
+	original := strings.TrimSpace(originalOut)
+	if original == "" {
+		return errors.New("current deployed commit is unknown")
+	}
+
 	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", cfg.PreviousCommit); err != nil {
 		return err
 	}
 	if err := m.prepareDeployment(ctx, app); err != nil {
-		return err
+		return m.recoverDeployment(app, id, original, fmt.Errorf("prepare rollback: %w", err))
 	}
 	if app.Type != "static" {
 		if err := m.Restart(ctx, id); err != nil {
-			return err
+			return m.recoverDeployment(app, id, original, fmt.Errorf("restart rolled back application: %w", err))
 		}
 	}
 	_, err = m.store.DB().Exec(`
 		UPDATE deployments
 		SET current_commit = ?, previous_commit = ?, deployed_at = ?
 		WHERE app_id = ?
-	`, cfg.PreviousCommit, cfg.CurrentCommit, time.Now().UTC().Format(time.RFC3339Nano), id)
-	return err
+	`, cfg.PreviousCommit, original, time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return m.recoverDeployment(app, id, original, fmt.Errorf("save rollback result: %w", err))
+	}
+	return nil
+}
+
+// Recover both Git files and runtime dependencies after a failed deployment.
+// A Git reset alone cannot repair node_modules modified by a failed npm ci.
+// The recovery runs independently of the canceled HTTP request, with a limit.
+func (m *Manager) recoverDeployment(app App, id int64, previous string, cause error) error {
+	if previous == "" {
+		return fmt.Errorf("%w; no prior Git revision is available for recovery", cause)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", previous); err != nil {
+		return errors.Join(cause, fmt.Errorf("reset previous commit %s failed: %w", previous, err))
+	}
+	if err := m.prepareDeployment(ctx, app); err != nil {
+		return errors.Join(cause, fmt.Errorf("restore previous dependencies failed: %w", err))
+	}
+	if app.Type != "static" {
+		if err := m.Restart(ctx, id); err != nil {
+			return errors.Join(cause, fmt.Errorf("restart previous deployment failed: %w", err))
+		}
+	}
+	return fmt.Errorf("%w; previous commit %s restored", cause, previous)
 }
 
 func (m *Manager) prepareDeployment(ctx context.Context, app App) error {
