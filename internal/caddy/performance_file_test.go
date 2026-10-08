@@ -76,3 +76,22 @@ func TestSensitivePerformanceRoutes(t *testing.T){
   if got:=cleanPerformanceRoute(input);got!=want{t.Errorf("%q -> %q, want %q",input,got,want)}
  }
 }
+
+func TestPerformanceFileCopyTruncateDoesNotReuseOldOffset(t *testing.T){
+ db,err:=state.Open(filepath.Join(t.TempDir(),"state.db"))
+ if err!=nil{t.Fatal(err)}
+ defer db.Close()
+ manager:=New(db,filepath.Join(t.TempDir(),"legacy.json"))
+ path:=filepath.Join(t.TempDir(),"access.log")
+ stamp:=time.Now().Unix()
+ original:=fixtureAccessLine(stamp,"/v1/orders/1")+fixtureAccessLine(stamp+1,"/v1/orders/2")
+ if err:=os.WriteFile(path,[]byte(original),0600);err!=nil{t.Fatal(err)}
+ if err:=manager.collectPerformanceFile(context.Background(),path);err!=nil{t.Fatal(err)}
+ if err:=os.Truncate(path,0);err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(path,[]byte(fixtureAccessLine(stamp+2,"/health")),0600);err!=nil{t.Fatal(err)}
+ if err:=manager.collectPerformanceFile(context.Background(),path);err!=nil{t.Fatal(err)}
+ var rows,loss int64
+ if err:=db.DB().QueryRow("SELECT count(*) FROM http_perf_requests").Scan(&rows);err!=nil{t.Fatal(err)}
+ if err:=db.DB().QueryRow("SELECT dropped FROM http_perf_cursor WHERE driver='file'").Scan(&loss);err!=nil{t.Fatal(err)}
+ if rows!=3||loss!=1{t.Fatalf("copytruncate lost new line or was not reported: rows=%d gap=%d",rows,loss)}
+}
