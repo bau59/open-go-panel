@@ -321,6 +321,10 @@ const baseStyles = `
 	.docker-backups>summary .note{margin-left:8px;font-weight:400}
 	.docker-create-grid>div:not(.docker-runtime-fields):not(.docker-toggle-row){min-width:0}
 	.docker-create-grid input,.docker-create-grid textarea{width:100%;min-width:0}
+	.docker-key-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;max-width:720px}
+	.docker-key-form>div{min-width:0}
+	.docker-key-form input{width:100%;min-width:0}
+	.docker-key-form .docker-create-submit{align-self:end}
 	.docker-create-submit{display:flex;align-items:end}
 	.docker-add-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
 	.docker-fold{scroll-margin-top:18px}
@@ -498,6 +502,7 @@ const baseStyles = `
 		.docker-shm-field{width:100%}
 		.docker-fold>summary span{display:none}
 		.docker-dialog-grid{grid-template-columns:1fr}
+		.docker-key-form{grid-template-columns:1fr}
 		.docker-rebuild-dialog{padding:18px}
 		.docker-runtime-fields{grid-template-columns:1fr}
 		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
