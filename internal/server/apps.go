@@ -424,11 +424,11 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 	for _, action := range []struct {
 		path string
-		run  func(int64) error
+		run  func(context.Context, int64) error
 	}{
-		{"start", func(id int64) error { return cfg.Apps.Start(context.Background(), id) }},
-		{"stop", func(id int64) error { return cfg.Apps.Stop(context.Background(), id) }},
-		{"restart", func(id int64) error { return cfg.Apps.Restart(context.Background(), id) }},
+		{"start", func(ctx context.Context, id int64) error { return cfg.Apps.Start(ctx, id) }},
+		{"stop", func(ctx context.Context, id int64) error { return cfg.Apps.Stop(ctx, id) }},
+		{"restart", func(ctx context.Context, id int64) error { return cfg.Apps.Restart(ctx, id) }},
 	} {
 		action := action
 		mux.Handle("POST /apps/{id}/"+action.path, requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -438,7 +438,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 				return
 			}
 
-			if err := action.run(id); err != nil {
+			if err := action.run(r.Context(), id); err != nil {
 				app, getErr := cfg.Apps.Get(id)
 				if getErr != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
