@@ -13,7 +13,7 @@ func TestDockerPageIncludesRuntimeConfiguration(t *testing.T) {
 		nil, false, paneldocker.BuildTask{}, paneldocker.GitHubKeyInfo{}, "",
 	)
 	for _, field := range []string{
-		`name="environment"`, `name="volumes"`, `name="shm_size"`, `name="init"`,
+		`name="environment"`, `name="volumes"`, `name="shm_size" placeholder`, `name="init"`,
 	} {
 		if count := strings.Count(html, field); count != 2 {
 			t.Errorf("%s found %d times; expected both Docker forms", field, count)
