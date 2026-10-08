@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -448,9 +449,30 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 				return
 			}
 
-			http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+			redirectTo := fmt.Sprintf("/apps/%d", id)
+			if r.FormValue("return_to") == "/apps" {
+				redirectTo = "/apps"
+			}
+			http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 		})))
 	}
+
+	mux.Handle("GET /apps/{id}/caddy-logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if cfg.Caddy == nil {
+			http.Redirect(w, r, "/caddy/logs", http.StatusSeeOther)
+			return
+		}
+		if site, ok, err := cfg.Caddy.SiteForApp(id); err == nil && ok {
+			http.Redirect(w, r, "/caddy/logs?domain="+url.QueryEscape(site.Domain), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/caddy/logs", http.StatusSeeOther)
+	})))
 
 	mux.Handle("GET /apps/resources", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apps, err := cfg.Apps.List()
@@ -531,7 +553,15 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			<td><span class="resource-value" data-resource="cpu">—</span></td>
 			<td><span class="resource-value" data-resource="memory">—</span></td>
 			<td><span class="resource-value" data-resource="tasks">—</span></td>
-			<td><code>%s</code></td>
+			<td><code class="table-path">%s</code></td>
+			<td>
+				<div class="actions app-quick-actions">
+					<a class="secondary compact-action" href="/apps/%d">Open</a>
+					%s
+					<a class="secondary compact-action" href="/apps/%d/logs">Logs</a>
+					<a class="secondary compact-action" href="/apps/%d/caddy-logs">Caddy</a>
+				</div>
+			</td>
 		</tr>`,
 			app.ID,
 			app.ID,
@@ -541,11 +571,20 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			html.EscapeString(app.Type),
 			port,
 			html.EscapeString(app.Root),
+			app.ID,
+			func() string {
+				if app.Type == "static" {
+					return ""
+				}
+				return `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><input type="hidden" name="return_to" value="/apps"><button class="secondary compact-action">Restart</button></form>`
+			}(),
+			app.ID,
+			app.ID,
 		)
 	}
 
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="8" class="empty">No applications yet.</td></tr>`)
+		rows.WriteString(`<tr><td colspan="9" class="empty">No applications yet.</td></tr>`)
 	}
 
 	alert := ""
@@ -587,7 +626,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			</form>
 			` + hint + `
 			<table>
-				<thead><tr><th>App</th><th>Owner</th><th>Type</th><th>Port</th><th>CPU</th><th>Memory</th><th>Tasks</th><th>Root</th></tr></thead>
+				<thead><tr><th>App</th><th>Owner</th><th>Type</th><th>Port</th><th>CPU</th><th>Memory</th><th>Tasks</th><th>Root</th><th>Actions</th></tr></thead>
 				<tbody>` + rows.String() + `</tbody>
 			</table>
 		</section>
