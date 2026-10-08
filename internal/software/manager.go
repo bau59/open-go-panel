@@ -46,6 +46,7 @@ func (m *Manager) Items(ctx context.Context) []Item {
 		airStatus(ctx),
 		gitStatus(ctx),
 		buildToolsStatus(ctx),
+		cliToolsStatus(ctx),
 	}
 }
 
@@ -92,7 +93,7 @@ func (m *Manager) Start(id, action string) error {
 
 func supportedID(id string) bool {
 	switch id {
-	case "docker", "node", "tailwind", "go", "air", "git", "build-tools":
+	case "docker", "node", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
 		return true
 	default:
 		return false
@@ -115,6 +116,8 @@ func (m *Manager) run(ctx context.Context, id string) error {
 		return aptInstall(ctx, "git")
 	case "build-tools":
 		return aptInstall(ctx, "build-essential", "pkg-config", "unzip", "xz-utils")
+	case "cli-tools":
+		return aptInstall(ctx, "jq", "rsync", "zip", "unzip", "curl", "wget", "lsof", "htop", "tree", "ripgrep", "netcat-openbsd", "dnsutils")
 	default:
 		return errors.New("unsupported software")
 	}
@@ -222,6 +225,28 @@ func buildToolsStatus(ctx context.Context) Item {
 	if gccErr == nil && makeErr == nil {
 		item.Installed = true
 		item.Version = "installed"
+	}
+	return item
+}
+
+func cliToolsStatus(ctx context.Context) Item {
+	item := Item{
+		ID: "cli-tools", Name: "CLI tools",
+		Description: "Common server utilities for diagnostics, transfers, archives and JSON processing.",
+		Detail: "jq · rsync · zip/unzip · curl/wget · lsof · htop · tree · ripgrep · netcat · dnsutils",
+	}
+	required := []string{"jq", "rsync", "zip", "curl", "lsof", "rg", "nc", "dig"}
+	missing := make([]string, 0)
+	for _, name := range required {
+		if _, err := exec.LookPath(name); err != nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		item.Installed = true
+		item.Version = "installed"
+	} else {
+		item.Version = "missing: " + strings.Join(missing, ", ")
 	}
 	return item
 }
