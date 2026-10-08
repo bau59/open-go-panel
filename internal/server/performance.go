@@ -58,6 +58,7 @@ func registerPerformanceRoutes(mux *http.ServeMux, store *sessionStore, cfg Conf
   if status,err:=cfg.Caddy.PerformanceCollectorStatus(ctx);err==nil{extra.Collector=status}
   if rollups,err:=cfg.Caddy.PerformanceRollups(ctx,f);err==nil{extra.Rollups=rollups}
   if restarts,err:=cfg.Caddy.PerformanceRestarts(ctx,from,now);err==nil{extra.Restarts=restarts}
+  if events,err:=cfg.Caddy.PerformanceLifecycle(ctx,from,now);err==nil{extra.Lifecycle=events}
   if cold,err:=cfg.Caddy.ColdStartupSamples(ctx,from,now);err==nil{extra.Cold=cold}
   if idle,err:=cfg.Caddy.IdlePerformanceSamples(ctx,from,now);err==nil{extra.Idle=idle}
   writeHTML(w,cfg.Logger,http.StatusOK,performancePage(period,v,f,data,errMsg,extra))
