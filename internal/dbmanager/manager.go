@@ -657,21 +657,10 @@ func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) 
 	if err != nil {
 		return Backup{}, err
 	}
-
 	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return Backup{}, fmt.Errorf("create backup directory: %w", err)
 	}
-	stamp := time.Now().UTC().Format("20060102T150405Z")
-	path := filepath.Join(root, stamp+".sql.gz")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return Backup{}, err
-	}
-	defer file.Close()
-
-	gz := gzip.NewWriter(file)
-	defer gz.Close()
 
 	var cmd *exec.Cmd
 	switch item.Engine {
@@ -683,26 +672,28 @@ func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) 
 		return Backup{}, errors.New("unsupported database engine")
 	}
 
-	stdout, err := cmd.StdoutPipe()
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	path, err := writeGzipBackup(root, stamp, func(dst io.Writer) error {
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		if _, err := io.Copy(dst, stdout); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return fmt.Errorf("write backup: %w", err)
+		}
+		if err := cmd.Wait(); err != nil {
+			return fmt.Errorf("database backup failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	})
 	if err != nil {
-		return Backup{}, err
-	}
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return Backup{}, err
-	}
-	if _, err := io.Copy(gz, stdout); err != nil {
-		_ = cmd.Process.Kill()
-		_ = os.Remove(path)
-		return Backup{}, fmt.Errorf("write backup: %w", err)
-	}
-	if err := cmd.Wait(); err != nil {
-		_ = os.Remove(path)
-		return Backup{}, fmt.Errorf("database backup failed: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	if err := gz.Close(); err != nil {
-		_ = os.Remove(path)
 		return Backup{}, err
 	}
 	info, err := os.Stat(path)
@@ -710,6 +701,38 @@ func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) 
 		return Backup{}, err
 	}
 	return Backup{Engine: item.Engine, Database: item.Name, Path: path, Size: info.Size(), CreatedAt: info.ModTime().UTC()}, nil
+}
+
+// writeGzipBackup only publishes a completed, flushed dump as a visible .sql.gz.
+// Temporary files are ignored by the backup listing and removed after errors.
+func writeGzipBackup(root, stamp string, fill func(io.Writer) error) (string, error) {
+	tmp, err := os.CreateTemp(root, "."+stamp+"-*.partial")
+	if err != nil {
+		return "", fmt.Errorf("create temporary backup: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	defer tmp.Close()
+
+	gz := gzip.NewWriter(tmp)
+	if err := fill(gz); err != nil {
+		return "", err
+	}
+	if err := gz.Close(); err != nil {
+		return "", fmt.Errorf("finish backup gzip stream: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("sync backup file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close backup file: %w", err)
+	}
+
+	path := filepath.Join(root, stamp+".sql.gz")
+	if err := os.Rename(tmpPath, path); err != nil {
+		return "", fmt.Errorf("publish backup file: %w", err)
+	}
+	return path, nil
 }
 
 func (m *Manager) BackupFile(id int64, path string) (string, error) {
