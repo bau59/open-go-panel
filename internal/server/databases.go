@@ -28,6 +28,7 @@ type databasePageData struct {
 	PostgresSizes    map[string]int64
 	Backups          map[int64][]dbmanager.Backup
 	Schedule         dbmanager.BackupSchedule
+	BackupRemote     string
 	ImportTask       dbmanager.RemoteImportTask
 	Message          string
 }
@@ -105,6 +106,18 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			return
 		}
 		if err := cfg.Databases.SetBackupSchedule(r.FormValue("enabled") == "1", hour, keep); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/backups/remote", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Databases.SetBackupRemote(r.FormValue("remote")); err != nil {
 			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -220,6 +233,7 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 		PostgresSizes: make(map[string]int64),
 		Backups:       make(map[int64][]dbmanager.Backup),
 		Schedule:   cfg.Databases.BackupSchedule(),
+		BackupRemote: cfg.Databases.BackupRemote(),
 		ImportTask: cfg.Databases.ImportTask(),
 		Message:    message,
 	}
@@ -536,6 +550,15 @@ func databasesPage(data databasePageData) string {
 				<div><label>Keep copies</label><input type="number" name="keep" min="1" max="100" value="` + fmt.Sprintf("%d", data.Schedule.Keep) + `"></div>
 				<div class="backup-save"><button class="button">Save schedule</button></div>
 			</form>
+			<div style="margin-top:18px">
+				<h3>Off-site database backups</h3>
+				<p class="note" style="margin:6px 0 12px">Optional: configure rclone on this server to use an external S3, B2, R2 or SFTP account. The panel stores only the destination name, not access keys. Each new backup is uploaded before local retention is pruned. A failed upload keeps the local copy and reports an error.</p>
+				<form method="post" action="/databases/backups/remote" class="backup-settings-grid">
+					<div style="grid-column:1/-1"><label>rclone destination (remote:bucket/prefix)</label><input name="remote" value="` + html.EscapeString(data.BackupRemote) + `" placeholder="s3:my-backup-bucket/open-go-panel" autocomplete="off"></div>
+					<div class="backup-save"><button class="button">Save destination</button></div>
+				</form>
+				<p class="note" style="margin-top:8px">Empty destination = local copies only. Keep the rclone config under root and restore-test your snapshots regularly.</p>
+			</div>
 		</section>
 
 		` + mysqlSettings + `
