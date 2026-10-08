@@ -11,6 +11,8 @@ import (
  "strings"
  "context"
  "time"
+
+ panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 )
 
 const journalPolicyFile="/etc/systemd/journald.conf.d/90-open-go-panel-retention.conf"
@@ -55,6 +57,21 @@ func applyJournalPolicy(ctx context.Context,sizeMB,days int)error{
 }
 
 func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Config){
+ mux.Handle("POST /log-retention/source",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
+  source:=r.FormValue("source")
+  if source!="journal"&&source!="file"{http.Error(w,"invalid metrics source",400);return}
+  path:=strings.TrimSpace(r.FormValue("file_path"))
+  if source=="file"&&!panelcaddy.ValidCaddyLogPath(path){
+   http.Error(w,"file source must be under /var/log/caddy/",400);return
+  }
+  if source=="file"{
+   if err:=cfg.State.SetSetting("performance.file_path",path);err!=nil{http.Error(w,err.Error(),500);return}
+  }
+  if err:=cfg.State.SetSetting("performance.source",source);err!=nil{http.Error(w,err.Error(),500);return}
+  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
+ })))
+
  mux.Handle("POST /log-retention/performance",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
   detail,e1:=strconv.Atoi(r.FormValue("detail_days"))
@@ -122,7 +139,10 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
   detailDays,aggregateDays:=7,30
   if v,ok,_:=cfg.State.Setting("performance.detail_days");ok{if n,e:=strconv.Atoi(v);e==nil&&n>=1&&n<=30{detailDays=n}}
   if v,ok,_:=cfg.State.Setting("performance.aggregate_days");ok{if n,e:=strconv.Atoi(v);e==nil&&n>=detailDays&&n<=90{aggregateDays=n}}
-  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,detailDays,aggregateDays))
+  source,hasSource,_:=cfg.State.Setting("performance.source")
+  if !hasSource||source!="file"{source="journal"}
+  path,_,_:=cfg.State.Setting("performance.file_path")
+  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,detailDays,aggregateDays,source,path))
  })))
  mux.Handle("POST /log-retention/journal",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
@@ -137,9 +157,17 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
  })))
 }
 
-func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows string,metricsDays ...int)string{
+func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows string,options ...any)string{
  detailDays,aggregateDays:=7,30
- if len(metricsDays)>=2{detailDays,aggregateDays=metricsDays[0],metricsDays[1]}
+ source,filePath:="journal",""
+ if len(options)>=2{
+  if n,ok:=options[0].(int);ok{detailDays=n}
+  if n,ok:=options[1].(int);ok{aggregateDays=n}
+ }
+ if len(options)>=4{
+  if v,ok:=options[2].(string);ok{source=v}
+  if v,ok:=options[3].(string);ok{filePath=v}
+ }
  option:=func(current,value int,label string)string{
   attr:="";if current==value{attr=" selected"}
   return fmt.Sprintf(`<option value="%d"%s>%s</option>`,value,attr,label)
@@ -160,6 +188,14 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  option(days,1,"1 day")+option(days,3,"3 days")+option(days,7,"7 days")+option(days,14,"14 days")+option(days,30,"30 days")+`</select></div></div>
  <p class="note">Applies via /etc/systemd/journald.conf.d. Restarting journald is required; existing archived journals are not vacuumed by this action. If journald uses volatile storage, SystemMaxUse may not govern its disk allocation.</p>
  <button class="button" type="submit" onclick="return confirm('Apply shared system journal limits and restart systemd-journald?')">Apply journal limits</button></form></section>
+ <section class="panel panel-pad" style="margin-bottom:16px"><h2>Caddy HTTP metrics source</h2>
+ <p class="note">Choose the already configured JSON access-log destination. Journal mode reads caddy.service from journald; file mode reads a JSON-lines file in /var/log/caddy/. Collector offsets and journal cursors are persisted for restart-safe continuation. Switching sources may import overlapping entries from both sources.</p>
+ <form method="post" action="/log-retention/source" style="margin-top:14px">
+ <div class="caddy-timeouts"><div><label>Driver</label><select name="source">
+ <option value="journal"`+selected(source,"journal")+`>systemd-journald</option>
+ <option value="file"`+selected(source,"file")+`>JSON file</option></select></div>
+ <div><label>Caddy JSON file path</label><input name="file_path" value="`+html.EscapeString(filePath)+`" placeholder="/var/log/caddy/access.log"></div></div>
+ <button class="secondary" style="margin-top:12px">Save metrics source</button></form></section>
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>HTTP performance history</h2>
  <p class="note">SQLite metrics are collected in the background. Detailed requests expire after the selected period; hourly request counts and duration sums are retained separately for long-term history. Total raw history is additionally capped at 200,000 requests. Once detail rows expire, historical request percentiles cannot be reconstructed exactly.</p>
  <form method="post" action="/log-retention/performance" style="max-width:700px;margin-top:14px">
