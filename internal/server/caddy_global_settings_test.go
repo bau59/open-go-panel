@@ -43,3 +43,12 @@ func TestCaddyPageRendersNewSettingsDisabledByDefault(t *testing.T) {
 		t.Fatal("connection timeout default is not labeled")
 	}
 }
+
+func TestCaddyPagePrioritizesDomainList(t *testing.T) {
+	page := caddyPage("active", nil, "", "", panelcaddy.GlobalSettings{HTTPS: true}, 0, "")
+	domains := strings.Index(page, "<h2>Domains</h2>")
+	global := strings.Index(page, "<h2>Global defaults</h2>")
+	if domains < 0 || global < 0 || domains > global {
+		t.Fatalf("domains should precede global defaults: domains=%d global=%d", domains, global)
+	}
+}
