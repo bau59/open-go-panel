@@ -83,8 +83,8 @@ func performanceCollectorPanel(s caddy.CollectorStatus)string{
  if s.LastError!=""{warning=`<div class="alert">Collector: `+html.EscapeString(s.LastError)+`</div>`}
  return `<section class="panel panel-pad" style="margin-bottom:16px">
  <h2>Background collector</h2>
- <p class="note">Latest successful batch: `+html.EscapeString(status)+` · Persisted requests: `+fmt.Sprintf("%d",s.Stored)+
+ <p class="note">Source: `+html.EscapeString(s.Source)+` · Latest successful batch: `+html.EscapeString(status)+` · Persisted requests: `+fmt.Sprintf("%d",s.Stored)+
  ` · Journal entries scanned: `+fmt.Sprintf("%d",s.Scanned)+` · Parse errors: `+
- fmt.Sprintf("%d",s.ParseErrors)+` · Retention/overflow removals: `+fmt.Sprintf("%d",s.Dropped)+`</p>`+warning+
+ fmt.Sprintf("%d",s.ParseErrors)+` · Metric loss/overflow indicators: `+fmt.Sprintf("%d",s.Dropped)+`</p>`+warning+
  `<p class="note">The journal reader runs in bounded batches independently from the HTTP request path. Metrics can be incomplete if upstream logs are missing, rotation removes unread records, or the storage cap is reached.</p></section>`
 }
