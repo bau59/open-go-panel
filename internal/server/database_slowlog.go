@@ -94,8 +94,9 @@ func databaseSlowLogPage(db dbmanager.Database, info dbmanager.SlowLogInfo, entr
 				<option value="2000"` + selected(currentThreshold, "2000") + `>2 seconds</option>
 				<option value="5000"` + selected(currentThreshold, "5000") + `>5 seconds</option>
 				<option value="10000"` + selected(currentThreshold, "10000") + `>10 seconds</option>
+				<option value="0">Disable MySQL slow log (all databases)</option>
 			</select>
-			<button class="secondary" type="submit">Enable / update MySQL slow log</button>
+			<button class="secondary" type="submit">Apply MySQL slow-log settings</button>
 		</form>
 		<p class="note">MySQL slow-log settings are server-wide, not per database. Enabling the table output retains the file log. Changes persist across restarts.</p>`
 	} else if db.Engine == "postgres" {
