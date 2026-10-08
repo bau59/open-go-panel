@@ -23,6 +23,7 @@ const (
 
 type CollectorStatus struct {
  Source string
+ Backlog bool
  Scanned, ParseErrors, Dropped int64
  LastSuccess time.Time
  LastError string
@@ -34,12 +35,14 @@ var allowedRequestID = regexp.MustCompile("^[A-Za-z0-9_.-]{1,128}$")
 func (m *Manager) PerformanceCollectorStatus(ctx context.Context) (CollectorStatus,error) {
  var s CollectorStatus
  var timestamp int64
+ var backlog int
  source,ok,readErr:=m.store.Setting("performance.source")
  if readErr!=nil{return s,readErr}
  if !ok||source!="file"{source="journal"}
  s.Source=source
- err:=m.store.DB().QueryRowContext(ctx,`SELECT scanned,parse_errors,dropped,last_success_ns,last_error
- FROM http_perf_cursor WHERE driver=?`,source).Scan(&s.Scanned,&s.ParseErrors,&s.Dropped,&timestamp,&s.LastError)
+ err:=m.store.DB().QueryRowContext(ctx,`SELECT scanned,parse_errors,dropped,last_success_ns,last_error,backlog
+ FROM http_perf_cursor WHERE driver=?`,source).Scan(&s.Scanned,&s.ParseErrors,&s.Dropped,&timestamp,&s.LastError,&backlog)
+ s.Backlog=backlog!=0
  if err!=nil && !errors.Is(err,sql.ErrNoRows){return s,err}
  if timestamp>0{s.LastSuccess=time.Unix(0,timestamp)}
  if err=m.store.DB().QueryRowContext(ctx,"SELECT count(*) FROM http_perf_requests").Scan(&s.Stored);err!=nil{return s,err}
@@ -150,12 +153,12 @@ func (m *Manager) CollectPerformanceJournal(ctx context.Context) error {
    entry.p.DurationMS,boolInt(entry.p.Status>=500),boolInt(entry.p.DurationMS>=500),entry.p.DurationMS)
   if err!=nil{return err}
  }
- _,err=tx.ExecContext(ctx,`INSERT INTO http_perf_cursor(driver,cursor,scanned,parse_errors,last_success_ns,last_error)
-   VALUES('journal',?,?,?,?,'')
+ _,err=tx.ExecContext(ctx,`INSERT INTO http_perf_cursor(driver,cursor,scanned,parse_errors,last_success_ns,last_error,backlog)
+   VALUES('journal',?,?,?,?,'',?)
    ON CONFLICT(driver) DO UPDATE SET cursor=excluded.cursor,
    scanned=scanned+excluded.scanned,parse_errors=parse_errors+excluded.parse_errors,
-   last_success_ns=excluded.last_success_ns,last_error=''`,
-   latestCursor,scanned,parseErrors,time.Now().UnixNano())
+   last_success_ns=excluded.last_success_ns,last_error='',backlog=excluded.backlog`,
+   latestCursor,scanned,parseErrors,time.Now().UnixNano(),boolInt(limitHit))
  if err!=nil{return err}
  return tx.Commit()
 }
@@ -196,6 +199,13 @@ func (m *Manager) PrunePerformance(ctx context.Context) error {
    WHERE id IN (SELECT id FROM http_perf_requests ORDER BY time_ns ASC LIMIT ?)`,deleteCount);err!=nil{return err}
   if _,err=tx.ExecContext(ctx,`INSERT INTO http_perf_cursor(driver,dropped)
    VALUES('journal',?) ON CONFLICT(driver) DO UPDATE SET dropped=dropped+excluded.dropped`,deleteCount);err!=nil{return err}
+ }
+ var rollupCount int64
+ if err=tx.QueryRowContext(ctx,"SELECT count(*) FROM http_perf_rollup").Scan(&rollupCount);err!=nil{return err}
+ if rollupCount>performanceStorageMaxRows{
+  if _,err=tx.ExecContext(ctx,`DELETE FROM http_perf_rollup WHERE rowid IN (
+    SELECT rowid FROM http_perf_rollup ORDER BY hour_ns ASC LIMIT ?)`,
+    rollupCount-performanceStorageMaxRows);err!=nil{return err}
  }
  return tx.Commit()
 }
