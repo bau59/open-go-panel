@@ -53,7 +53,7 @@ func (m *Manager) ObserveProcessStarts(ctx context.Context, targets []ServiceTar
   if target.AppID<=0{continue}
   service:=fmt.Sprintf("open-go-panel-app-%d.service",target.AppID)
   out,err:=exec.CommandContext(ctx,"systemctl","show",
-   "--property=ExecMainStartTimestamp","--property=ActiveExitTimestamp","--property=Result",service).Output()
+   "--property=ExecMainStartTimestamp","--property=ActiveExitTimestamp","--property=Result","--property=ActiveState",service).Output()
   if err!=nil{continue}
   properties:=parseSystemdProperties(out)
   started:=parseSystemdEventTime(properties["ExecMainStartTimestamp"])
@@ -67,8 +67,12 @@ func (m *Manager) ObserveProcessStarts(ctx context.Context, targets []ServiceTar
   }
   stopped:=parseSystemdEventTime(properties["ActiveExitTimestamp"])
   if validSystemdEventTime(stopped){
-   reason:=strings.TrimSpace(properties["Result"])
-   if reason==""{reason="unknown"}
+   reason:="unknown"
+   // A restarted service may report the new activation's Result. Do not
+   // assign that value to the older exit event.
+   if state:=properties["ActiveState"];state=="inactive"||state=="failed"{
+    if reported:=strings.TrimSpace(properties["Result"]);reported!=""{reason=reported}
+   }
    if len(reason)>64{reason=reason[:64]}
    if _,err=m.store.DB().ExecContext(ctx,`INSERT OR IGNORE INTO http_perf_lifecycle
     (app_id,event_ns,kind,service,source,reason) VALUES(?,?,'stop',?,'systemd',?)`,
