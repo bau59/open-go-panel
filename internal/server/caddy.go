@@ -22,6 +22,79 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		writeHTML(w, cfg.Logger, http.StatusOK, caddyPage(cfg.Caddy.Status(r.Context()), sites, config, template, settings, selectedID, ""))
 	})))
 
+	mux.Handle("POST /caddy/domain", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Caddy.AddStandaloneDomain(r.Context(), r.FormValue("domain")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /caddy/site/{id}/rename", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid site id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Caddy.RenameSite(r.Context(), id, r.FormValue("domain")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /caddy/site/{id}/attach", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id >= 0 {
+			http.Error(w, "invalid standalone domain id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		appID, err := strconv.ParseInt(r.FormValue("app_id"), 10, 64)
+		if err != nil || appID <= 0 {
+			http.Error(w, "invalid application id", http.StatusBadRequest)
+			return
+		}
+		app, err := cfg.Apps.Get(appID)
+		if err != nil {
+			http.Error(w, "application not found", http.StatusNotFound)
+			return
+		}
+		kind := "proxy"
+		if app.Type == "static" {
+			kind = "static"
+		}
+		if err := cfg.Caddy.AttachStandaloneDomain(r.Context(), id, appID, app.Port, app.Root, kind); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(appID, 10), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /caddy/site/{id}/remove", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id >= 0 {
+			http.Error(w, "invalid standalone domain id", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Caddy.RemoveSite(r.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
+	})))
+
 	mux.Handle("GET /caddy/logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sites, _ := cfg.Caddy.Sites()
 		filters, journalQuery := parseLogFilters(r)
@@ -173,17 +246,18 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		if strings.TrimSpace(site.Template) != "" {
 			mode = "Custom"
 		}
+		if site.AppID < 0 && mode == "Global defaults" { mode = "Parked" }
 		fmt.Fprintf(&rows, `
 			<tr>
 				<td><a href="/caddy?app=%d"><strong>%s</strong></a></td>
-				<td>#%d</td>
+				<td>%s</td>
 				<td><code>%s</code></td>
 				<td><span class="meta-chip">%s</span></td>
 				<td><div class="actions table-actions"><a class="secondary" href="/caddy?app=%d">Settings</a></div></td>
 			</tr>`,
 			site.AppID,
 			html.EscapeString(site.Domain),
-			site.AppID,
+			func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }(),
 			html.EscapeString(site.Target()),
 			html.EscapeString(mode),
 			site.AppID,
@@ -194,7 +268,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 	}
 
 	selectedEditor := ""
-	if selectedID > 0 {
+	if selectedID != 0 {
 		for _, site := range sites {
 			if site.AppID != selectedID {
 				continue
@@ -225,10 +299,26 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<a class="secondary" href="/caddy">Close</a>
 			</div>
 			<div class="domain-summary">
-				<div><span>Application</span><strong>#` + fmt.Sprintf("%d", site.AppID) + `</strong></div>
+				<div><span>Application</span><strong>` + func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }() + `</strong></div>
 				<div><span>Type</span><strong>` + html.EscapeString(defaultString(site.Kind, "proxy")) + `</strong></div>
 				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
 				<div><span>Configuration</span><strong>` + func() string { if override == "" { return "Global defaults" }; return "Custom override" }() + `</strong></div>
+			</div>
+			<div style="margin-top:16px">
+				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/rename" class="compact-form">
+					<input name="domain" value="` + html.EscapeString(site.Domain) + `" required aria-label="Domain name">
+					<button class="secondary">Change domain</button>
+				</form>
+				` + func() string {
+					if site.AppID >= 0 { return "" }
+					return `<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/attach" class="compact-form" style="margin-top:12px">
+						<input type="number" name="app_id" min="1" placeholder="Application ID" required>
+						<button class="button">Attach to application</button>
+					</form>
+					<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/remove" onsubmit="return confirm('Remove standalone domain?')" style="margin-top:12px">
+						<button class="danger">Remove domain</button>
+					</form>`
+				}() + `
 			</div>
 			<p class="sub" style="margin:14px 0 0">` + modeText + ` Common settings such as HTTPS, compression and access logging belong to the global Caddy configuration.</p>
 			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" { return " open" }; return "" }() + `>
@@ -297,9 +387,13 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		<section class="panel" style="margin-bottom:16px">
 			<div class="panel-pad" style="padding-bottom:10px">
 				<div class="section-title" style="margin-bottom:0">
-					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Open a domain only when it needs configuration different from the global defaults.</p></div>
+					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Domains may be connected to apps or parked independently.</p></div>
 				</div>
 			</div>
+			<form method="post" action="/caddy/domain" class="toolbar toolbar-4">
+				<input name="domain" placeholder="example.com" required aria-label="Standalone domain">
+				<button class="button">Add domain</button>
+			</form>
 			<table>
 				<thead><tr><th>Domain</th><th>App</th><th>Target</th><th>Config</th><th></th></tr></thead>
 				<tbody>` + rows.String() + `</tbody>
