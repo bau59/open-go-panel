@@ -528,6 +528,7 @@ func appHeader(active string) string {
 		<a class="brand" href="/"><span class="brand-mark">OG</span><span>Open Go Panel</span></a>
 		<nav class="nav">` + items.String() + `</nav>
 		<div class="header-actions">
+			<form method="post" action="/panel/close" onsubmit="return confirm('Stop and disable the panel service? To reopen it, use SSH: sudo systemctl start open-go-panel.service')"><button class="secondary compact-action" type="submit" title="Stop the panel service and close its port">Close panel</button></form>
 			<form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
 		</div>
 	</header></div></div>`
