@@ -86,7 +86,7 @@ func TestRuntimeConfigValidation(t *testing.T) {
 
 func TestExistingEnvironmentFile(t *testing.T) {
     path := filepath.Join(t.TempDir(), ".env")
-    const secrets = "BRIDGE_API_KEYS=sk-original\\nSTATE_ENCRYPTION_KEY=original-fernet-key\\n"
+    const secrets = "BRIDGE_API_KEYS=sk-original\nSTATE_ENCRYPTION_KEY=original-fernet-key\n"
     if err := os.WriteFile(path, []byte(secrets), 0600); err != nil { t.Fatal(err) }
     cfg := RuntimeConfig{EnvironmentFile: path, Volumes: "bridge_data:/app/data"}
     env, mounts, err := cfg.validate()
