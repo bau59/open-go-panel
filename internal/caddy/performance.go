@@ -110,8 +110,19 @@ func cleanPerformanceRoute(value string) string {
 	if path == "" { return "/" }
 	parts := strings.Split(path, "/")
 	for i, part := range parts {
+		if i>0 {
+			switch strings.ToLower(parts[i-1]) {
+			case "token","tokens","reset","password-reset","verify","verification","secret","callback":
+				parts[i]="{redacted}"
+				continue
+			}
+		}
 		if routeNumeric.MatchString(part) || routeUUID.MatchString(part) {
 			parts[i] = "{id}"
+		} else if len(part)>=24 && !strings.Contains(part,".") {
+			// Unknown high-cardinality path segments may contain reset tokens,
+			// UUID-like identifiers or private keys. Never persist them verbatim.
+			parts[i] = "{redacted}"
 		}
 	}
 	result := strings.Join(parts, "/")
