@@ -73,7 +73,12 @@ func (m *Manager) ConfigureSlowQueries(ctx context.Context, id int64, thresholdM
 	switch db.Engine {
 	case "mysql":
 		if thresholdMS == 0 {
-			return errors.New("disable MySQL slow logging using the server configuration")
+			out, err := exec.CommandContext(ctx, "mysql", "--batch", "--skip-column-names",
+				"--protocol=socket", "-uroot", "-e", "SET PERSIST slow_query_log = OFF;").CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("disable MySQL slow log: %w: %s", err, strings.TrimSpace(string(out)))
+			}
+			return nil
 		}
 		// SET PERSIST retains the change across MySQL restarts. Keep FILE output,
 		// including existing log files, alongside TABLE for per-database filtering.
