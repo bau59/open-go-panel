@@ -185,15 +185,12 @@ func (m *Manager) promoteGo(ctx context.Context,sourceID,targetID int64,pkg stri
 		return fmt.Errorf("build production binary: %w",err)
 	}
 
-	m.setPromotionStep("Preparing production release")
-	targetStage,err:=stageApplication(ctx,target)
-	if err!=nil{return fmt.Errorf("snapshot production release: %w",err)}
-	defer os.RemoveAll(targetStage)
-	if err:=installProductionBinary(outputBinary,targetStage);err!=nil{
-		return fmt.Errorf("prepare production binary: %w",err)
-	}
+	m.setPromotionStep("Preparing production binary")
+	prepared,err:=stageProductionBinary(outputBinary,target.Root)
+	if err!=nil{return fmt.Errorf("prepare production binary: %w",err)}
+	defer os.Remove(prepared)
 	if err:=ctx.Err();err!=nil{return err}
-	m.setPromotionStep("Switching production release")
+	m.setPromotionStep("Switching production binary")
 	activate:=func()error{
 		if err:=m.Restart(ctx,target.ID);err!=nil{
 			return fmt.Errorf("restart production: %w",err)
@@ -205,33 +202,111 @@ func (m *Manager) promoteGo(ctx context.Context,sourceID,targetID int64,pkg stri
 		defer cancel()
 		return m.Restart(recoveryCtx,target.ID)
 	}
-	return activateStagedRelease(target.Root,targetStage,activate,recoverOriginal)
+	return activateProductionBinary(target.Root,prepared,activate,recoverOriginal)
 }
 
-func installProductionBinary(sourceBinary,stage string) error {
+// stageProductionBinary creates a complete executable next to production's
+// current binary on the same filesystem. No other production file is copied,
+// so runtime writes, uploads and persistent data cannot be lost on release.
+func stageProductionBinary(sourceBinary,root string) (string,error) {
 	src,err:=os.Open(sourceBinary)
-	if err!=nil{return err}
+	if err!=nil{return "",err}
 	defer src.Close()
 	info,err:=src.Stat()
-	if err!=nil{return err}
+	if err!=nil{return "",err}
 	if !info.Mode().IsRegular()||info.Size()==0 {
-		return errors.New("Go build did not produce a valid binary")
+		return "",errors.New("Go build did not produce a valid binary")
 	}
-	stageInfo,err:=os.Stat(stage)
-	if err!=nil{return err}
-	owner,ok:=stageInfo.Sys().(*syscall.Stat_t)
-	if !ok {return errors.New("production root ownership is unavailable")}
-	// Use the production owner, not the development user. The production
-	// runtime keeps its existing environment and port settings.
-	dst,err:=os.CreateTemp(stage,".ogp-new-binary-")
-	if err!=nil{return err}
-	defer os.Remove(dst.Name())
-	if _,err:=io.Copy(dst,src);err!=nil{_ = dst.Close();return err}
-	if err:=dst.Chmod(0750);err!=nil{_ = dst.Close();return err}
-	if err:=dst.Sync();err!=nil{_ = dst.Close();return err}
-	if err:=dst.Close();err!=nil{return err}
+	rootInfo,err:=os.Lstat(root)
+	if err!=nil{return "",err}
+	if !rootInfo.IsDir(){return "",errors.New("production root must be a real directory")}
+	owner,ok:=rootInfo.Sys().(*syscall.Stat_t)
+	if !ok{return "",errors.New("production root ownership is unavailable")}
+	dst,err:=os.CreateTemp(root,".ogp-new-binary-")
+	if err!=nil{return "",err}
+	defer func(){_ = dst.Close()}()
+	fail:=func(err error)(string,error){_ = os.Remove(dst.Name());return "",err}
+	if _,err:=io.Copy(dst,src);err!=nil{return fail(err)}
+	if err:=dst.Chmod(0750);err!=nil{return fail(err)}
 	if err:=os.Chown(dst.Name(),int(owner.Uid),int(owner.Gid));err!=nil{
-		return fmt.Errorf("set production binary ownership: %w",err)
+		return fail(fmt.Errorf("set production binary ownership: %w",err))
 	}
-	return os.Rename(dst.Name(),filepath.Join(stage,".ogp-app"))
+	if err:=dst.Sync();err!=nil{return fail(err)}
+	if err:=dst.Close();err!=nil{return fail(err)}
+	return dst.Name(),nil
+}
+
+// activateProductionBinary atomically replaces only .ogp-app while keeping all
+// production directories, secrets and data in place. The prior executable is
+// retained at .ogp-app.previous for a manual rollback.
+func activateProductionBinary(root,prepared string,activate func()error,recoverOriginal func()error) error {
+	if filepath.Dir(prepared)!=root {
+		return errors.New("staged Go executable must be in the production root")
+	}
+	current:=filepath.Join(root,".ogp-app")
+	previous:=filepath.Join(root,".ogp-app.previous")
+	existing,err:=os.Lstat(current)
+	hadPrevious:=err==nil
+	if err!=nil && !errors.Is(err,os.ErrNotExist){return err}
+	if hadPrevious {
+		if !existing.Mode().IsRegular(){return errors.New("existing production executable must be a regular file")}
+		backup,err:=os.CreateTemp(root,".ogp-backup-")
+		if err!=nil{return err}
+		backupName:=backup.Name()
+		_ = backup.Close()
+		_ = os.Remove(backupName)
+		if err:=os.Link(current,backupName);err!=nil{return fmt.Errorf("save previous executable: %w",err)}
+		defer os.Remove(backupName)
+		if err:=os.Rename(backupName,previous);err!=nil{return fmt.Errorf("persist previous executable: %w",err)}
+	}
+	if err:=os.Rename(prepared,current);err!=nil{
+		return fmt.Errorf("activate compiled executable: %w",err)
+	}
+	if err:=activate();err!=nil{
+		var restoreErr error
+		if hadPrevious {
+			restoreErr=os.Rename(previous,current)
+		} else {
+			restoreErr=os.Remove(current)
+		}
+		if restoreErr!=nil {
+			return errors.Join(err,fmt.Errorf("critical: cannot restore previous production binary: %w",restoreErr))
+		}
+		if recoverOriginal!=nil {
+			if restartErr:=recoverOriginal();restartErr!=nil {
+				return errors.Join(err,fmt.Errorf("previous executable restored but service restart failed: %w",restartErr))
+			}
+		}
+		return fmt.Errorf("production activation failed; previous executable restored: %w",err)
+	}
+	return nil
+}
+
+// RollbackProductionBinary swaps the most recent promoted executable back
+// atomically, with the same service restart and health checks as promotion.
+func (m *Manager) RollbackProductionBinary(ctx context.Context,id int64)error{
+	m.deployMu.Lock()
+	defer m.deployMu.Unlock()
+	app,err:=m.Get(id)
+	if err!=nil{return err}
+	if app.Type!="go"||app.Service.RunMode!="go-binary"||app.Service.Mode=="raw" {
+		return errors.New("application is not in Go production binary mode")
+	}
+	current:=filepath.Join(app.Root,".ogp-app")
+	previous:=filepath.Join(app.Root,".ogp-app.previous")
+	for _,path:=range []string{current,previous}{
+		info,err:=os.Lstat(path)
+		if err!=nil{return fmt.Errorf("production rollback: %w",err)}
+		if !info.Mode().IsRegular(){return errors.New("production rollback requires regular executable files")}
+	}
+	activate:=func()error{
+		if err:=m.Restart(ctx,id);err!=nil{return err}
+		return m.waitForRelease(ctx,app)
+	}
+	recoverOriginal:=func()error{
+		recoveryCtx,cancel:=context.WithTimeout(context.Background(),time.Minute)
+		defer cancel()
+		return m.Restart(recoveryCtx,id)
+	}
+	return activateStagedRelease(current,previous,activate,recoverOriginal)
 }
