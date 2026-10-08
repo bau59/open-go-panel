@@ -534,6 +534,11 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 			failures = append(failures, fmt.Sprintf("app %d: %v", app.ID, err))
 			continue
 		}
+		// Prebuilt production binaries are promoted from a separate Air
+		// development application, never from an independent Git fetch.
+		if app.Type == "go" && app.Service.RunMode == "go-binary" {
+			continue
+		}
 		if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
 			continue
 		}
