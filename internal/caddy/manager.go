@@ -455,6 +455,46 @@ func (m *Manager) SetGlobalSettings(ctx context.Context, settings GlobalSettings
 	return nil
 }
 
+// SetAccessLogging changes managed access-log output without discarding an
+// administrator's custom global proxy template or per-site overrides.
+// Caddy error/system logs remain active independently.
+func (m *Manager) SetAccessLogging(ctx context.Context, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	settings,err:=m.GlobalSettings()
+	if err!=nil{return err}
+	if settings.AccessLog==enabled{return nil}
+	previousTemplate,err:=m.Template()
+	if err!=nil{return err}
+	sites,err:=m.load()
+	if err!=nil{return err}
+	newSettings:=settings
+	newSettings.AccessLog=enabled
+	nextTemplate:=previousTemplate
+	managed:=strings.TrimSpace(previousTemplate)==strings.TrimSpace(managedProxyTemplate(settings))
+	if managed {nextTemplate=managedProxyTemplate(newSettings)}
+	tx,err:=m.store.DB().BeginTx(ctx,nil)
+	if err!=nil{return err}
+	defer tx.Rollback()
+	if _,err=tx.ExecContext(ctx,`INSERT INTO settings(key,value) VALUES('caddy.access_log',?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`,boolSetting(enabled));err!=nil{return err}
+	if managed {
+		if _,err=tx.ExecContext(ctx,`INSERT INTO settings(key,value) VALUES('caddy.site_template',?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value`,nextTemplate);err!=nil{return err}
+	}
+	if err=tx.Commit();err!=nil{return err}
+	if err=m.applyLocked(ctx,sites,nextTemplate);err!=nil{
+		_,_ = m.store.DB().ExecContext(context.Background(),`INSERT INTO settings(key,value) VALUES('caddy.access_log',?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value`,boolSetting(settings.AccessLog))
+		if managed{
+			_,_ = m.store.DB().ExecContext(context.Background(),`INSERT INTO settings(key,value) VALUES('caddy.site_template',?)
+				ON CONFLICT(key) DO UPDATE SET value=excluded.value`,previousTemplate)
+		}
+		return err
+	}
+	return nil
+}
+
 func boolSetting(v bool) string {
 	if v {
 		return "1"
