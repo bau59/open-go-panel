@@ -104,7 +104,7 @@ func main() {
 			default:
 			}
 			pollCtx, cancel := context.WithTimeout(metricsCtx, 12*time.Second)
-			if err := caddyManager.CollectPerformanceJournal(pollCtx); err != nil && metricsCtx.Err() == nil {
+			if err := caddyManager.CollectConfiguredPerformance(pollCtx); err != nil && metricsCtx.Err() == nil {
 				logger.Warn("HTTP metrics collection failed", "error", err)
 			}
 			cancel()
