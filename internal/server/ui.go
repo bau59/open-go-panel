@@ -263,6 +263,11 @@ const baseStyles = `
 	.service-settings-body{margin-top:18px;padding-top:18px;border-top:1px solid var(--border)}
 	.danger-zone{border-color:rgba(255,107,122,.18)}
 	.danger-zone-body{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,107,122,.18)}
+	.caddy-setting-section{margin-top:20px;padding-top:20px;border-top:1px solid var(--border)}
+	.caddy-setting-section h3{margin:0 0 6px;font-size:14px;font-weight:800;color:var(--text)}
+	.caddy-setting-section>.note{margin:0 0 12px;line-height:1.55}
+	.caddy-timeouts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;max-width:760px;margin-top:16px}
+	.caddy-timeouts>div>.note{margin:7px 0 0;line-height:1.5}
 	.caddy-log-filters{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:10px;margin-bottom:10px}
 	.caddy-log-filters .filter-submit{display:flex;align-items:end}
 	.table-scroll{overflow:auto}
