@@ -134,6 +134,51 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
     return containers, nil
 }
 
+// ContainerStats is sampled from docker stats. Values are Docker-formatted
+// strings and are not estimated for stopped containers.
+type ContainerStats struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+	MemPct string `json:"mem_pct"`
+}
+
+func (m *Manager) Stats(ctx context.Context) (map[string]ContainerStats, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil, errors.New("docker is not installed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker stats: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return parseDockerStats(out)
+}
+
+func parseDockerStats(out []byte) (map[string]ContainerStats, error) {
+	result := make(map[string]ContainerStats)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var row struct {
+			ID       string `json:"ID"`
+			Name     string `json:"Name"`
+			CPU      string `json:"CPUPerc"`
+			MemUsage string `json:"MemUsage"`
+			MemPct   string `json:"MemPerc"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("decode docker stats: %w", err)
+		}
+		if row.ID == "" {
+			continue
+		}
+		result[row.ID] = ContainerStats{CPU: row.CPU, Memory: row.MemUsage, MemPct: row.MemPct}
+	}
+	return result, nil
+}
+
 func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart, publicPorts bool) error {
     return m.CreateConfigured(ctx, name, image, ports, autostart, publicPorts, RuntimeConfig{})
 }
