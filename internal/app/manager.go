@@ -550,6 +550,14 @@ func (m *Manager) RemoteCommit(ctx context.Context, id int64) (string, error) {
 }
 
 func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
+	return m.RunAutoDeploysDue(ctx, time.Now())
+}
+
+// RunAutoDeploysDue checks only applications whose persisted interval has
+// elapsed. Check timestamps survive panel restarts, and are recorded before
+// contacting Git so repeated failures do not hammer remote repositories.
+func (m *Manager) RunAutoDeploysDue(ctx context.Context, now time.Time) (int, error) {
+	now = now.UTC()
 	apps, err := m.List()
 	if err != nil {
 		return 0, err
@@ -567,7 +575,18 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 		if app.Type == "go" && app.Service.RunMode == "go-binary" {
 			continue
 		}
-		if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
+		if !autoDeployCheckDue(cfg, now) {
+			continue
+		}
+		// Claim the check before fetching, but only if the saved settings
+		// still match this snapshot. A changed interval or branch should
+		// take effect immediately rather than executing stale work.
+		claimed, err := m.claimAutoDeployCheck(app.ID, cfg, now)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: schedule check: %v", app.Name, err))
+			continue
+		}
+		if !claimed {
 			continue
 		}
 		remote, err := m.RemoteCommit(ctx, app.ID)
@@ -604,10 +623,40 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 	return deployed, nil
 }
 
+func autoDeployCheckDue(cfg DeployConfig, now time.Time) bool {
+	if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
+		return false
+	}
+	interval := cfg.AutoDeployIntervalSeconds
+	if interval < MinAutoDeployIntervalSeconds || interval > MaxAutoDeployIntervalSeconds {
+		interval = DefaultAutoDeployIntervalSeconds
+	}
+	return cfg.LastCheckedAt.IsZero() || !now.Before(cfg.LastCheckedAt.Add(time.Duration(interval)*time.Second))
+}
+
+func (m *Manager) claimAutoDeployCheck(id int64, cfg DeployConfig, now time.Time) (bool, error) {
+	expected := ""
+	if !cfg.LastCheckedAt.IsZero() {
+		expected = cfg.LastCheckedAt.UTC().Format(time.RFC3339Nano)
+	}
+	result, err := m.store.DB().Exec(`
+		UPDATE deployments SET last_checked_at = ?
+		WHERE app_id = ? AND auto_deploy = 1 AND repository = ? AND branch = ?
+			AND auto_deploy_interval_sec = ? AND last_checked_at = ?
+	`, now.Format(time.RFC3339Nano), id, cfg.Repository, cfg.Branch,
+		cfg.AutoDeployIntervalSeconds, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
+}
+
 func shouldContinueAutoDeploy(before, after DeployConfig, remote string) bool {
 	return after.AutoDeploy &&
 		after.Repository == before.Repository &&
 		after.Branch == before.Branch &&
+		after.AutoDeployIntervalSeconds == before.AutoDeployIntervalSeconds &&
 		after.CurrentCommit != remote
 }
 // Rollback and Deploy must never mutate the same working tree concurrently.
