@@ -288,12 +288,35 @@ const baseStyles = `
 	.db-service-footer{display:flex;min-height:64px;margin-top:auto;padding-top:18px;align-items:flex-end}
 	.db-service-footer>form,.db-service-footer>.actions{margin:0;padding:0}
 	.db-service-actions{min-height:40px;align-items:center}
-	.docker-actions{justify-content:flex-start;flex-wrap:wrap}
+	.docker-actions{justify-content:flex-start;flex-wrap:wrap;align-items:center}
 	.docker-actions form{display:inline-flex}
-	.docker-metrics{grid-template-columns:repeat(2,minmax(0,1fr));max-width:620px}
-	.docker-create-grid{display:grid;grid-template-columns:minmax(160px,.75fr) minmax(260px,1.5fr) minmax(180px,1fr) auto auto;gap:10px;align-items:end}
-	.docker-autostart{height:42px;margin:0;padding:0 8px}
+	.docker-actions button,.docker-actions summary{white-space:nowrap}
+	.docker-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+	.docker-create-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start;margin-top:18px}
+	.docker-create-grid>div:not(.docker-runtime-fields):not(.docker-toggle-row){min-width:0}
+	.docker-create-grid input,.docker-create-grid textarea{width:100%;min-width:0}
 	.docker-create-submit{display:flex;align-items:end}
+	.docker-add-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
+	.docker-fold{scroll-margin-top:18px}
+	.docker-fold>summary{display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;list-style:none}
+	.docker-fold>summary::-webkit-details-marker{display:none}
+	.docker-fold>summary strong{font-size:16px}
+	.docker-fold>summary span{font-size:12px;color:var(--muted-2);text-align:right}
+	.docker-fold>summary::before{content:"+";color:var(--primary);font-size:22px;line-height:1}
+	.docker-fold[open]>summary::before{content:"−"}
+	.docker-toggle-row{grid-column:1/-1;display:flex;align-items:center;gap:22px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--border)}
+	.docker-toggle-row .check-row{display:inline-flex;align-items:center;margin:0;min-height:40px;white-space:nowrap}
+	.docker-shm-field{margin-left:auto;min-width:170px}
+	.docker-shm-field input{max-width:170px}
+	.docker-row-rebuild{position:relative}
+	.docker-row-rebuild summary{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;list-style:none}
+	.docker-row-rebuild summary::-webkit-details-marker{display:none}
+	.docker-rebuild-form{display:grid;gap:8px;max-width:320px;min-width:220px;margin-top:9px;padding:14px;border:1px solid var(--border);background:var(--surface);border-radius:12px}
+	.docker-rebuild-form label{font-size:11px;white-space:normal}
+	.docker-rebuild-form input{margin-top:5px;width:100%;min-width:0}
+	.docker-rebuild-form .note{white-space:normal;line-height:1.5}
+	.docker-usage{font-variant-numeric:tabular-nums;white-space:nowrap}
+	.docker-usage small{display:block;color:var(--muted-2);font-size:11px}
 	.docker-runtime-fields{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;padding:14px 0 4px;border-top:1px solid var(--border);align-items:start}
 	.docker-runtime-fields textarea{width:100%;min-height:118px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 	.docker-runtime-fields .note{margin:6px 0 0;line-height:1.5}
@@ -382,6 +405,8 @@ const baseStyles = `
 		.page-control-cluster{justify-content:flex-start;width:100%}
 		.service-state{min-height:38px}
 		.docker-create-grid{grid-template-columns:1fr 1fr}
+		.docker-metrics{grid-template-columns:1fr 1fr}
+		.docker-shm-field{margin-left:0}
 
 		h1{font-size:28px}
 		table{display:block;overflow-x:auto}
@@ -433,7 +458,11 @@ const baseStyles = `
 		.terminal-screen{min-height:420px;height:68vh}
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
 		.redis-toolbar{grid-template-columns:1fr}
-		.db-services-grid,.backup-settings-grid,.docker-metrics,.docker-create-grid{grid-template-columns:1fr}
+		.db-services-grid,.backup-settings-grid,.docker-create-grid{grid-template-columns:1fr}
+		.docker-metrics{grid-template-columns:1fr 1fr}
+		.docker-toggle-row{align-items:flex-start;flex-direction:column;gap:6px}
+		.docker-shm-field{width:100%}
+		.docker-fold>summary span{display:none}
 		.docker-runtime-fields{grid-template-columns:1fr}
 		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
 		.table-path{max-width:180px}
