@@ -69,7 +69,7 @@ func (m *Manager) UploadBackup(ctx context.Context, backup Backup) error {
 		return err
 	}
 	dst := backupRemotePath(remote, backup)
-	cmd := exec.CommandContext(ctx, "rclone", "copyto", "--", backup.Path, dst)
+	cmd := exec.CommandContext(ctx, "rclone", "copyto", backup.Path, dst)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("off-site backup upload failed (local copy preserved): %w: %s", err, strings.TrimSpace(string(out)))
