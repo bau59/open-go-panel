@@ -406,7 +406,7 @@ func databasesPage(data databasePageData) string {
 		</section>
 
 		<section class="panel" style="margin-bottom:16px">
-			<form method="post" action="/databases" class="toolbar" style="grid-template-columns:1fr 1fr 1fr auto">
+			<form method="post" action="/databases" class="toolbar toolbar-4">
 				<select name="engine" required>
 					<option value="mysql">MySQL</option>
 					<option value="postgres">PostgreSQL</option>
