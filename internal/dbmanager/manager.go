@@ -759,12 +759,73 @@ func (m *Manager) BackupFile(id int64, path string) (string, error) {
 	return clean, nil
 }
 
+// Restore creates a safety snapshot before touching the target database.
+// The operation lock also protects the snapshot and rollback from concurrent imports.
 func (m *Manager) Restore(ctx context.Context, id int64, path string) error {
 	if !m.operationMu.TryLock() {
 		return errOperationInProgress
 	}
 	defer m.operationMu.Unlock()
-	return m.restoreUnlocked(ctx, id, path)
+
+	clean, err := m.BackupFile(id, path)
+	if err != nil {
+		return err
+	}
+	if err := validateCompressedBackup(clean); err != nil {
+		return fmt.Errorf("refuse to restore invalid backup: %w", err)
+	}
+
+	safety, err := m.backupUnlocked(ctx, id)
+	if err != nil {
+		return fmt.Errorf("refuse to restore without a safety backup: %w", err)
+	}
+
+	if err := m.restoreUnlocked(ctx, id, clean); err != nil {
+		target, getErr := m.Get(id)
+		if getErr != nil {
+			return fmt.Errorf("restore failed: %w; safety backup at %s; lookup for rollback failed: %v", err, safety.Path, getErr)
+		}
+		recoveryCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if rollbackErr := m.resetAndRestoreFromSafety(recoveryCtx, target, safety.Path); rollbackErr != nil {
+			return fmt.Errorf("restore failed: %w; rollback also failed: %v; safety backup at %s", err, rollbackErr, safety.Path)
+		}
+		return fmt.Errorf("restore failed: %w; database recovered from safety backup %s", err, safety.Path)
+	}
+	return nil
+}
+
+// validateCompressedBackup checks the entire gzip stream and checksum before
+// any destructive SQL operation. A readable header alone is not sufficient.
+func validateCompressedBackup(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	count, err := io.Copy(io.Discard, gz)
+	if err != nil {
+		return fmt.Errorf("read compressed SQL: %w", err)
+	}
+	if count == 0 {
+		return errors.New("backup contains no SQL")
+	}
+	return nil
+}
+
+func (m *Manager) resetAndRestoreFromSafety(ctx context.Context, target Database, backupPath string) error {
+	if err := resetLocalDatabase(ctx, target); err != nil {
+		return fmt.Errorf("reset database for safety rollback: %w", err)
+	}
+	if err := m.restoreUnlocked(ctx, target.ID, backupPath); err != nil {
+		return fmt.Errorf("restore safety backup: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) restoreUnlocked(ctx context.Context, id int64, path string) error {

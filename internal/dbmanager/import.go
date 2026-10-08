@@ -118,17 +118,27 @@ func (m *Manager) remoteImport(ctx context.Context, target Database, source remo
 	if err := dumpRemoteCompressed(ctx, source, importPath); err != nil {
 		return preBackup.Path, err
 	}
+	if err := validateCompressedBackup(importPath); err != nil {
+		return preBackup.Path, fmt.Errorf("invalid remote database dump: %w", err)
+	}
 	if err := resetLocalDatabase(ctx, target); err != nil {
-		return preBackup.Path, fmt.Errorf("reset local database: %w", err)
+		return preBackup.Path, m.recoverFailedImport(target, preBackup.Path, fmt.Errorf("reset local database: %w", err))
 	}
 	if err := restoreCompressedDump(ctx, target, importPath); err != nil {
-		rollbackErr := m.restoreUnlocked(context.Background(), target.ID, preBackup.Path)
-		if rollbackErr != nil {
-			return preBackup.Path, fmt.Errorf("remote import failed: %v; safety-backup rollback also failed: %v", err, rollbackErr)
-		}
-		return preBackup.Path, fmt.Errorf("remote import failed and local database was restored from safety backup: %w", err)
+		return preBackup.Path, m.recoverFailedImport(target, preBackup.Path, fmt.Errorf("apply remote database dump: %w", err))
 	}
 	return preBackup.Path, nil
+}
+
+// A reset or restore failure may have already changed the database. Always
+// attempt to reconstruct its previous state from the pre-import snapshot.
+func (m *Manager) recoverFailedImport(target Database, backupPath string, cause error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if rollbackErr := m.resetAndRestoreFromSafety(ctx, target, backupPath); rollbackErr != nil {
+		return fmt.Errorf("remote import failed: %w; safety-backup recovery also failed: %v; backup at %s", cause, rollbackErr, backupPath)
+	}
+	return fmt.Errorf("remote import failed: %w; local database recovered from safety backup %s", cause, backupPath)
 }
 
 func parseRemoteConnection(raw string) (remoteConnection, error) {
