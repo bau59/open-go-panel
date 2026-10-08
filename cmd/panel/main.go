@@ -17,6 +17,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/dbmanager"
+	paneldocker "github.com/bau59/open-go-panel/internal/docker"
 	"github.com/bau59/open-go-panel/internal/security"
 	"github.com/bau59/open-go-panel/internal/software"
 	"github.com/bau59/open-go-panel/internal/server"
@@ -51,6 +52,7 @@ func main() {
 	databaseManager := dbmanager.New(stateStore, "/var/lib/open-go-panel/databases.json")
 	adminerManager := adminer.New()
 	softwareManager := software.New()
+	dockerManager := paneldocker.New()
 	if err := apps.EnsureStorage(); err != nil {
 		logger.Error("ensure app storage failed", "err", err)
 		os.Exit(1)
@@ -115,6 +117,7 @@ func main() {
 			Databases:     databaseManager,
 			Adminer:       adminerManager,
 			Software:      softwareManager,
+			Docker:        dockerManager,
 			State:         stateStore,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
