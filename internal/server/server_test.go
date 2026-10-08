@@ -114,6 +114,7 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		"/caddy",
 		"/security",
 		"/databases",
+		"/databases/redis",
 		"/db-admin/",
 		"/apps/1",
 		"/terminal",
