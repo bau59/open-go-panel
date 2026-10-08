@@ -1,6 +1,7 @@
 package server
 
 import (
+    "encoding/json"
     "fmt"
     "html"
     "net/http"
@@ -13,6 +14,31 @@ import (
 func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
     mux.Handle("GET /docker", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         writeDockerPage(w, r, cfg, http.StatusOK, "")
+    })))
+
+    mux.Handle("GET /docker/stats", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        stats, err := cfg.Docker.Stats(r.Context())
+        if err != nil {
+            http.Error(w, "Docker usage statistics unavailable", http.StatusServiceUnavailable)
+            return
+        }
+        w.Header().Set("Content-Type", "application/json; charset=utf-8")
+        w.Header().Set("Cache-Control", "no-store")
+        _ = json.NewEncoder(w).Encode(stats)
+    })))
+
+    mux.Handle("POST /docker/{id}/rebuild", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid request", http.StatusBadRequest)
+            return
+        }
+        if err := cfg.Docker.StartGitHubRebuild(r.Context(),
+            r.PathValue("id"), r.FormValue("repository"),
+            r.FormValue("branch"), r.FormValue("dockerfile")); err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
 
     mux.Handle("POST /docker/install", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,20 +240,31 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         if item.Running {
             actionButton = `<form method="post" action="/docker/` + html.EscapeString(item.ID) + `/restart"><button class="secondary compact-action">Restart</button></form><form method="post" action="/docker/` + html.EscapeString(item.ID) + `/stop"><button class="secondary compact-action">Stop</button></form>`
         }
+        rebuildForm := `<details class="docker-row-rebuild"><summary class="secondary compact-action">Rebuild GitHub</summary>
+            <form method="post" action="/docker/`+html.EscapeString(item.ID)+`/rebuild" class="docker-rebuild-form"
+                onsubmit="return confirm('Build and deploy updated GitHub image? Existing volumes, ports and secrets will be reused. The previous container is kept as backup.')">
+                <label>Repository<input name="repository" required placeholder="owner/repository" value="`+html.EscapeString(item.Repository)+`"></label>
+                <label>Branch<input name="branch" placeholder="Default branch" value="`+html.EscapeString(item.Branch)+`"></label>
+                <label>Dockerfile<input name="dockerfile" required value="`+html.EscapeString(func()string{if item.Dockerfile!=""{return item.Dockerfile};return "Dockerfile"}())+`"></label>
+                <p class="note">Only switch after successful build. Existing Docker config is reused; old container is retained.</p>
+                <button class="button compact-action" type="submit">Rebuild &amp; deploy</button>
+            </form></details>`
         rows.WriteString(`<tr>
-            <td><strong>` + html.EscapeString(item.Name) + `</strong><div class="muted"><code>` + html.EscapeString(item.ID) + `</code></div></td>
+            <td><strong>` + html.EscapeString(item.Name) + `</strong><div class="muted"><code>` + html.EscapeString(item.ID) + `</code></div>` + func() string { if item.Commit != "" {return `<div class="muted">Git ` + html.EscapeString(item.Commit[:min(7,len(item.Commit))]) + `</div>`}; return "" }() + `</td>
             <td><code>` + html.EscapeString(item.Image) + `</code></td>
             <td><span class="status-badge ` + stateClass + `">` + html.EscapeString(item.State) + `</span></td>
+            <td class="docker-usage" data-docker-id="` + html.EscapeString(item.ID) + `"><span data-field="cpu">—</span></td>
+            <td class="docker-usage" data-docker-id="` + html.EscapeString(item.ID) + `"><span data-field="memory">—</span><small data-field="mem_pct"></small></td>
             <td><code>` + html.EscapeString(item.Ports) + `</code></td>
             <td><span class="meta-chip">` + html.EscapeString(item.RestartPolicy) + `</span></td>
-            <td><div class="actions docker-actions">` + actionButton + `
+            <td><div class="actions docker-actions">` + actionButton + rebuildForm + `
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/autostart"><input type="hidden" name="enabled" value="` + toggleValue + `"><button class="secondary compact-action">` + toggleLabel + `</button></form>
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/delete" onsubmit="return confirm('Remove this Docker container? Volumes are not removed.')"><button class="danger compact-action">Delete</button></form>
             </div></td>
         </tr>`)
     }
     if rows.Len() == 0 {
-        rows.WriteString(`<tr><td colspan="6" class="empty">No Docker containers yet.</td></tr>`)
+        rows.WriteString(`<tr><td colspan="8" class="empty">No Docker containers yet.</td></tr>`)
     }
 
     githubBuildStatus := ""
@@ -273,31 +310,42 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         ` + alert + serviceAlert + githubBuildStatus + `
         <section class="metrics-grid docker-metrics" style="margin-bottom:16px">
             <div class="metric"><span>Containers</span><strong>` + fmt.Sprintf("%d", len(containers)) + `</strong><small>all containers</small></div>
-            <div class="metric"><span>Running</span><strong>` + fmt.Sprintf("%d", runningCount) + `</strong><small>currently active</small></div>
+            <div class="metric"><span>Running</span><strong>` + fmt.Sprintf("%d", runningCount) + `</strong><small>` + fmt.Sprintf("%d",len(containers)-runningCount) + ` stopped</small></div>
+            <div class="metric"><span>CPU</span><strong id="docker-total-cpu">—</strong><small>running containers</small></div>
+            <div class="metric"><span>Memory</span><strong id="docker-total-memory">—</strong><small>running containers</small></div>
         </section>
-        <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
-            <div class="section-title">
-                <div><h2>Run container</h2><p class="note" style="margin:6px 0 0">Paste an image reference or URL. Examples: <code>nginx:latest</code>, <code>ghcr.io/org/app:latest</code> or a Docker Hub page URL.</p></div>
-            </div>
+                <section class="panel" id="docker-containers" style="margin-bottom:16px">
+            <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">CPU and memory refresh every 10 seconds; rebuild reuses existing settings.</p></div>
+            <a href="/docker" class="secondary compact-action">Refresh</a></div>
+            <div class="table-scroll"><table><thead><tr><th>Container</th><th>Image</th><th>Status</th><th>CPU</th><th>Memory</th><th>Ports</th><th>Autostart</th><th>Actions</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
+        </section>
+        <div class="docker-add-toolbar">
+            <button type="button" class="secondary" onclick="const d=document.getElementById('docker-add-image');d.open=!d.open;if(d.open)d.scrollIntoView({behavior:'smooth',block:'start'})">+ Run container</button>
+            <button type="button" class="secondary" onclick="const d=document.getElementById('docker-add-github');d.open=!d.open;if(d.open)d.scrollIntoView({behavior:'smooth',block:'start'})">+ Build from GitHub</button>
+        </div>
+        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-image" style="margin-bottom:16px">
+            <summary><strong>Run container</strong><span>Pull an image and launch a new Docker container</span></summary>
             <form method="post" action="/docker/create" class="docker-create-grid">
                 <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
                 <div><label>Image / URL</label><input name="image" placeholder="redis:7, ghcr.io/org/app:latest or Docker Hub URL" required></div>
                 <div><label>Ports</label><input name="ports" placeholder="8080:80, 8443:443"></div>
-                <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
-                <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-toggle-row">
+                    <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                    <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                    <label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label>
+                    <div class="docker-shm-field"><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div>
+                </div>
                 <div class="docker-runtime-fields">
                     <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p>
                     <label style="margin-top:10px">Or existing .env file on the server</label><input name="environment_file" placeholder="/opt/deepseek-bridge/.env"><p class="note">Use either variables above or the existing .env file (0600 permissions). Do not rotate saved encryption keys.</p></div>
                     <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
-                    <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
                 </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
             <p class="note" style="margin-top:12px">Ports bind to 127.0.0.1 by default. Public ports may bypass UFW rules; enable only when external access is required.</p>
-        </section>
-        <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
-            <div class="section-title"><div><h2>Build from GitHub</h2>
-                <p class="note" style="margin:6px 0 0">Clone a GitHub repository, build its Dockerfile, then create and start the container. Private repositories use a read-only SSH deploy key.</p></div></div>
+        </details>
+        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-github" style="margin-bottom:16px"` + func() string {if key.Repository!="" {return " open"};return ""}() + `>
+            <summary><strong>Build from GitHub</strong><span>Clone, build and deploy from a GitHub repository</span></summary>
             <form method="post" action="/docker/github/key" class="docker-create-grid" style="margin:12px 0">
                 <div><label>GitHub repository for deploy key</label><input name="repository" value="` + html.EscapeString(key.Repository) + `" placeholder="owner/repository" required></div>
                 <div class="docker-create-submit"><button class="secondary" type="submit">Generate SSH deploy key</button></div>
@@ -309,21 +357,56 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div><label>Branch (blank = default)</label><input name="branch" placeholder="main"></div>
                 <div><label>Dockerfile in repository</label><input name="dockerfile" value="Dockerfile" required></div>
                 <div><label>Ports</label><input name="ports" placeholder="8080:80"></div>
-                <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
-                <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-toggle-row">
+                    <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                    <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                    <label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label>
+                    <div class="docker-shm-field"><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div>
+                </div>
                 <div class="docker-runtime-fields">
                     <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p>
                     <label style="margin-top:10px">Or existing .env file on the server</label><input name="environment_file" placeholder="/opt/deepseek-bridge/.env"><p class="note">Use either variables above or the existing .env file (0600 permissions). Do not rotate saved encryption keys.</p></div>
                     <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
-                    <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
                 </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + func() string { if build.Running { return " disabled" }; return "" }() + `>Build &amp; run</button></div>
             </form>
-            <p class="note" style="margin-top:12px">For private repositories: first generate the deploy key, add it to the specific GitHub repository in Settings → Deploy keys, then Build &amp; run. Ports default to 127.0.0.1. Existing containers are not modified; rebuilding under an existing name requires deliberate migration.</p>
-        </section>
-        <section class="panel">
-            <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">Autostart maps to Docker restart policy <code>unless-stopped</code>.</p></div></div>
-            <div class="table-scroll"><table><thead><tr><th>Container</th><th>Image</th><th>Status</th><th>Ports</th><th>Autostart</th><th>Actions</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
-        </section>
-    </main>` + refresh + `</body></html>`
+            <p class="note" style="margin-top:12px">For private repositories: add a read-only deploy key to GitHub. To update a container already running, use Rebuild GitHub in its Actions row.</p>
+        </details>
+__CONTAINER_TABLE__
+    </main>
+    <script>
+    (function(){
+      function asBytes(s){
+        const m=String(s||'').trim().match(/^([0-9.]+)\s*(B|KiB|MiB|GiB|TiB|kB|MB|GB|TB)?$/);
+        if(!m)return 0;
+        const units={B:1,KiB:1024,MiB:1048576,GiB:1073741824,TiB:1099511627776,kB:1000,MB:1000000,GB:1000000000,TB:1000000000000};
+        return parseFloat(m[1])*(units[m[2]]||1);
+      }
+      async function pollStats(){
+        try{
+          const res=await fetch('/docker/stats',{cache:'no-store'});
+          if(!res.ok)throw new Error('stats unavailable');
+          const stats=await res.json();
+          let cpu=0,mem=0;
+          document.querySelectorAll('td.docker-usage').forEach(cell=>{
+            const st=stats[cell.dataset.dockerId];
+            const field=cell.querySelector('[data-field]');
+            if(!field)return;
+            if(!st){field.textContent='—';return}
+            field.textContent=field.dataset.field==='cpu'?(st.cpu||'—'):(st.memory||'—');
+            const pct=cell.querySelector('[data-field="mem_pct"]');
+            if(pct)pct.textContent=st.mem_pct||'';
+          });
+          Object.values(stats).forEach(st=>{
+            cpu+=parseFloat(st.cpu)||0;
+            mem+=asBytes(String(st.memory||'').split('/')[0]);
+          });
+          document.getElementById('docker-total-cpu').textContent=cpu.toFixed(1)+'%';
+          document.getElementById('docker-total-memory').textContent=(mem/1048576).toFixed(0)+' MiB';
+        }catch(e){}
+        setTimeout(pollStats,10000);
+      }
+      pollStats();
+    })();
+    </script>` + refresh + `</body></html>`
 }

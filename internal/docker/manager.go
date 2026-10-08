@@ -30,6 +30,10 @@ type Container struct {
     RestartPolicy string
     Ports         string
     Created       time.Time
+    Repository    string
+    Branch        string
+    Dockerfile    string
+    Commit        string
 }
 
 var (
@@ -41,6 +45,7 @@ var (
 type Manager struct {
 	buildMu   sync.Mutex
 	keyMu     sync.Mutex
+	lifecycleMu sync.Mutex
 	buildTask BuildTask
 }
 
@@ -86,6 +91,7 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
         Created string `json:"Created"`
         Config  struct {
             Image string `json:"Image"`
+            Labels map[string]string `json:"Labels"`
         } `json:"Config"`
         State struct {
             Status  string `json:"Status"`
@@ -123,6 +129,10 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
             RestartPolicy: defaultRestartPolicy(item.HostConfig.RestartPolicy.Name),
             Ports: formatPorts(item.NetworkSettings.Ports),
             Created: created,
+            Repository: item.Config.Labels["org.open-go-panel.github.repository"],
+            Branch: item.Config.Labels["org.open-go-panel.github.branch"],
+            Dockerfile: item.Config.Labels["org.open-go-panel.github.dockerfile"],
+            Commit: item.Config.Labels["org.open-go-panel.github.commit"],
         })
     }
     sort.Slice(containers, func(i, j int) bool {
@@ -134,11 +144,60 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
     return containers, nil
 }
 
+// ContainerStats is sampled from docker stats. Values are Docker-formatted
+// strings and are not estimated for stopped containers.
+type ContainerStats struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+	MemPct string `json:"mem_pct"`
+}
+
+func (m *Manager) Stats(ctx context.Context) (map[string]ContainerStats, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil, errors.New("docker is not installed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker stats: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return parseDockerStats(out)
+}
+
+func parseDockerStats(out []byte) (map[string]ContainerStats, error) {
+	result := make(map[string]ContainerStats)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var row struct {
+			ID       string `json:"ID"`
+			Name     string `json:"Name"`
+			CPU      string `json:"CPUPerc"`
+			MemUsage string `json:"MemUsage"`
+			MemPct   string `json:"MemPerc"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("decode docker stats: %w", err)
+		}
+		if row.ID == "" {
+			continue
+		}
+		id:=row.ID
+		if len(id)>12 {id=id[:12]}
+		result[id] = ContainerStats{CPU: row.CPU, Memory: row.MemUsage, MemPct: row.MemPct}
+	}
+	return result, nil
+}
+
 func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart, publicPorts bool) error {
     return m.CreateConfigured(ctx, name, image, ports, autostart, publicPorts, RuntimeConfig{})
 }
 
 func (m *Manager) CreateConfigured(ctx context.Context, name, image, ports string, autostart, publicPorts bool, cfg RuntimeConfig) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
     return m.runImage(ctx, name, image, ports, autostart, publicPorts, true, cfg)
 }
 
@@ -221,12 +280,30 @@ func (m *Manager) RestartService(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) Start(ctx context.Context, id string) error { return dockerCommand(ctx, "start", id) }
-func (m *Manager) Stop(ctx context.Context, id string) error { return dockerCommand(ctx, "stop", id) }
-func (m *Manager) Restart(ctx context.Context, id string) error { return dockerCommand(ctx, "restart", id) }
-func (m *Manager) Remove(ctx context.Context, id string) error { return dockerCommand(ctx, "rm", "-f", id) }
+func (m *Manager) Start(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "start", id)
+}
+func (m *Manager) Stop(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "stop", id)
+}
+func (m *Manager) Restart(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "restart", id)
+}
+func (m *Manager) Remove(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "rm", "-f", id)
+}
 
 func (m *Manager) SetAutostart(ctx context.Context, id string, enabled bool) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
     policy := "no"
     if enabled { policy = "unless-stopped" }
     return dockerCommand(ctx, "update", "--restart", policy, id)

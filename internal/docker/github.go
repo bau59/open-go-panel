@@ -34,6 +34,7 @@ type BuildTask struct {
 	Running    bool
 	Repository string
 	Container  string
+	Rebuilding bool
 	Step       string
 	Image      string
 	Error      string
@@ -243,10 +244,40 @@ type buildRequest struct {
 	Autostart  bool
 	Public     bool
 	Runtime    RuntimeConfig
+	ReplaceID  string
 }
 
 func (m *Manager) StartGitHubBuild(name, repository, branch, dockerfile, ports string, autostart, public bool) error {
 	return m.StartGitHubBuildConfigured(name, repository, branch, dockerfile, ports, autostart, public, RuntimeConfig{})
+}
+
+// StartGitHubRebuild replaces a container only after its new image has built.
+// It reuses Docker inspect for runtime values, so secret values and mounts are
+// not passed through the browser.
+func (m *Manager) StartGitHubRebuild(ctx context.Context, id, repository, branch, dockerfile string) error {
+	spec, err := inspectReplacement(ctx, id)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(spec.Name, "ogp-prev-") {
+		return errors.New("backup containers cannot be rebuilt directly")
+	}
+	repo, err := parseGitHubRepository(repository)
+	if err != nil { return err }
+	if err := validateBranch(strings.TrimSpace(branch)); err != nil {return err}
+	dockerfile, err = validateDockerfile(dockerfile)
+	if err != nil {return err}
+	if _,err:=exec.LookPath("docker");err!=nil{return errors.New("Docker is not installed")}
+	if _,err:=exec.LookPath("git");err!=nil{return errors.New("Git is not installed")}
+	m.buildMu.Lock()
+	defer m.buildMu.Unlock()
+	if m.buildTask.Running {return errors.New("a GitHub build is already running")}
+	req:=buildRequest{Name:spec.Name,Repository:repo,Branch:strings.TrimSpace(branch),
+		Dockerfile:dockerfile,ReplaceID:spec.ID}
+	m.buildTask=BuildTask{Running:true,Rebuilding:true,Container:spec.Name,Repository:repo.ID(),
+		Step:"Preparing updated source",StartedAt:time.Now()}
+	go m.executeGitHubBuild(req)
+	return nil
 }
 
 func (m *Manager) StartGitHubBuildConfigured(name, repository, branch, dockerfile, ports string, autostart, public bool, runtime RuntimeConfig) error {
@@ -289,23 +320,27 @@ func (m *Manager) StartGitHubBuildConfigured(name, repository, branch, dockerfil
 		Step: "Preparing source checkout", StartedAt: time.Now()}
 	m.buildMu.Unlock()
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
-		defer cancel()
-		image, err := m.buildGitHubImage(ctx, req)
-		m.buildMu.Lock()
-		m.buildTask.Running = false
-		m.buildTask.FinishedAt = time.Now()
-		m.buildTask.Image = image
-		if err != nil {
-			m.buildTask.Error = err.Error()
-			m.buildTask.Step = "Failed"
-		} else {
-			m.buildTask.Step = "Container created"
-		}
-		m.buildMu.Unlock()
-	}()
+	go m.executeGitHubBuild(req)
 	return nil
+}
+
+func (m *Manager) executeGitHubBuild(req buildRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	defer cancel()
+	image, err := m.buildGitHubImage(ctx, req)
+	m.buildMu.Lock()
+	defer m.buildMu.Unlock()
+	m.buildTask.Running = false
+	m.buildTask.FinishedAt = time.Now()
+	m.buildTask.Image = image
+	if err != nil {
+		m.buildTask.Error = err.Error()
+		m.buildTask.Step = "Failed"
+	} else if req.ReplaceID!="" {
+		m.buildTask.Step = "Container rebuilt"
+	} else {
+		m.buildTask.Step = "Container created"
+	}
 }
 
 func (m *Manager) buildStep(step string) {
@@ -361,14 +396,32 @@ func (m *Manager) buildGitHubImage(ctx context.Context, req buildRequest) (strin
 		return "", errors.New("Dockerfile must be a regular file")
 	}
 	image := fmt.Sprintf("ogp/%s:build-%d", strings.ToLower(req.Name), time.Now().UnixNano())
+	commitOutput, err := exec.CommandContext(ctx, "git", "-C", source, "rev-parse", "HEAD").Output()
+	if err != nil {return "",fmt.Errorf("read Git revision: %w",err)}
+	commit:=strings.TrimSpace(string(commitOutput))
 	m.buildStep("Building Docker image")
 	if err := runBuildCommand(ctx, source, os.Environ(), "docker",
-		"build", "-f", req.Dockerfile, "-t", image, "."); err != nil {
+		"build", "-f", req.Dockerfile, "-t", image,
+		"--label", "org.open-go-panel.github.repository="+req.Repository.ID(),
+		"--label", "org.open-go-panel.github.branch="+req.Branch,
+		"--label", "org.open-go-panel.github.dockerfile="+req.Dockerfile,
+		"--label", "org.open-go-panel.github.commit="+commit,
+		"."); err != nil {
 		return "", fmt.Errorf("Docker build failed: %w", err)
 	}
-	m.buildStep("Creating container")
-	if err := m.runImage(ctx, req.Name, image, req.Ports, req.Autostart, req.Public, false, req.Runtime); err != nil {
-		return image, fmt.Errorf("image %s built but container launch failed: %w", image, err)
+	if req.ReplaceID != "" {
+		m.buildStep("Switching to rebuilt container")
+		if err := m.replaceWithBuiltImage(ctx, req.ReplaceID, image); err != nil {
+			return image, fmt.Errorf("image %s built; deploy failed: %w", image, err)
+		}
+	} else {
+		m.buildStep("Creating container")
+		m.lifecycleMu.Lock()
+		err:=m.runImage(ctx, req.Name, image, req.Ports, req.Autostart, req.Public, false, req.Runtime)
+		m.lifecycleMu.Unlock()
+		if err != nil {
+			return image, fmt.Errorf("image %s built but container launch failed: %w", image, err)
+		}
 	}
 	return image, nil
 }
