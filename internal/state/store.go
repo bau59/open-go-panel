@@ -149,6 +149,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	target TEXT NOT NULL DEFAULT '',
 	details TEXT NOT NULL DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at
+	ON audit_log(created_at);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate sqlite state: %w", err)
