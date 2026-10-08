@@ -15,6 +15,7 @@ import (
 )
 
 func registerPerformanceRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+ registerPerformanceSettings(mux,store,cfg)
  mux.Handle("GET /performance", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   v:=r.URL.Query()
   period:=v.Get("period")
@@ -39,20 +40,38 @@ func registerPerformanceRoutes(mux *http.ServeMux, store *sessionStore, cfg Conf
   status,_:=strconv.Atoi(v.Get("status"))
   if status!=0 && status!=200 && status!=300 && status!=400 && status!=500 {status=0}
   page,_:=strconv.Atoi(v.Get("page"));if page<1 || page>1000 {page=1}
-  f:=caddy.PerformanceFilter{Since:from,Until:now,Domain:v.Get("domain"),Method:v.Get("method"),Route:v.Get("route"),
+  appID,_:=strconv.ParseInt(v.Get("app"),10,64)
+  if appID<0{appID=0}
+  f:=caddy.PerformanceFilter{Since:from,Until:now,AppID:appID,Domain:v.Get("domain"),Method:v.Get("method"),Route:v.Get("route"),
    Status:status,SlowOnly:v.Get("slow")=="1",ThresholdMS:threshold,Page:page,PerPage:50,Sort:v.Get("sort")}
   ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
   data,err:=cfg.Caddy.QueryPerformance(ctx,f)
   errMsg:=""
   if err!=nil {errMsg=err.Error()}
-  writeHTML(w,cfg.Logger,http.StatusOK,performancePage(period,v,f,data,errMsg))
+  extra:=performanceExtras{Global:getPerformanceThresholds(cfg.State,0),PerApp:map[int64]performanceThresholds{}}
+  if apps,err:=cfg.Apps.List();err==nil{
+   for _,app:=range apps{
+    extra.Apps=append(extra.Apps,performanceAppOption{ID:app.ID,Name:app.Name})
+    extra.PerApp[app.ID]=getPerformanceThresholds(cfg.State,app.ID)
+   }
+  }
+  if status,err:=cfg.Caddy.PerformanceCollectorStatus(ctx);err==nil{extra.Collector=status}
+  if restarts,err:=cfg.Caddy.PerformanceRestarts(ctx,from,now);err==nil{extra.Restarts=restarts}
+  if cold,err:=cfg.Caddy.ColdStartupSamples(ctx,from,now);err==nil{extra.Cold=cold}
+  if idle,err:=cfg.Caddy.IdlePerformanceSamples(ctx,from,now);err==nil{extra.Idle=idle}
+  writeHTML(w,cfg.Logger,http.StatusOK,performancePage(period,v,f,data,errMsg,extra))
  })))
 }
 
-func performancePage(period string, values url.Values, f caddy.PerformanceFilter, data caddy.PerformanceResult, problem string)string{
+func performancePage(period string, values url.Values, f caddy.PerformanceFilter, data caddy.PerformanceResult, problem string, optional ...performanceExtras)string{
+ extra:=performanceExtras{Global:defaultPerformanceThresholds(),PerApp:map[int64]performanceThresholds{}}
+ if len(optional)>0{extra=optional[0]}
  opt:=func(name,val,label string) string{
   return `<option value="`+html.EscapeString(val)+`"`+selected(values.Get(name),val)+`>`+html.EscapeString(label)+`</option>`
  }
+ var appOptions strings.Builder
+ appOptions.WriteString(opt("app","","All applications"))
+ for _,app:=range extra.Apps {appOptions.WriteString(opt("app",strconv.FormatInt(app.ID,10),app.Name))}
  var rows strings.Builder
  for _,entry:=range data.Rows{
   timingText:="No data"
@@ -65,11 +84,13 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
   }
   requestID:=entry.RequestID
   if requestID==""{requestID="No data"}
-  fmt.Fprintf(&rows,`<tr><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%d</td><td><strong>%.2f ms</strong></td><td>%d B</td><td><details><summary class="secondary">Details</summary><div class="inline-popover wide">
-  <p>Caddy: %.2f ms · Protocol: %s</p><p>Backend / Server-Timing: %s</p><p>Request ID: %s</p><p>Related restart: No data</p></div></details></td></tr>`,
+  label,kind:=extra.classify(entry.DurationMS,entry.AppID)
+  classMarkup:=`<span class="badge `+kind+`">`+html.EscapeString(label)+`</span>`
+  fmt.Fprintf(&rows,`<tr><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%d</td><td><strong>%.2f ms</strong> %s</td><td>%d B</td><td><details><summary class="secondary">Details</summary><div class="inline-popover wide">
+  <p>Caddy: %.2f ms · Protocol: %s</p><p>Backend / Server-Timing: %s</p><p>Request ID: %s</p><p>Related restart: %s</p></div></details></td></tr>`,
    html.EscapeString(entry.Time.Local().Format("01-02 15:04:05")),html.EscapeString(entry.Domain),
-   html.EscapeString(entry.Method),html.EscapeString(entry.Route),entry.Status,entry.DurationMS,entry.Size,
-   entry.DurationMS,html.EscapeString(entry.Protocol),html.EscapeString(timingText),html.EscapeString(requestID))
+   html.EscapeString(entry.Method),html.EscapeString(entry.Route),entry.Status,entry.DurationMS,classMarkup,entry.Size,
+   entry.DurationMS,html.EscapeString(entry.Protocol),html.EscapeString(timingText),html.EscapeString(requestID),html.EscapeString(extra.restartFor(entry.AppID,entry.Time)))
  }
  if rows.Len()==0 {rows.WriteString(`<tr><td colspan="8" class="empty">No measured HTTP requests in the selected interval.</td></tr>`)}
  var routes strings.Builder
@@ -128,11 +149,12 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  if buckets.Len()==0 {buckets.WriteString(`<tr><td colspan="5" class="empty">No measured time buckets.</td></tr>`)}
  return pageHead("Performance")+`<body>`+appHeader("performance")+`<main class="shell">
  <div class="page-head"><div><p class="eyebrow">Observability / HTTP</p><h1>Performance</h1><p class="sub">Measured Caddy HTTP handling time, not isolated Go, DNS, TLS or browser rendering time.</p></div>
- <a href="/log-retention" class="secondary">Log retention</a></div>`+caution+`
+ <a href="/log-retention" class="secondary">Log retention</a></div>`+caution+performanceCollectorPanel(extra.Collector)+`
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Filters</h2>
  <form method="get" action="/performance" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:14px">
  <div><label>Period</label><select name="period">`+opt("period","5m","Last 5 minutes")+opt("period","1h","Last hour")+opt("period","24h","Last 24 hours")+opt("period","7d","Last 7 days")+opt("period","custom","Custom window")+`</select></div>
  <div><label>Domain</label><input name="domain" placeholder="Any domain" value="`+html.EscapeString(f.Domain)+`"></div>
+ <div><label>Application</label><select name="app">`+appOptions.String()+`</select></div>
  <div><label>Method</label><select name="method">`+opt("method","","Any method")+opt("method","GET","GET")+opt("method","POST","POST")+opt("method","PUT","PUT")+opt("method","PATCH","PATCH")+opt("method","DELETE","DELETE")+`</select></div>
  <div><label>Route</label><input name="route" placeholder="/api/orders" value="`+html.EscapeString(f.Route)+`"></div>
  <div><label>Status class</label><select name="status">`+opt("status","0","Any status")+opt("status","200","2xx")+opt("status","300","3xx")+opt("status","400","4xx")+opt("status","500","5xx")+`</select></div>
@@ -155,6 +177,6 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  <section class="panel"><div class="panel-pad"><h2>Request log</h2><p class="note">Query strings and client IP addresses are not retained in performance results.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th><th>Size</th><th></th></tr></thead><tbody>`+rows.String()+`</tbody></table></div>
  <div class="pager" style="padding:16px"><span class="pager-info">Page `+strconv.Itoa(f.Page)+`</span><div class="pager-actions">`+prev+next+`</div></div></section>
- <section class="panel panel-pad" style="margin-top:16px"><h2>Cold starts and backend timing</h2><p class="note">No data: process restart correlation and Server-Timing are not available from the current Caddy access-log fields. These measurements are not estimated.</p></section>
+ `+performanceColdPanel(extra,f.AppID)+performanceThresholdForm(func()performanceThresholds{if f.AppID>0 {return extra.PerApp[f.AppID]};return extra.Global}(),f.AppID,extra.Apps)+`
  </main></body></html>`
 }
