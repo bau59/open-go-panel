@@ -32,3 +32,15 @@ func TestPostgresSlowLogPageAllowsDisabling(t *testing.T) {
 		t.Fatal("PostgreSQL per-database disable option missing")
 	}
 }
+
+func TestDatabaseListLinksEachManagedDatabaseToSlowQueries(t *testing.T) {
+	page := databasesPage(databasePageData{Items: []dbmanager.Database{
+		{ID: 17, Engine: "mysql", Name: "reports", User: "report_user"},
+		{ID: 18, Engine: "postgres", Name: "warehouse", User: "warehouse_user"},
+	}})
+	for _, path := range []string{"/databases/17/slow-queries", "/databases/18/slow-queries"} {
+		if !strings.Contains(page, path) {
+			t.Errorf("missing slow-query link %s", path)
+		}
+	}
+}
