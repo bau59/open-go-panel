@@ -273,6 +273,11 @@ func auditMutations(store *state.Store, next http.Handler) http.Handler {
 		if status >= 400 {
 			return
 		}
+		// Optional audit trail can be disabled explicitly from Log retention.
+		// Authentication and service errors continue through structured logs.
+		if value,exists,err:=store.Setting("logs.audit_enabled");err==nil && exists && value=="0" {
+			return
+		}
 
 		action := r.Pattern
 		if action == "" {
