@@ -52,6 +52,17 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /caddy/site/{id}/redirect", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id >= 0 { http.Error(w, "invalid standalone domain id", http.StatusBadRequest); return }
+		if err := r.ParseForm(); err != nil { http.Error(w, "invalid request", http.StatusBadRequest); return }
+		if err := cfg.Caddy.SetStandaloneRedirect(r.Context(), id, r.FormValue("destination")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /caddy/site/{id}/attach", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || id >= 0 {
@@ -288,6 +299,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			}
 			placeholderNote := `<code>{domain}</code> and <code>{port}</code>`
 			if site.Kind == "parked" { placeholderNote = `<code>{domain}</code>` }
+			if site.Kind == "redirect" { placeholderNote = `<code>{domain}</code> and <code>{root}</code>` }
 			if site.Kind == "static" {
 				placeholderNote = `<code>{domain}</code> and <code>{root}</code>`
 			}
@@ -313,7 +325,12 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				</form>
 				` + func() string {
 					if site.AppID >= 0 { return "" }
-					return `<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/attach" class="compact-form" style="margin-top:12px">
+					return `<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/redirect" class="compact-form" style="margin-top:12px">
+						<input name="destination" type="url" placeholder="https://example.org/" value="` + func() string { if site.Kind == "redirect" { return html.EscapeString(site.Root) }; return "" }() + `" aria-label="301 redirect URL">
+						<button class="secondary">Save 301 redirect</button>
+					</form>
+					<p class="note">Leave redirect URL empty to return to parked mode.</p>
+					<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/attach" class="compact-form" style="margin-top:12px">
 						<input type="number" name="app_id" min="1" placeholder="Application ID" required>
 						<button class="button">Attach to application</button>
 					</form>
@@ -435,6 +452,7 @@ func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panel
 	if site.Kind == "parked" {
 		return "{domain} {\n respond \"Domain not configured\" 404\n}"
 	}
+	if site.Kind == "redirect" { return "{domain} {\n redir {root} 301\n}" }
 	if site.Kind == "static" || site.Port == 0 {
 		address := "{domain}"
 		if !settings.HTTPS {
