@@ -20,3 +20,14 @@ func TestPerformancePercentilesMeasured(t *testing.T){
  if math.Abs(percentile(values,.95)-4.8)>1e-9{t.Fatalf("p95=%g",percentile(values,.95))}
  if percentile(nil,.99)!=0{t.Fatal("empty percentile incorrect")}
 }
+
+func TestParseServerTimingMetrics(t *testing.T){
+ results:=parseServerTiming([]string{"db;dur=8.2, redis;dur=1.5, jet;dur=4.1"})
+ if len(results)!=3 || results[0].Name!="db" || results[0].DurationMS!=8.2 {
+  t.Fatalf("unexpected Server-Timing: %#v",results)
+ }
+}
+func TestRejectUnmeasuredServerTiming(t *testing.T){
+ results:=parseServerTiming([]string{"db;desc=unknown, bad;dur=-1, inf;dur=NaN"})
+ if len(results)!=0{t.Fatalf("unmeasured timings accepted: %#v",results)}
+}
