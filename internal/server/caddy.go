@@ -503,32 +503,8 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 }
 
 func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panelcaddy.GlobalSettings) string {
-	if site.Kind == "parked" || site.Kind == "redirect" {
-		address := "{domain}"
-		if !settings.HTTPS {
-			address = "http://{domain}"
-		}
-		if site.Kind == "parked" {
-			return address + " {\n respond \"Domain not configured\" 404\n}"
-		}
-		return address + " {\n redir {root} 301\n}"
-	}
-	if site.Kind == "static" || site.Port == 0 {
-		address := "{domain}"
-		if !settings.HTTPS {
-			address = "http://{domain}"
-		}
-		var lines []string
-		lines = append(lines, address+" {")
-		if settings.Compression {
-			lines = append(lines, "\tencode zstd gzip")
-		}
-		lines = append(lines, "\troot * {root}", "\tfile_server")
-		if settings.AccessLog {
-			lines = append(lines, "\tlog")
-		}
-		lines = append(lines, "}")
-		return strings.Join(lines, "\n")
+	if site.Kind == "static" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
+		return panelcaddy.ManagedSiteTemplate(site, settings)
 	}
 	return template
 }
