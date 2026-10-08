@@ -36,6 +36,52 @@ func TestHealthIsPublic(t *testing.T) {
 	}
 }
 
+func TestHTMLResponsesHaveCSP(t *testing.T) {
+	handler := newTestHandler()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("unexpected CSP: %q", csp)
+	}
+}
+
+func TestLoginRateLimit(t *testing.T) {
+	handler := newTestHandler()
+
+	for i := 0; i < maxLoginFailures; i++ {
+		form := url.Values{"username": {"admin"}, "password": {"wrong-password"}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "203.0.113.10:45000"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: expected %d, got %d", i+1, http.StatusUnauthorized, rec.Code)
+		}
+	}
+
+	form := url.Values{"username": {"admin"}, "password": {"secret"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "203.0.113.10:45001"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected %d after repeated failures, got %d", http.StatusTooManyRequests, rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("expected Retry-After header")
+	}
+}
+
 func TestDashboardRequiresLogin(t *testing.T) {
 	handler := newTestHandler()
 
