@@ -57,6 +57,7 @@ func applyJournalPolicy(ctx context.Context,sizeMB,days int)error{
 }
 
 func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Config){
+ registerLogSwitches(mux,store,cfg)
  mux.Handle("POST /log-retention/app/{id}",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   id,err:=strconv.ParseInt(r.PathValue("id"),10,64)
   if err!=nil||id<=0{http.Error(w,"invalid application",400);return}
@@ -163,6 +164,7 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
      }
      controls=fmt.Sprintf(`<form method="post" action="/log-retention/app/%d" class="compact-form"><select name="days" aria-label="Application journal retention">%s</select><button class="secondary">Save</button></form>`,app.ID,choices.String())
     }
+    if app.Type!="static" && app.Service.Mode!="raw"{controls+=appLogToggleForm(app)}
     fmt.Fprintf(&b,`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,html.EscapeString(app.Name),html.EscapeString(label),controls)
    }
    appRows=b.String()
@@ -173,7 +175,8 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
   source,hasSource,_:=cfg.State.Setting("performance.source")
   if !hasSource||source!="file"{source="journal"}
   path,_,_:=cfg.State.Setting("performance.file_path")
-  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,detailDays,aggregateDays,source,path))
+  switches:=logSwitchesPanel(r.Context(),cfg)
+  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,detailDays,aggregateDays,source,path,switches))
  })))
  mux.Handle("POST /log-retention/journal",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
@@ -199,6 +202,8 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
   if v,ok:=options[2].(string);ok{source=v}
   if v,ok:=options[3].(string);ok{filePath=v}
  }
+ switchPanel:=""
+ if len(options)>=5 {if v,ok:=options[4].(string);ok{switchPanel=v}}
  option:=func(current,value int,label string)string{
   attr:="";if current==value{attr=" selected"}
   return fmt.Sprintf(`<option value="%d"%s>%s</option>`,value,attr,label)
@@ -207,7 +212,7 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  if problem!=""{alert=`<div class="alert">`+html.EscapeString(problem)+`</div>`}
  return pageHead("Log retention")+`<body>`+appHeader("log-retention")+`<main class="shell">
  <div class="page-head"><div><p class="eyebrow">Observability / retention</p><h1>Log retention</h1>
- <p class="sub">One place to understand log sources, retention boundaries and their actual scope.</p></div><a class="secondary" href="/performance">HTTP performance</a></div>`+alert+`
+ <p class="sub">One place to understand log sources, retention boundaries and their actual scope.</p></div><a class="secondary" href="/performance">HTTP performance</a></div>`+alert+switchPanel+`
  <section class="panel panel-pad" style="margin-bottom:16px">
  <h2>System journal (shared limit)</h2>
  <p class="note">Caddy access/error logs and non-namespaced systemd services share this quota. Managed Go applications with dedicated journal namespaces have their own retention policy and are not governed by this shared limit.</p>
