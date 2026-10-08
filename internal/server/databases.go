@@ -25,6 +25,7 @@ type databasePageData struct {
 	MySQLSizes       map[string]int64
 	Backups          map[int64][]dbmanager.Backup
 	Schedule         dbmanager.BackupSchedule
+	ImportTask       dbmanager.RemoteImportTask
 	Message          string
 }
 
@@ -155,6 +156,32 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /databases/{engine}/restart", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		engine := strings.TrimSpace(r.PathValue("engine"))
+		if err := cfg.Databases.RestartEngine(r.Context(), engine); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/{id}/import", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid database id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Databases.StartRemoteImport(id, r.FormValue("connection")); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /databases/{id}/delete", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -167,6 +194,9 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
+
+
+	registerRedisRoutes(mux, store, cfg)
 }
 
 func writeDatabasesPage(w http.ResponseWriter, r *http.Request, cfg Config, statusCode int, message string) {
@@ -181,6 +211,7 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 		MySQLSizes: make(map[string]int64),
 		Backups:    make(map[int64][]dbmanager.Backup),
 		Schedule:   cfg.Databases.BackupSchedule(),
+		ImportTask: cfg.Databases.ImportTask(),
 		Message:    message,
 	}
 	data.Items, _ = cfg.Databases.List()
@@ -222,6 +253,10 @@ func databasesPage(data databasePageData) string {
 	if !data.Status.PostgresInstalled {
 		installPostgres = `<form method="post" action="/databases/install"><input type="hidden" name="engine" value="postgres"><button class="secondary">Install PostgreSQL</button></form>`
 	}
+	installRedis := ""
+	if !data.Status.RedisInstalled {
+		installRedis = `<form method="post" action="/databases/install"><input type="hidden" name="engine" value="redis"><button class="secondary">Install Redis</button></form>`
+	}
 
 	adminerControls := ""
 	if !data.Adminer.Installed {
@@ -233,6 +268,26 @@ func databasesPage(data databasePageData) string {
 	} else {
 		adminerControls = `<form method="post" action="/adminer/start"><button class="button">Start Adminer</button></form>
 			<form method="post" action="/adminer/update"><button class="secondary">Update</button></form>`
+	}
+
+	engineControls := func(engine string, installed, active bool, installHTML string) string {
+		if !installed {
+			return installHTML
+		}
+		parts := `<form method="post" action="/databases/` + engine + `/restart" onsubmit="return confirm('Restart ` + engine + `? Active connections may be interrupted.')"><button class="secondary">Restart</button></form>`
+		if engine == "redis" && active {
+			parts = `<a class="secondary" href="/databases/redis">Open Redis</a>` + parts
+		}
+		return `<div class="actions" style="justify-content:flex-start;margin-top:10px">` + parts + `</div>`
+	}
+
+	importNotice := ""
+	if data.ImportTask.Running {
+		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>Database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` from ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup was created first. The import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
+	} else if data.ImportTask.Error != "" {
+		importNotice = `<div class="alert">Last database import failed: ` + html.EscapeString(data.ImportTask.Error) + `</div>`
+	} else if !data.ImportTask.FinishedAt.IsZero() {
+		importNotice = `<div class="alert" style="border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc">Remote database import completed. Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></div>`
 	}
 
 	mysqlMetrics := ""
@@ -313,6 +368,17 @@ func databasesPage(data databasePageData) string {
 						<summary class="secondary">Connection</summary>
 						<div class="inline-popover wide"><code style="word-break:break-all">%s</code></div>
 					</details>
+					<details>
+						<summary class="secondary">Import remote</summary>
+						<div class="inline-popover wide">
+							<form method="post" action="/databases/%d/import" onsubmit="return confirm('Replace the local database with a snapshot from the remote database? A safety backup will be created first.')">
+								<label>Remote connection</label>
+								<input type="password" name="connection" autocomplete="off" placeholder="%s" required>
+								<p class="note" style="margin:8px 0 0">One-time snapshot import. Credentials are used only for this operation and are not stored.</p>
+								<button class="button" style="margin-top:10px">Import & replace local</button>
+							</form>
+						</div>
+					</details>
 					<form method="post" action="/databases/%d/delete" onsubmit="return confirm('Delete database and its user?')">
 						<button class="danger">Delete</button>
 					</form>
@@ -329,6 +395,13 @@ func databasesPage(data databasePageData) string {
 			item.ID,
 			backupRows.String(),
 			html.EscapeString(item.DSN()),
+			item.ID,
+			func() string {
+				if item.Engine == "mysql" {
+					return "mysql://user:password@remote-host:3306/database"
+				}
+				return "postgres://user:password@remote-host:5432/database?sslmode=require"
+			}(),
 			item.ID,
 		)
 	}
@@ -368,16 +441,17 @@ func databasesPage(data databasePageData) string {
 			<div>
 				<p class="eyebrow">Data</p>
 				<h1>Databases</h1>
-				<p class="sub">Local MySQL and PostgreSQL instances, credentials, tuning and backups.</p>
+				<p class="sub">Local MySQL, PostgreSQL and Redis services, credentials, migration, tuning and backups.</p>
 			</div>
 		</div>
 
-		` + alert + `
+		` + alert + importNotice + `
 
 		<section class="metrics-grid" style="margin-bottom:16px">
-			<div class="metric"><span>MySQL</span><strong>3306</strong><small>` + badge(data.Status.MySQLActive) + `</small>` + installMySQL + `</div>
-			<div class="metric"><span>PostgreSQL</span><strong>5432</strong><small>` + badge(data.Status.PostgresActive) + `</small>` + installPostgres + `</div>
-			<div class="metric"><span>Managed databases</span><strong>` + fmt.Sprintf("%d", len(data.Items)) + `</strong><small>tracked in panel.db</small></div>
+			<div class="metric"><span>MySQL</span><strong>3306</strong><small>` + badge(data.Status.MySQLActive) + `</small>` + engineControls("mysql", data.Status.MySQLInstalled, data.Status.MySQLActive, installMySQL) + `</div>
+			<div class="metric"><span>PostgreSQL</span><strong>5432</strong><small>` + badge(data.Status.PostgresActive) + `</small>` + engineControls("postgres", data.Status.PostgresInstalled, data.Status.PostgresActive, installPostgres) + `</div>
+			<div class="metric"><span>Redis</span><strong>6379</strong><small>` + badge(data.Status.RedisActive) + `</small>` + engineControls("redis", data.Status.RedisInstalled, data.Status.RedisActive, installRedis) + `</div>
+			<div class="metric"><span>Managed SQL databases</span><strong>` + fmt.Sprintf("%d", len(data.Items)) + `</strong><small>tracked in panel.db</small></div>
 			<div class="metric"><span>Network</span><strong>localhost</strong><small>database ports stay private</small></div>
 		</section>
 
