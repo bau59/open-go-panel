@@ -414,7 +414,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Domains may be connected to apps or parked independently.</p></div>
 				</div>
 			</div>
-			<form method="post" action="/caddy/domain" class="toolbar toolbar-4">
+			<form method="post" action="/caddy/domain" class="toolbar compact-form" style="margin-top:0">
 				<input name="domain" placeholder="example.com" required aria-label="Standalone domain">
 				<button class="button">Add domain</button>
 			</form>
