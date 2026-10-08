@@ -53,6 +53,7 @@ type ServiceConfig struct {
 	LimitNOFILE      int    `json:"limit_nofile,omitempty"`
 	TasksMax         int    `json:"tasks_max,omitempty"`
 	LogRetentionDays int    `json:"log_retention_days,omitempty"`
+	LogDisabled      bool   `json:"log_disabled,omitempty"`
 	AutoStart        bool   `json:"auto_start,omitempty"`
 	Environment      string `json:"environment,omitempty"`
 	RawUnit          string `json:"raw_unit,omitempty"`
@@ -1306,6 +1307,12 @@ func (m *Manager) writeUnit(app App) error {
 
 	fmt.Fprintf(&b, "EnvironmentFile=-%s\n", envPath(m.envDir, app.ID))
 	fmt.Fprintf(&b, "ExecStart=%s\n", runnerPath(m.runnerDir, app.ID))
+	if app.Service.LogDisabled {
+		// Stop streaming stdout/stderr into journald. This changes only
+		// managed services and takes effect at their next start/restart.
+		b.WriteString("StandardOutput=null\nStandardError=null\n")
+	}
+
 
 	restart := app.Service.Restart
 	if restart == "" {
