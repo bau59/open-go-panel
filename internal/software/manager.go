@@ -349,13 +349,15 @@ func installGo(ctx context.Context) error {
 		"trap 'rm -f \"$TMP\"; rm -rf \"$NEW\"' EXIT\n" +
 		"curl -fsSL \"https://go.dev/dl/$VERSION.linux-$ARCH.tar.gz\" -o \"$TMP\"\n" +
 		"mkdir -p \"$NEW\"\ntar -xzf \"$TMP\" -C \"$NEW\" --strip-components=1\n" +
-		"test -x \"$NEW/bin/go\"\n" +
+		"test -x \"$NEW/bin/go\" && test -x \"$NEW/bin/gofmt\"\n" +
+		"for tool in go gofmt; do\n" +
+		"  if [ -e \"/usr/local/bin/$tool\" ] && [ ! -L \"/usr/local/bin/$tool\" ]; then\n" +
+		"    echo \"cannot link $tool: /usr/local/bin/$tool is not a symlink\" >&2; exit 1\n" +
+		"  fi\n" +
+		"done\n" +
 		"if [ -d /usr/local/go ]; then mv /usr/local/go \"$OLD\"; fi\n" +
 		"if mv \"$NEW\" /usr/local/go; then\n" +
 		"  for tool in go gofmt; do\n" +
-		"    if [ -e \"/usr/local/bin/$tool\" ] && [ ! -L \"/usr/local/bin/$tool\" ]; then\n" +
-		"      echo \"cannot link $tool: /usr/local/bin/$tool is not a symlink\" >&2; exit 1\n" +
-		"    fi\n" +
 		"    ln -sfn \"/usr/local/go/bin/$tool\" \"/usr/local/bin/$tool\"\n" +
 		"  done\n" +
 		"  rm -rf \"$OLD\"\n" +
