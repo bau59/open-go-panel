@@ -548,7 +548,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 		<tr data-resource-app="%d">
 			<td><a href="/apps/%d"><strong>%s</strong></a><div class="muted">#%d</div></td>
 			<td>%s</td>
-			<td><span class="badge">%s</span></td>
+			<td><span class="meta-chip">%s</span></td>
 			<td><code>%s</code></td>
 			<td><span class="resource-value" data-resource="cpu">—</span></td>
 			<td><span class="resource-value" data-resource="memory">—</span></td>
@@ -652,15 +652,16 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		extraBlock = strings.Join(extras, "")
 	}
 
-	statusClass := " warn"
+	statusClass := "warn"
 	statusLabel := strings.TrimSpace(status)
 	switch status {
 	case "active":
-		statusClass = " ok"
+		statusClass = "ok"
 		statusLabel = "Running"
 	case "activating":
 		statusLabel = "Starting"
 	case "failed":
+		statusClass = "danger"
 		statusLabel = "Failed"
 	case "inactive", "":
 		statusLabel = "Stopped"
@@ -856,7 +857,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				<p class="eyebrow" style="margin-top:10px">Application #` + fmt.Sprintf("%d", app.ID) + `</p>
 				<div class="app-title-row">
 					<h1>` + html.EscapeString(app.Name) + `</h1>
-					<span class="badge">` + html.EscapeString(app.Type) + `</span>
+					<span class="meta-chip">` + html.EscapeString(app.Type) + `</span>
 				</div>
 				<p class="sub">` + html.EscapeString(app.User) + ` · ` + html.EscapeString(app.Root) + `</p>
 			</div>
@@ -869,8 +870,8 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			<div class="runtime-head">
 				<div>
 					<p class="eyebrow">Runtime</p>
-					<div class="runtime-state"><strong>` + html.EscapeString(statusLabel) + `</strong><span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span></div>
-					<p class="note" style="margin:7px 0 0"><code>` + html.EscapeString(serviceName) + `</code></p>
+					<div class="runtime-state"><strong>` + html.EscapeString(statusLabel) + `</strong></div>
+					<div class="runtime-status-line"><span class="state-text ` + statusClass + `"><i></i>` + html.EscapeString(defaultString(status, "unknown")) + `</span><code>` + html.EscapeString(serviceName) + `</code></div>
 				</div>
 				` + runtimeActions + `
 			</div>
@@ -1128,7 +1129,7 @@ func deployBlock(cfg Config, app panelapp.App) string {
 		<section class="panel panel-pad app-card app-card-wide">
 			<div class="section-title">
 				<div><h2>Deploy</h2><p class="note" style="margin:6px 0 0">Pull a Git branch into the app directory, prepare dependencies and restart the service.</p></div>
-				<span class="badge">` + html.EscapeString(deployed) + `</span>
+				<span class="meta-chip">` + html.EscapeString(deployed) + `</span>
 			</div>
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy/config">
 				<div class="app-form-row app-form-row-deploy">
