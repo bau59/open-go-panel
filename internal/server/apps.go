@@ -32,7 +32,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), deployBlock(cfg, app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +224,30 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		if err := cfg.Apps.SetDeployConfig(id, r.FormValue("repository"), r.FormValue("branch"), r.FormValue("auto_deploy") == "1"); err != nil {
 			app, _ := cfg.Apps.Get(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/promote", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid development app id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid build request", http.StatusBadRequest)
+			return
+		}
+		targetID, err := strconv.ParseInt(r.FormValue("target_id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid production app id", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Apps.StartPromotion(id, targetID, r.FormValue("go_package")); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest,
+				appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), promotionBlock(cfg, app)))
 			return
 		}
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
@@ -992,8 +1016,9 @@ func runModeOptions(appType, current string) string {
 	if appType == "go" {
 		options = append([]struct{ value, label string }{
 			{"go-build", "Go: build + run binary"},
+			{"go-binary", "Go: prebuilt production binary"},
 			{"go-run", "Go: go run ."},
-			{"go-air", "Go: Air live reload"},
+			{"go-air", "Go: Air live reload (development)"},
 		}, options...)
 	}
 	if appType == "node" {
@@ -1064,7 +1089,64 @@ func recommendedServiceConfig(app panelapp.App, info systeminfo.Info) panelapp.S
 }
 
 
+func promotionBlock(cfg Config, app panelapp.App) string {
+	if app.Type != "go" || app.Service.RunMode != "go-air" || app.Service.Mode == "raw" {
+		return ""
+	}
+	targets, err := cfg.Apps.PromotionTargets(app.ID)
+	if err != nil {
+		return `<div class="alert">` + html.EscapeString(err.Error()) + `</div>`
+	}
+	var options strings.Builder
+	for _, target := range targets {
+		fmt.Fprintf(&options, `<option value="%d">%s — %s · port %d</option>`,
+			target.ID, html.EscapeString(target.Name), html.EscapeString(target.User), target.Port)
+	}
+	status := cfg.Apps.PromotionStatus()
+	var state string
+	if status.SourceID == app.ID && !status.StartedAt.IsZero() {
+		if status.Running {
+			state = `<div class="software-task"><span class="status-badge warn">building</span><div><strong>` +
+				html.EscapeString(status.Step) + `</strong><p class="note">The panel must stay running until promotion finishes.</p></div></div>
+				<script>setTimeout(() => location.reload(), 4000)</script>`
+		} else if status.Error != "" {
+			state = `<div class="alert">Production build failed: ` + html.EscapeString(status.Error) + `</div>`
+		} else {
+			state = `<p class="note">Production release activated successfully.</p>`
+		}
+	}
+	selector := `<p class="note">No production Go applications use the prebuilt binary mode yet.
+		Create another Go application, set Service settings → Go: prebuilt production binary, then return here.</p>`
+	if len(targets) > 0 {
+		disabled := ""
+		if status.Running {disabled = " disabled"}
+		selector = `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/promote"
+			onsubmit="return confirm('Compile development source and replace the selected production binary? Its previous release will be restored if startup fails.')">
+			<div class="app-promotion-grid">
+				<div><label>Production application</label><select name="target_id" required>` + options.String() + `</select></div>
+				<div><label>Go package (main)</label><input name="go_package" value="." placeholder="./cmd/server" required></div>
+				<div><button class="button" type="submit"` + disabled + `>Build → Production</button></div>
+			</div>
+		</form>`
+	}
+	return `<section class="panel panel-pad app-card app-card-wide">
+		<div class="section-title"><div><h2>Dev → Production</h2>
+			<p class="note" style="margin:6px 0 0">Air keeps running in development. Compile a snapshot and replace only the executable in a separate production application.</p>
+		</div><span class="meta-chip">Go · Air</span></div>` +
+		state + selector +
+		`<p class="note" style="margin:12px 0 0">Production keeps its own PORT, environment variables, domains and persistent files. A failed startup triggers a rollback. The previous binary is not a database rollback.</p>
+		</section>`
+}
+
 func deployBlock(cfg Config, app panelapp.App) string {
+	if app.Type == "go" && app.Service.RunMode == "go-binary" {
+		return `<section class="panel panel-pad app-card app-card-wide">
+			<div class="section-title"><div><h2>Production binary</h2>
+			<p class="note" style="margin:6px 0 0">This application runs a compiled executable. Deploy it from a separate Go application in Air development mode using Build → Production.</p></div>
+			<span class="meta-chip">production</span></div>
+			<p class="note">Git Deploy and Auto Deploy are disabled for the prebuilt binary mode to prevent replacing your production release unexpectedly.</p>
+		</section>`
+	}
 	deploy, err := cfg.Apps.DeployConfig(app.ID)
 	if err != nil {
 		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
