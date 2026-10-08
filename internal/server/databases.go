@@ -25,6 +25,7 @@ type databasePageData struct {
 	PostgresMetrics  dbmanager.PostgresMetrics
 	RedisMetrics     dbmanager.RedisMetrics
 	MySQLSizes       map[string]int64
+	PostgresSizes    map[string]int64
 	Backups          map[int64][]dbmanager.Backup
 	Schedule         dbmanager.BackupSchedule
 	ImportTask       dbmanager.RemoteImportTask
@@ -215,8 +216,9 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 	data := databasePageData{
 		Status:     cfg.Databases.Status(r.Context()),
 		Adminer:    cfg.Adminer.Status(r.Context()),
-		MySQLSizes: make(map[string]int64),
-		Backups:    make(map[int64][]dbmanager.Backup),
+		MySQLSizes:    make(map[string]int64),
+		PostgresSizes: make(map[string]int64),
+		Backups:       make(map[int64][]dbmanager.Backup),
 		Schedule:   cfg.Databases.BackupSchedule(),
 		ImportTask: cfg.Databases.ImportTask(),
 		Message:    message,
@@ -235,6 +237,10 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 	}
 	if data.Status.PostgresActive {
 		data.PostgresMetrics, _ = cfg.Databases.PostgresMetrics(r.Context())
+		sizes, _ := cfg.Databases.PostgresDatabaseSizes(r.Context())
+		for _, size := range sizes {
+			data.PostgresSizes[size.Name] = size.Bytes
+		}
 	}
 	if data.Status.RedisActive {
 		data.RedisMetrics, _ = cfg.Databases.RedisMetrics(r.Context())
@@ -372,8 +378,13 @@ func databasesPage(data databasePageData) string {
 		}
 
 		size := "—"
-		if item.Engine == "mysql" {
+		switch item.Engine {
+		case "mysql":
 			if bytes, ok := data.MySQLSizes[item.Name]; ok {
+				size = formatBytes(uint64(bytes))
+			}
+		case "postgres":
+			if bytes, ok := data.PostgresSizes[item.Name]; ok {
 				size = formatBytes(uint64(bytes))
 			}
 		}
