@@ -83,3 +83,31 @@ func TestRuntimeConfigValidation(t *testing.T) {
         t.Fatal(err)
     }
 }
+
+func TestExistingEnvironmentFile(t *testing.T) {
+    path := filepath.Join(t.TempDir(), ".env")
+    const secrets = "BRIDGE_API_KEYS=sk-original\\nSTATE_ENCRYPTION_KEY=original-fernet-key\\n"
+    if err := os.WriteFile(path, []byte(secrets), 0600); err != nil { t.Fatal(err) }
+    cfg := RuntimeConfig{EnvironmentFile: path, Volumes: "bridge_data:/app/data"}
+    env, mounts, err := cfg.validate()
+    if err != nil { t.Fatal(err) }
+    if env != "" { t.Fatal("server env file should not be copied into runtime strings") }
+    args, cleanup, err := runtimeArgs(cfg, env, mounts)
+    if err != nil { t.Fatal(err) }
+    cleanup()
+    if !strings.Contains(strings.Join(args, " "), "--env-file "+path) {
+        t.Fatalf("existing env file path absent from flags: %#v", args)
+    }
+    content, err := os.ReadFile(path)
+    if err != nil { t.Fatal(err) }
+    if string(content) != secrets {
+        t.Fatal("existing secret file was modified or removed")
+    }
+    cfg.Environment = "OTHER=one"
+    if _,_,err:=cfg.validate(); err==nil {t.Fatal("accepted both inline and file environment")}
+    cfg.Environment = ""
+    if err:=os.Chmod(path,0644);err!=nil{t.Fatal(err)}
+    if _,_,err:=cfg.validate();err==nil{t.Fatal("accepted world-readable secrets")}
+    cfg.EnvironmentFile = "relative/.env"
+    if _,_,err:=cfg.validate();err==nil{t.Fatal("accepted relative env file")}
+}
