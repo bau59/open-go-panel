@@ -378,7 +378,8 @@ func dashboardPage(info systeminfo.Info, appCount, userCount, activeApps int) st
 				<p>Manage Linux accounts, passwords and SSH access.</p>
 			</a>
 			<a class="card" href="/databases"><div class="card-icon">DB</div><h2>Databases</h2><p>Install MySQL or PostgreSQL, create databases and manage credentials.</p></a>
-			<article class="card"><div class="card-icon">TTY</div><h2>Terminal</h2><p>Browser terminal access will be added next.</p></article>
+			<a class="card" href="/software"><div class="card-icon">PKG</div><h2>Software</h2><p>Install and update Docker, Node.js, Tailwind, Go and shared build tools.</p></a>
+			<a class="card" href="/terminal"><div class="card-icon">TTY</div><h2>Terminal</h2><p>Open a root or managed-user shell through the SSH-tunneled panel.</p></a>
 		</section>
 		<div class="statline"><i></i>Open Go Panel is running</div>
 	</main>
