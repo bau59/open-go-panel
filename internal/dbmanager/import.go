@@ -41,6 +41,14 @@ func (m *Manager) ImportTask() RemoteImportTask {
 	return m.importTask
 }
 
+func (m *Manager) ClearImportTask() {
+	m.importMu.Lock()
+	if !m.importTask.Running {
+		m.importTask = RemoteImportTask{}
+	}
+	m.importMu.Unlock()
+}
+
 func (m *Manager) StartRemoteImport(id int64, connection string) error {
 	target, err := m.Get(id)
 	if err != nil {
