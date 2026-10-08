@@ -537,7 +537,7 @@ func (m *Manager) deployUnlocked(ctx context.Context, id int64) error {
 	}
 	target := strings.TrimSpace(targetOut)
 	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", target); err != nil {
-		return err
+		return m.recoverDeployment(app, id, previous, fmt.Errorf("reset deployed commit: %w", err))
 	}
 
 	if err := m.prepareDeployment(ctx, app); err != nil {
@@ -652,7 +652,7 @@ func (m *Manager) Rollback(ctx context.Context, id int64) error {
 	}
 
 	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", cfg.PreviousCommit); err != nil {
-		return err
+		return m.recoverDeployment(app, id, original, fmt.Errorf("reset rollback commit: %w", err))
 	}
 	if err := m.prepareDeployment(ctx, app); err != nil {
 		return m.recoverDeployment(app, id, original, fmt.Errorf("prepare rollback: %w", err))
@@ -664,7 +664,7 @@ func (m *Manager) Rollback(ctx context.Context, id int64) error {
 	}
 	_, err = m.store.DB().Exec(`
 		UPDATE deployments
-		SET current_commit = ?, previous_commit = ?, deployed_at = ?
+		SET current_commit = ?, previous_commit = ?, deployed_at = ?, auto_deploy = 0
 		WHERE app_id = ?
 	`, cfg.PreviousCommit, original, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
