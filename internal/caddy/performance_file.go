@@ -49,7 +49,7 @@ func (m *Manager) CollectPerformanceFile(ctx context.Context,path string)error{
  if !ValidCaddyLogPath(path){return fmt.Errorf("unsafe Caddy log path")}
  file,err:=os.Open(path)
  if err!=nil{return m.setPerformanceFileError(ctx,err)}
- defer file.Close()
+ defer func(){_ = file.Close()}()
  id,err:=fileIdentity(file)
  if err!=nil{return err}
  var prev string
@@ -94,7 +94,7 @@ func (m *Manager) CollectPerformanceFile(ctx context.Context,path string)error{
  for _,site:=range sites{if site.AppID>0{associated[strings.ToLower(site.Domain)]=site.AppID}}
  type point struct{key string;p PerformancePoint}
  var records []point
- read:=bufio.NewReaderSize(file,64*1024)
+ read:=bufio.NewReaderSize(io.LimitReader(file,performanceFileMaxBytes),64*1024)
  var scanned,malformed int64
  bytesRead:=int64(0)
  reachedEOF:=false
