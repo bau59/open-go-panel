@@ -95,3 +95,52 @@ func TestPerformanceFileCopyTruncateDoesNotReuseOldOffset(t *testing.T){
  if err:=db.DB().QueryRow("SELECT dropped FROM http_perf_cursor WHERE driver='file'").Scan(&loss);err!=nil{t.Fatal(err)}
  if rows!=3||loss!=1{t.Fatalf("copytruncate lost new line or was not reported: rows=%d gap=%d",rows,loss)}
 }
+
+func TestPerformanceFileBatchCursorNoLoss(t *testing.T){
+ db,err:=state.Open(filepath.Join(t.TempDir(),"state.db"))
+ if err!=nil{t.Fatal(err)}
+ defer db.Close()
+ manager:=New(db,filepath.Join(t.TempDir(),"legacy.json"))
+ path:=filepath.Join(t.TempDir(),"access.log")
+ now:=time.Now().Unix()
+ var data strings.Builder
+ for i:=0;i<1050;i++{
+  data.WriteString(fixtureAccessLine(now,"/page/"+fmt.Sprintf("%d",i)))
+ }
+ if err:=os.WriteFile(path,[]byte(data.String()),0600);err!=nil{t.Fatal(err)}
+ for i:=0;i<3;i++{
+  if err:=manager.collectPerformanceFile(context.Background(),path);err!=nil{t.Fatal(err)}
+ }
+ var count int
+ if err:=db.DB().QueryRow("SELECT count(*) FROM http_perf_requests").Scan(&count);err!=nil{t.Fatal(err)}
+ if count!=1050{t.Fatalf("expected 1050 unique requests after batch resume, got %d",count)}
+ result,err:=manager.QueryPerformance(context.Background(),PerformanceFilter{
+  Since:time.Now().Add(-time.Hour),Until:time.Now().Add(time.Hour),Page:1,
+ })
+ if err!=nil{t.Fatal(err)}
+ if result.Total!=1050 || result.Average<35.35 || result.Average>35.36{
+  t.Fatalf("unexpected saved history: count=%d avg=%f",result.Total,result.Average)
+ }
+}
+
+func TestPerformanceRetentionPrunesOldRequestsAndRollups(t *testing.T){
+ db,err:=state.Open(filepath.Join(t.TempDir(),"state.db"))
+ if err!=nil{t.Fatal(err)}
+ defer db.Close()
+ manager:=New(db,filepath.Join(t.TempDir(),"legacy.json"))
+ old:=time.Now().Add(-40*24*time.Hour).UnixNano()
+ _,err=db.DB().Exec(`INSERT INTO http_perf_requests
+ (source_key,time_ns,domain,method,route,status,duration_ms,response_bytes)
+ VALUES('expired',?,'example.com','GET','/old',200,42.5,20)`,old)
+ if err!=nil{t.Fatal(err)}
+ _,err=db.DB().Exec(`INSERT INTO http_perf_rollup
+ (hour_ns,domain,method,route,requests,total_ms)
+ VALUES(?,'example.com','GET','/old',1,42.5)`,old)
+ if err!=nil{t.Fatal(err)}
+ if err:=manager.PrunePerformance(context.Background());err!=nil{t.Fatal(err)}
+ var count int
+ for _,table:=range []string{"http_perf_requests","http_perf_rollup"}{
+  if err:=db.DB().QueryRow("SELECT count(*) FROM "+table).Scan(&count);err!=nil{t.Fatal(err)}
+  if count!=0{t.Fatalf("expected expired %s to be removed, got %d",table,count)}
+ }
+}
