@@ -229,6 +229,21 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /apps/{id}/production/rollback", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid production application id", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Apps.RollbackProductionBinary(r.Context(), id); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest,
+				appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /apps/{id}/promote", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -1140,11 +1155,19 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 
 func deployBlock(cfg Config, app panelapp.App) string {
 	if app.Type == "go" && app.Service.RunMode == "go-binary" {
+		disabled := " disabled"
+		if cfg.Apps.HasProductionRollback(app.ID) { disabled = "" }
 		return `<section class="panel panel-pad app-card app-card-wide">
 			<div class="section-title"><div><h2>Production binary</h2>
 			<p class="note" style="margin:6px 0 0">This application runs a compiled executable. Deploy it from a separate Go application in Air development mode using Build → Production.</p></div>
 			<span class="meta-chip">production</span></div>
-			<p class="note">Git Deploy and Auto Deploy are disabled for the prebuilt binary mode to prevent replacing your production release unexpectedly.</p>
+			<div class="actions" style="margin-top:12px;justify-content:flex-start">
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/production/rollback"
+					onsubmit="return confirm('Switch production back to the previous compiled binary?')">
+					<button class="secondary" type="submit"` + disabled + `>Rollback production binary</button>
+				</form>
+			</div>
+			<p class="note">Git Deploy and Auto Deploy are disabled for the prebuilt binary mode. The production environment, port and data stay unchanged during binary upgrades.</p>
 		</section>`
 	}
 	deploy, err := cfg.Apps.DeployConfig(app.ID)
