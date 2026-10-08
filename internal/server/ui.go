@@ -174,6 +174,13 @@ const baseStyles = `
 	.compact-form{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
 	.compact-form-3{grid-template-columns:1fr 1fr auto}
 	.security-grid{grid-template-columns:1fr 1fr}
+	.security-component{display:flex;min-height:210px;flex-direction:column}
+	.security-component-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+	.security-component-head>span:first-child{color:var(--muted-2);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+	.security-component>.note{margin:10px 0 0;line-height:1.45}
+	.component-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:auto;padding-top:16px}
+	.component-actions form{margin:0}
+
 	.settings-list{display:grid;gap:10px}
 	.setting-switch{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0;padding:14px 0;border-bottom:1px solid var(--border);cursor:pointer}
 	.setting-switch:last-child{border-bottom:0}
