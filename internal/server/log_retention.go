@@ -55,6 +55,14 @@ func applyJournalPolicy(ctx context.Context,sizeMB,days int)error{
 }
 
 func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Config){
+ mux.Handle("POST /log-retention/redis",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
+  n,err:=strconv.Atoi(r.FormValue("length"));if err!=nil{http.Error(w,"invalid SLOWLOG limit",400);return}
+  ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second);defer cancel()
+  if err:=cfg.Databases.SetRedisSlowLogLength(ctx,n);err!=nil{http.Error(w,err.Error(),400);return}
+  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
+ })))
+
  mux.Handle("POST /log-retention/audit",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
   days,err:=strconv.Atoi(r.FormValue("days"))
@@ -81,7 +89,9 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
   if raw,found,err:=cfg.State.Setting("logs.audit_retention_days");err==nil&&found{
    if n,e:=strconv.Atoi(raw);e==nil{auditDays=n}
   }
-  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,msg))
+  redisLength,redisErr:=cfg.Databases.RedisSlowLogLength(r.Context())
+  if redisErr!=nil && msg==""{msg="Redis SLOWLOG policy unavailable: "+redisErr.Error()}
+  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg))
  })))
  mux.Handle("POST /log-retention/journal",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
@@ -90,13 +100,13 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
   if err1!=nil||err2!=nil{http.Error(w,"invalid limits",400);return}
   ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
   if err:=applyJournalPolicy(ctx,size,days);err!=nil{
-   writeHTML(w,cfg.Logger,http.StatusBadRequest,logRetentionPage(size,days,30,err.Error()));return
+   writeHTML(w,cfg.Logger,http.StatusBadRequest,logRetentionPage(size,days,30,0,err.Error()));return
   }
   http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
  })))
 }
 
-func logRetentionPage(sizeMB,days,auditDays int,problem string)string{
+func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem string)string{
  option:=func(current,value int,label string)string{
   attr:="";if current==value{attr=" selected"}
   return fmt.Sprintf(`<option value="%d"%s>%s</option>`,value,attr,label)
@@ -123,6 +133,10 @@ func logRetentionPage(sizeMB,days,auditDays int,problem string)string{
  <select name="days" aria-label="Audit log retention">`+
  option(auditDays,7,"7 days")+option(auditDays,14,"14 days")+option(auditDays,30,"30 days")+option(auditDays,90,"90 days")+option(auditDays,365,"365 days") +`</select>
  <button class="secondary">Save audit retention</button></form></section>
+ <section class="panel panel-pad" style="margin-bottom:16px"><h2>Redis SLOWLOG memory buffer</h2>
+ <p class="note">Redis retains a bounded number of slow commands in memory, independent of journald. The limit is per Redis instance, not per logical database. Changes use CONFIG SET and CONFIG REWRITE.</p>
+ <form method="post" action="/log-retention/redis" class="compact-form" style="max-width:640px">
+ <select name="length" aria-label="Redis SLOWLOG maximum commands">`+option(redisLength,128,"128 commands")+option(redisLength,256,"256 commands")+option(redisLength,512,"512 commands")+option(redisLength,1024,"1024 commands")+`</select><button class="secondary">Save Redis SLOWLOG limit</button></form></section>
  <section class="panel panel-pad"><h2>Source-specific logging and retention</h2>
  <p class="note">Separate controls are shown only where the underlying service genuinely supports an independent policy.</p>
  <div class="table-scroll"><table><thead><tr><th>Log source</th><th>Storage / retention scope</th><th>Configure</th></tr></thead><tbody>
@@ -130,7 +144,7 @@ func logRetentionPage(sizeMB,days,auditDays int,problem string)string{
  <tr><td>Go / Air / systemd applications</td><td>Shared system journal. No independent per-app retention is enforced.</td><td><a class="secondary" href="/apps">Applications</a></td></tr>
  <tr><td>MySQL slow queries</td><td>MySQL FILE/TABLE slow-log output, independent of journald. Rotation and table cleanup require separate server policy.</td><td><a class="secondary" href="/databases">Databases</a></td></tr>
  <tr><td>PostgreSQL slow queries</td><td>PostgreSQL file log; retention follows the host logrotate/logging configuration.</td><td><a class="secondary" href="/databases">Databases</a></td></tr>
- <tr><td>Redis slow commands</td><td>In-memory Redis SLOWLOG capped by slowlog-max-len, not by days; no extra copies made by the panel.</td><td><a class="secondary" href="/databases/redis/slow-queries">Redis SLOWLOG</a></td></tr>
+ <tr><td>Redis slow commands</td><td>In-memory Redis SLOWLOG capped by the maximum count configured above; no extra copies made by the panel.</td><td><a class="secondary" href="/databases/redis/slow-queries">Redis SLOWLOG</a></td></tr>
  <tr><td>Panel audit log</td><td>SQLite audit_log; configured above.</td><td><a class="secondary" href="/activity">Activity</a></td></tr>
  </tbody></table></div></section>
  </main></body></html>`
