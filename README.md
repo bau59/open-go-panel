@@ -293,6 +293,27 @@ CPU and memory from Docker every ten seconds. **Run container** and
 clicked. Closing the panel interrupts an in-progress rebuild, so wait for the
 build task to finish before using **Close panel**.
 
+## Per-app Git auto-deploy intervals
+
+On an application's **Deploy** card, enable **Auto deploy** and enter the
+**Check interval (seconds)**. Supported values are **30–86400 seconds**:
+`30` checks every 30 seconds, `60` every minute and `300` every
+5 minutes (the default for existing installations). You can set a different
+value for each application. Save with **Save Git settings**.
+
+The scheduler evaluates which applications are due every five seconds.
+Per-application last-check timestamps and interval settings are persisted
+in SQLite across panel restarts. A failed remote Git check counts as a check,
+so it is retried at the next configured interval rather than continuously.
+Only changed commits trigger deployment. Checks may be delayed during a
+running deployment; the panel serializes deployment switches to prevent
+overlapping updates. Scheduled database backups run independently and no
+longer hold up Git checking.
+
+A manually promoted **Go prebuilt production binary** application is
+excluded from Git Auto deploy; releases for that mode use **Build →
+Production** from a separate development application.
+
 ## Go development (Air) → production binary
 
 Create two **Go** applications with separate roots and ports:
