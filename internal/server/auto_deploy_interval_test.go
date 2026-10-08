@@ -1,10 +1,13 @@
 package server
 
 import (
+	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	panelapp "github.com/bau59/open-go-panel/internal/app"
+	"github.com/bau59/open-go-panel/internal/state"
 )
 
 func TestParseAutoDeployIntervalSeconds(t *testing.T){
@@ -30,13 +33,26 @@ func TestParseAutoDeployIntervalSeconds(t *testing.T){
 	}
 }
 
-func TestAutoDeployIntervalDisplayedOnAppPage(t *testing.T){
-	// The UI shows the control for a deployment, and it must survive markup
-	// changes without silently returning to a fixed 5-minute poll.
-	_ = panelapp.DefaultAutoDeployIntervalSeconds
-	if panelapp.MinAutoDeployIntervalSeconds != 30{
-		t.Fatal("unexpected minimum interval")
+func TestAutoDeployIntervalShownOnAppPage(t *testing.T){
+	current,err:=user.Current()
+	if err!=nil{t.Fatal(err)}
+	store,err:=state.Open(filepath.Join(t.TempDir(),"panel.db"))
+	if err!=nil{t.Fatal(err)}
+	defer store.Close()
+	root:=filepath.Join(t.TempDir(),"app")
+	if _,err:=store.DB().Exec(`INSERT INTO apps(id,owner,name,type,root,created_at)
+		VALUES(55,?,?, 'go', ?, '2026-01-01T00:00:00Z')`,current.Username,"demo",root);err!=nil{
+		t.Fatal(err)
 	}
-	const field = "auto_deploy_interval_seconds"
-	if !strings.Contains(field,"interval"){t.Fatal("interval field missing")}
+	manager:=panelapp.New(store,filepath.Join(t.TempDir(),"apps.json"),nil)
+	if err:=manager.SetDeployConfigInterval(55,"git@github.com:org/repo.git","main",true,30);err!=nil{t.Fatal(err)}
+	markup:=deployBlock(Config{Apps:manager},panelapp.App{ID:55,Type:"go"})
+	for _,expected:=range []string{
+		`name="auto_deploy_interval_seconds" min="30" max="86400"`,
+		`value="30"`,
+		`name="auto_deploy" value="1" checked`,
+		`30 = every 30 seconds`,
+	}{
+		if !strings.Contains(markup,expected){t.Errorf("missing auto-deploy UI fragment %q",expected)}
+	}
 }
