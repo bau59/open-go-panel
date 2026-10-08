@@ -211,7 +211,21 @@ generate a distinct key for each private repository.
 
 Provide the repository URL, optional branch (blank uses the default branch),
 Dockerfile path relative to the repository, container name, ports, and
-autostart setting. Click **Build & run**. The panel clones the source into a
+autostart setting. You can also configure container runtime settings:
+
+- **Environment variables** (one `KEY=value` per line, with blank lines and
+  `#` comments allowed), for example `BRIDGE_API_KEYS=...` and
+  `STATE_ENCRYPTION_KEY=...`. These are passed through a restricted,
+  temporary environment file to `docker run`, not to the image builder.
+- **Persistent mounts** (one `/host/path:/container/path` or
+  `named_volume:/container/path` per line). For a DeepSeek bridge,
+  `/opt/deepseek-bridge/data:/app/data` preserves session state across
+  container removal/recreation. Missing host data directories are created
+  with 0700 permissions; existing contents are not deleted.
+- **Init** and **shared memory** (e.g. `512m`) are optional runtime
+  settings for browser-based/Playwright apps.
+
+Click **Build & run**. The panel clones the source into a
 temporary build context, runs `docker build`, creates the container, and
 removes the temporary clone. By default Docker ports bind to `127.0.0.1`;
 explicit public publishing is optional. GitHub SSH host keys are fetched
@@ -219,6 +233,14 @@ from GitHub's HTTPS metadata API and verified during SSH clone. The SSH
 private key remains server-side under `/etc/open-go-panel/docker-git/`
 with restricted permissions. The build never passes the private key into
 Docker as an argument, layer or build context.
+
+**Existing containers are not recreated by these forms.** If you have
+already configured a live container manually, its environment and mounts
+remain unchanged. Enter the same persistent mount and environment values
+when deliberately creating a replacement; Docker will otherwise reject a
+duplicate container name. Keep existing `STATE_ENCRYPTION_KEY` unchanged
+for encrypted DeepSeek sessions. The UI does not show or retrieve existing
+secret values.
 
 Public GitHub repositories can be built without a deploy key. Git, an SSH
 client and a running Docker daemon are required. The build runs as a
