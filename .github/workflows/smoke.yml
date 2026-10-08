@@ -46,6 +46,43 @@ jobs:
           sleep 1
           curl -fsS http://127.0.0.1:18080/SHA256SUMS
 
+      - name: Verify managed Go links are safe and idempotent
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n ./install.sh
+          # Execute the installer's function against isolated temporary paths.
+          function_source="$(sed -n '/^ensure_managed_go_links() {/,/^}/p' ./install.sh)"
+          test -n "$function_source"
+          eval "$function_source"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/go/bin" "$tmp/bin"
+          for tool in go gofmt; do
+            printf '#!/bin/sh\nexit 0\n' > "$tmp/go/bin/$tool"
+            chmod 0755 "$tmp/go/bin/$tool"
+          done
+          ensure_managed_go_links "$tmp/go" "$tmp/bin"
+          test "$(readlink "$tmp/bin/go")" = "$tmp/go/bin/go"
+          test "$(readlink "$tmp/bin/gofmt")" = "$tmp/go/bin/gofmt"
+          # Re-running must leave working links unchanged.
+          ensure_managed_go_links "$tmp/go" "$tmp/bin"
+          test "$(readlink "$tmp/bin/go")" = "$tmp/go/bin/go"
+          # Respect an existing regular binary and a dangling symlink.
+          rm "$tmp/bin/go" "$tmp/bin/gofmt"
+          printf 'keep this binary\n' > "$tmp/bin/go"
+          ln -s "$tmp/nonexistent" "$tmp/bin/gofmt"
+          ensure_managed_go_links "$tmp/go" "$tmp/bin"
+          test "$(cat "$tmp/bin/go")" = "keep this binary"
+          test "$(readlink "$tmp/bin/gofmt")" = "$tmp/nonexistent"
+          # Go is optional. Missing binaries must not create broken links.
+          rm "$tmp/bin/go" "$tmp/bin/gofmt" "$tmp/go/bin/go" "$tmp/go/bin/gofmt"
+          ensure_managed_go_links "$tmp/go" "$tmp/bin"
+          test ! -e "$tmp/bin/go"
+          test ! -L "$tmp/bin/go"
+          test ! -e "$tmp/bin/gofmt"
+          test ! -L "$tmp/bin/gofmt"
+
       - name: Install current build
         run: |
           sudo env \
