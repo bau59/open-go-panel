@@ -17,6 +17,7 @@ type performanceExtras struct {
  Cold []caddy.ColdSample
  Idle []caddy.IdleSample
  Collector caddy.CollectorStatus
+ Rollups []caddy.PerformanceRollup
 }
 
 func (e performanceExtras) classify(ms float64,appID int64)(string,string){
@@ -87,4 +88,24 @@ func performanceCollectorPanel(s caddy.CollectorStatus)string{
  ` · Journal entries scanned: `+fmt.Sprintf("%d",s.Scanned)+` · Parse errors: `+
  fmt.Sprintf("%d",s.ParseErrors)+` · Metric loss/overflow indicators: `+fmt.Sprintf("%d",s.Dropped)+`</p>`+warning+
  `<p class="note">The journal reader runs in bounded batches independently from the HTTP request path. Metrics can be incomplete if upstream logs are missing, rotation removes unread records, or the storage cap is reached.</p></section>`
+}
+
+func performanceRollupPanel(e performanceExtras) string{
+ var rows strings.Builder
+ var count,errorCount int64
+ for _,r:=range e.Rollups{
+  count+=r.Requests
+  errorCount+=r.Errors5xx
+  fmt.Fprintf(&rows,`<tr><td>%s</td><td>%d</td><td>%.2f ms</td><td>%d</td><td>%d</td></tr>`,
+   html.EscapeString(r.Hour.Local().Format("2006-01-02 15:00")),
+   r.Requests,r.AverageMS,r.Slow500,r.Errors5xx)
+ }
+ if rows.Len()==0{rows.WriteString(`<tr><td colspan="5" class="empty">No hourly aggregates for this interval.</td></tr>`)}
+ return `<section class="panel" style="margin-top:16px">
+  <div class="panel-pad"><h2>Historical hourly aggregates</h2>
+  <p class="note">Measured counts, errors and arithmetic mean from persisted hourly buckets. Aggregates are retained independently from individual requests. P50/P95/P99 are not reconstructed from averages after detail rows expire. Status and slow-only request filters do not apply to this summary.</p>
+  <p class="note">Hourly requests: `+fmt.Sprintf("%d",count)+` · 5xx: `+fmt.Sprintf("%d",errorCount)+`</p></div>
+  <details><summary class="secondary" style="margin:0 16px 16px">Show hourly aggregates</summary><div class="table-scroll">
+  <table><thead><tr><th>Hour</th><th>Requests</th><th>Mean Caddy duration</th><th>≥500 ms</th><th>5xx</th></tr></thead>
+  <tbody>`+rows.String()+`</tbody></table></div></details></section>`
 }
