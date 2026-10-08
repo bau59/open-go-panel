@@ -184,7 +184,9 @@ func parseDockerStats(out []byte) (map[string]ContainerStats, error) {
 		if row.ID == "" {
 			continue
 		}
-		result[row.ID] = ContainerStats{CPU: row.CPU, Memory: row.MemUsage, MemPct: row.MemPct}
+		id:=row.ID
+		if len(id)>12 {id=id[:12]}
+		result[id] = ContainerStats{CPU: row.CPU, Memory: row.MemUsage, MemPct: row.MemPct}
 	}
 	return result, nil
 }
