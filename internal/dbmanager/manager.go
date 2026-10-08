@@ -66,6 +66,14 @@ type MySQLMetrics struct {
 	BufferPoolUsed     int64
 }
 
+type PostgresMetrics struct {
+	Version         string
+	UptimeSeconds   int64
+	Connections     int64
+	Databases       int64
+	TotalBytes      int64
+}
+
 type DatabaseSize struct {
 	Name  string
 	Bytes int64
@@ -518,6 +526,32 @@ func (m *Manager) RunScheduledBackupIfDue(ctx context.Context, now time.Time) (b
 	return true, nil
 }
 
+
+func (m *Manager) PostgresMetrics(ctx context.Context) (PostgresMetrics, error) {
+	if _, err := exec.LookPath("psql"); err != nil {
+		return PostgresMetrics{}, errors.New("PostgreSQL is not installed")
+	}
+	query := "SELECT current_setting('server_version'), EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time()))::bigint, (SELECT count(*) FROM pg_stat_activity), (SELECT count(*) FROM pg_database WHERE datistemplate = false), COALESCE((SELECT sum(pg_database_size(datname)) FROM pg_database WHERE datistemplate = false),0);"
+	out, err := exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "psql", "-At", "-F", "	", "-d", "postgres", "-c", query).CombinedOutput()
+	if err != nil {
+		return PostgresMetrics{}, fmt.Errorf("read PostgreSQL metrics: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	fields := strings.Split(strings.TrimSpace(string(out)), "	")
+	if len(fields) < 5 {
+		return PostgresMetrics{}, fmt.Errorf("unexpected PostgreSQL metrics output")
+	}
+	parse := func(value string) int64 {
+		n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return n
+	}
+	return PostgresMetrics{
+		Version:       strings.TrimSpace(fields[0]),
+		UptimeSeconds: parse(fields[1]),
+		Connections:   parse(fields[2]),
+		Databases:     parse(fields[3]),
+		TotalBytes:    parse(fields[4]),
+	}, nil
+}
 
 func (m *Manager) MySQLMetrics(ctx context.Context) (MySQLMetrics, error) {
 	if _, err := exec.LookPath("mysql"); err != nil {
