@@ -54,11 +54,16 @@ func TestCSRFMiddlewareProtectsMutations(t *testing.T) {
 		name   string
 		values url.Values
 		origin string
+		site   string
+		host   string
 		want   int
 	}{
 		{name: "missing token", values: url.Values{}, want: http.StatusForbidden},
 		{name: "wrong token", values: url.Values{csrfFormField: {"not-a-token"}}, want: http.StatusForbidden},
-		{name: "cross origin", values: url.Values{csrfFormField: {token}}, origin: "https://evil.example", want: http.StatusForbidden},
+		{name: "cross origin missing token", values: url.Values{}, origin: "https://external.example", site: "cross-site", want: http.StatusForbidden},
+		{name: "cross origin wrong token", values: url.Values{csrfFormField: {"invalid"}}, origin: "https://external.example", site: "cross-site", want: http.StatusForbidden},
+		{name: "reverse proxy rewritten host", values: url.Values{csrfFormField: {token}}, origin: "https://panel.example.com", host: "127.0.0.1:8443", site: "same-origin", want: http.StatusSeeOther},
+		{name: "browser origin differs from proxy host", values: url.Values{csrfFormField: {token}}, origin: "https://panel.example.com", host: "internal.panel.local", want: http.StatusSeeOther},
 		{name: "valid token", values: url.Values{csrfFormField: {token}}, want: http.StatusSeeOther},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,6 +71,12 @@ func TestCSRFMiddlewareProtectsMutations(t *testing.T) {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			if tc.origin != "" {
 				req.Header.Set("Origin", tc.origin)
+			}
+			if tc.site != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.site)
+			}
+			if tc.host != "" {
+				req.Host = tc.host
 			}
 			req.AddCookie(cookie)
 			rec := httptest.NewRecorder()
@@ -113,6 +124,43 @@ func TestCSRFSameOriginPolicy(t *testing.T) {
 			}
 			if got := sameOriginMutation(req); got != tc.want {
 				t.Fatalf("sameOriginMutation = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAdminerPostStillChecksOrigin(t *testing.T) {
+	handler := New(Config{
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		AdminUser:     "admin",
+		AdminPassword: "secret",
+	})
+	cookie, token := loginAndGetCSRF(t, handler)
+
+	for _, tc := range []struct {
+		name   string
+		origin string
+		site   string
+		want   int
+	}{
+		{name: "cross origin", origin: "https://evil.example", want: http.StatusForbidden},
+		{name: "cross site", site: "cross-site", want: http.StatusForbidden},
+		{name: "same site sibling", site: "same-site", want: http.StatusForbidden},
+		{name: "same origin", origin: "http://example.com", site: "same-origin", want: http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			form := url.Values{csrfFormField: {token}}
+			req := httptest.NewRequest(http.MethodPost, "http://example.com/db-admin/login", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", tc.origin)
+			if tc.site != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.site)
+			}
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("Adminer request status = %d, want %d", rec.Code, tc.want)
 			}
 		})
 	}
