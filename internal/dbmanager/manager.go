@@ -649,7 +649,14 @@ func (m *Manager) Backup(ctx context.Context, id int64) (Backup, error) {
 		return Backup{}, errOperationInProgress
 	}
 	defer m.operationMu.Unlock()
-	return m.backupUnlocked(ctx, id)
+	backup, err := m.backupUnlocked(ctx, id)
+	if err != nil {
+		return Backup{}, err
+	}
+	if err := m.UploadBackup(ctx, backup); err != nil {
+		return backup, err
+	}
+	return backup, nil
 }
 
 func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) {
