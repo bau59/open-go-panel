@@ -27,6 +27,34 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
+# Make an already-installed Go toolchain usable by managed Linux users.
+# Open Go Panel itself is precompiled and does not require Go to run.
+# Never overwrite administrator-managed binaries or symlinks.
+ensure_managed_go_links() {
+  local go_root="${1:-/usr/local/go}"
+  local bin_dir="${2:-/usr/local/bin}"
+  local tool source_path link_path
+
+  for tool in go gofmt; do
+    source_path="${go_root}/bin/${tool}"
+    link_path="${bin_dir}/${tool}"
+
+    # Go is optional; installing the panel must not download or replace it.
+    if [ ! -x "${source_path}" ]; then
+      continue
+    fi
+    # -L also catches dangling symlinks: never overwrite existing links.
+    if [ -e "${link_path}" ] || [ -L "${link_path}" ]; then
+      continue
+    fi
+
+    ln -s "${source_path}" "${link_path}"
+    echo "Exposed existing Go tool: ${link_path} -> ${source_path}"
+  done
+}
+
+ensure_managed_go_links /usr/local/go /usr/local/bin
+
 if ! command -v curl >/dev/null 2>&1; then
   apt-get update
   apt-get install -y curl

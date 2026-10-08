@@ -38,6 +38,14 @@ Run as root on Ubuntu:
 curl -fsSL https://raw.githubusercontent.com/bau59/open-go-panel/main/install.sh | bash
 ```
 
+The panel is distributed as a precompiled binary; Go is optional and is
+installed separately via **Software → Go** when needed for hosting Go apps.
+If `/usr/local/go/bin/go` and `gofmt` are already installed when you run
+`install.sh`, the installer automatically creates missing
+`/usr/local/bin/go` and `/usr/local/bin/gofmt` symlinks. This also runs on
+panel updates. Existing executables and symlinks are never overwritten, so
+managed application users can find Go without manual PATH changes.
+
 New installations bind the panel to localhost:
 
 ```text
