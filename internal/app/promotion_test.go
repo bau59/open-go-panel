@@ -142,3 +142,32 @@ func TestGoProductionActivationLeavesPersistentFileChangesIntact(t *testing.T) {
 	oldBinary,err:=os.ReadFile(filepath.Join(root,".ogp-app.previous"))
 	if err!=nil||string(oldBinary)!="old executable"{t.Fatalf("old binary backup missing: %q %v",oldBinary,err)}
 }
+
+func TestFirstProductionActivationFailureDoesNotInventRollback(t *testing.T) {
+	root:=t.TempDir()
+	prepared:=filepath.Join(root,".ogp-new-binary")
+	if err:=os.WriteFile(prepared,[]byte("first build"),0750);err!=nil{t.Fatal(err)}
+	recovered:=false
+	err:=activateProductionBinary(root,prepared,func()error{return errors.New("app failed to listen")},func()error{recovered=true;return nil})
+	if err==nil||!strings.Contains(err.Error(),"no previous binary exists"){t.Fatalf("incorrect first-deploy failure: %v",err)}
+	if recovered{t.Fatal("attempted to restart a previous binary that does not exist")}
+	if _,err:=os.Lstat(filepath.Join(root,".ogp-app"));!os.IsNotExist(err){t.Fatalf("failed first build still active: %v",err)}
+}
+
+func TestProductionBinaryManualRollbackSwap(t *testing.T) {
+	root:=t.TempDir()
+	active:=filepath.Join(root,".ogp-app")
+	previous:=filepath.Join(root,".ogp-app.previous")
+	for path,value:=range map[string]string{active:"new binary",previous:"old binary"}{
+		if err:=os.WriteFile(path,[]byte(value),0750);err!=nil{t.Fatal(err)}
+	}
+	restartCalled:=0
+	if err:=activateStagedRelease(active,previous,func()error{restartCalled++;return nil},nil);err!=nil{
+		t.Fatal(err)
+	}
+	nowActive,_:=os.ReadFile(active)
+	nowPrevious,_:=os.ReadFile(previous)
+	if string(nowActive)!="old binary"||string(nowPrevious)!="new binary"||restartCalled!=1{
+		t.Fatalf("rollback exchange failed: active=%q previous=%q restarts=%d",nowActive,nowPrevious,restartCalled)
+	}
+}
