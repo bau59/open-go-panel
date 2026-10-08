@@ -192,12 +192,7 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
 }
 
 func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows string,options ...any)string{
- detailDays,aggregateDays:=7,30
  source,filePath:="journal",""
- if len(options)>=2{
-  if n,ok:=options[0].(int);ok{detailDays=n}
-  if n,ok:=options[1].(int);ok{aggregateDays=n}
- }
  if len(options)>=4{
   if v,ok:=options[2].(string);ok{source=v}
   if v,ok:=options[3].(string);ok{filePath=v}
