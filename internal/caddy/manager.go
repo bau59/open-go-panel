@@ -613,11 +613,20 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 			}
 			siteTemplate = managedStaticTemplate(settings)
 		}
-		if site.Kind == "parked" {
-			siteTemplate = "{domain} {\n respond \"Domain not configured\" 404\n}"
-		}
-		if site.Kind == "redirect" {
-			siteTemplate = "{domain} {\n redir {root} 301\n}"
+		if site.Kind == "parked" || site.Kind == "redirect" {
+			settings, err := m.GlobalSettings()
+			if err != nil {
+				settings = defaultGlobalSettings()
+			}
+			address := "{domain}"
+			if !settings.HTTPS {
+				address = "http://{domain}"
+			}
+			if site.Kind == "parked" {
+				siteTemplate = address + " {\n respond \"Domain not configured\" 404\n}"
+			} else {
+				siteTemplate = address + " {\n redir {root} 301\n}"
+			}
 		}
 		if strings.TrimSpace(site.Template) != "" {
 			siteTemplate = site.Template
