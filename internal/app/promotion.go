@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -219,11 +219,10 @@ func installProductionBinary(sourceBinary,stage string) error {
 	}
 	stageInfo,err:=os.Stat(stage)
 	if err!=nil{return err}
-	stat,ok:=stageInfo.Sys().(interface{Uid() uint32; Gid() uint32})
-	_ = stat
-	_ = ok
-	// The release root belongs to its production user. Set ownership of the
-	// replacement binary to that same user before activation.
+	owner,ok:=stageInfo.Sys().(*syscall.Stat_t)
+	if !ok {return errors.New("production root ownership is unavailable")}
+	// Use the production owner, not the development user. The production
+	// runtime keeps its existing environment and port settings.
 	dst,err:=os.CreateTemp(stage,".ogp-new-binary-")
 	if err!=nil{return err}
 	defer os.Remove(dst.Name())
@@ -231,7 +230,7 @@ func installProductionBinary(sourceBinary,stage string) error {
 	if err:=dst.Chmod(0750);err!=nil{_ = dst.Close();return err}
 	if err:=dst.Sync();err!=nil{_ = dst.Close();return err}
 	if err:=dst.Close();err!=nil{return err}
-	if err:=exec.Command("chown","--reference="+stage,dst.Name()).Run();err!=nil{
+	if err:=os.Chown(dst.Name(),int(owner.Uid),int(owner.Gid));err!=nil{
 		return fmt.Errorf("set production binary ownership: %w",err)
 	}
 	return os.Rename(dst.Name(),filepath.Join(stage,".ogp-app"))
