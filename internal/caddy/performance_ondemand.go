@@ -26,6 +26,12 @@ func (m *Manager) QueryPerformanceFromLogs(ctx context.Context, f PerformanceFil
  if f.Page<1 {f.Page=1}
  if f.PerPage<=0||f.PerPage>200 {f.PerPage=50}
  records:=make([]PerformancePoint,0,1024)
+ appByDomain:=map[string]int64{}
+ if sites,err:=m.Sites();err==nil {
+  for _,site:=range sites {
+   if site.AppID>0 {appByDomain[strings.ToLower(site.Domain)]=site.AppID}
+  }
+ }
  scanned:=0
  truncated:=false
  add:=func(raw string){
@@ -41,6 +47,8 @@ func (m *Manager) QueryPerformanceFromLogs(ctx context.Context, f PerformanceFil
     math.IsNaN(*timing.Duration)||math.IsInf(*timing.Duration,0)||
     *timing.Duration<0 || *timing.Duration>86400{return}
   route:=cleanPerformanceRoute(entry.URI)
+  appID:=appByDomain[strings.ToLower(entry.Domain)]
+  if f.AppID>0&&appID!=f.AppID{return}
   if f.Domain!="" && !strings.EqualFold(entry.Domain,f.Domain){return}
   if f.Method!="" && !strings.EqualFold(entry.Method,f.Method){return}
   if f.Route!="" && !strings.Contains(strings.ToLower(route),strings.ToLower(f.Route)){return}
@@ -52,7 +60,7 @@ func (m *Manager) QueryPerformanceFromLogs(ctx context.Context, f PerformanceFil
   requestID:=""
   if allowedRequestID.MatchString(timing.RequestID){requestID=timing.RequestID}
   records=append(records,PerformancePoint{
-   Time:entry.Time,Domain:entry.Domain,Method:entry.Method,Route:route,
+   Time:entry.Time,AppID:appID,Domain:entry.Domain,Method:entry.Method,Route:route,
    Protocol:entry.Protocol,Status:entry.Status,DurationMS:entry.DurationMS,
    Size:entry.Size,RequestID:requestID,ServerTimings:parseServerTiming(timingValues),
   })
@@ -70,6 +78,7 @@ func (m *Manager) QueryPerformanceFromLogs(ctx context.Context, f PerformanceFil
   scanner.Buffer(make([]byte,64*1024),2*1024*1024)
   bounded:=false
   for scanner.Scan(){
+   if ctx.Err()!=nil{break}
    var row journalEnvelope
    if json.Unmarshal(scanner.Bytes(),&row)==nil{add(row.Message)}
    if scanned>=reportMaxScanned || truncated {bounded=true;truncated=true;break}
@@ -95,6 +104,7 @@ func (m *Manager) QueryPerformanceFromLogs(ctx context.Context, f PerformanceFil
   scanner.Buffer(make([]byte,64*1024),2*1024*1024)
   if from>0 {scanner.Scan()} // Ignore first potentially partial JSONL entry.
   for scanner.Scan(){
+   if ctx.Err()!=nil{return PerformanceResult{},ctx.Err()}
    add(scanner.Text())
    if scanned>=reportMaxScanned||truncated&&len(records)>=performanceMaxRecords{truncated=true;break}
   }
