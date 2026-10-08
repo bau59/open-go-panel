@@ -200,6 +200,9 @@ const baseStyles = `
 	.health-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 	.health-grid .metric{padding:14px}
 	.health-grid .metric strong{font-size:16px}
+	.health-state.ok{color:#8ceabc}
+	.health-state.warn{color:#f7d884}
+	.health-state.danger{color:#ffabb4}
 	.app-form-row{display:grid;gap:8px}
 	.app-form-row-deploy{grid-template-columns:minmax(0,1fr) 160px auto}
 	.app-form-row-db{grid-template-columns:minmax(0,1fr) 170px auto}
