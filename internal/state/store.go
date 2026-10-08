@@ -207,6 +207,18 @@ CREATE TABLE IF NOT EXISTS http_perf_restarts (
 );
 CREATE INDEX IF NOT EXISTS idx_perf_restarts_time ON http_perf_restarts(started_ns);
 
+CREATE TABLE IF NOT EXISTS http_perf_lifecycle (
+	app_id INTEGER NOT NULL,
+	event_ns INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	service TEXT NOT NULL,
+	source TEXT NOT NULL,
+	reason TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY(app_id,event_ns,kind,source)
+);
+CREATE INDEX IF NOT EXISTS idx_perf_lifecycle_time ON http_perf_lifecycle(event_ns);
+
+
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate sqlite state: %w", err)
