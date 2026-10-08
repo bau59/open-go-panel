@@ -221,7 +221,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Apps.SetDeployConfig(id, r.FormValue("repository"), r.FormValue("branch")); err != nil {
+		if err := cfg.Apps.SetDeployConfig(id, r.FormValue("repository"), r.FormValue("branch"), r.FormValue("auto_deploy") == "1"); err != nil {
 			app, _ := cfg.Apps.Get(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
 			return
@@ -1136,6 +1136,10 @@ func deployBlock(cfg Config, app panelapp.App) string {
 					<input name="branch" value="` + html.EscapeString(defaultString(deploy.Branch, "main")) + `" placeholder="main" required>
 					<button class="secondary">Save Git settings</button>
 				</div>
+				<label class="setting-switch deploy-auto-switch">
+					<div><strong>Auto deploy</strong><span>Every 5 minutes Open Go Panel checks this branch and deploys when the remote commit changes.</span></div>
+					<span class="switch"><input type="checkbox" name="auto_deploy" value="1"` + checked(deploy.AutoDeploy) + `><i></i></span>
+				</label>
 			</form>
 			<div class="actions" style="justify-content:flex-start;margin-top:10px">
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy"><button class="button">Deploy now</button></form>
