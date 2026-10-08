@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -451,6 +452,20 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		})))
 	}
 
+	mux.Handle("GET /apps/resources", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apps, err := cfg.Apps.List()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		usage := cfg.Apps.ResourceUsageMany(r.Context(), apps)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if err := json.NewEncoder(w).Encode(usage); err != nil {
+			cfg.Logger.Warn("encode app resources failed", "err", err)
+		}
+	})))
+
 	mux.Handle("GET /apps", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apps, err := cfg.Apps.List()
 		if err != nil {
@@ -508,13 +523,17 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 		}
 
 		fmt.Fprintf(&rows, `
-		<tr>
+		<tr data-resource-app="%d">
 			<td><a href="/apps/%d"><strong>%s</strong></a><div class="muted">#%d</div></td>
 			<td>%s</td>
 			<td><span class="badge">%s</span></td>
 			<td><code>%s</code></td>
+			<td><span class="resource-value" data-resource="cpu">—</span></td>
+			<td><span class="resource-value" data-resource="memory">—</span></td>
+			<td><span class="resource-value" data-resource="tasks">—</span></td>
 			<td><code>%s</code></td>
 		</tr>`,
+			app.ID,
 			app.ID,
 			html.EscapeString(app.Name),
 			app.ID,
@@ -526,7 +545,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 	}
 
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="5" class="empty">No applications yet.</td></tr>`)
+		rows.WriteString(`<tr><td colspan="8" class="empty">No applications yet.</td></tr>`)
 	}
 
 	alert := ""
@@ -568,11 +587,12 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			</form>
 			` + hint + `
 			<table>
-				<thead><tr><th>App</th><th>Owner</th><th>Type</th><th>Port</th><th>Root</th></tr></thead>
+				<thead><tr><th>App</th><th>Owner</th><th>Type</th><th>Port</th><th>CPU</th><th>Memory</th><th>Tasks</th><th>Root</th></tr></thead>
 				<tbody>` + rows.String() + `</tbody>
 			</table>
 		</section>
 	</main>
+	` + appResourcesScript() + `
 </body>
 </html>`
 }
@@ -820,7 +840,10 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				` + portFact + `
 				<div><span>Run mode</span><strong>` + html.EscapeString(runMode) + `</strong></div>
 				<div><span>Autostart</span><strong>` + html.EscapeString(autoStart) + `</strong></div>
-				<div><span>Resources</span><strong>` + html.EscapeString(resourceLimit) + `</strong></div>
+				<div><span>Limits</span><strong>` + html.EscapeString(resourceLimit) + `</strong></div>
+				<div data-resource-app="` + fmt.Sprintf("%d", app.ID) + `"><span>CPU now</span><strong data-resource="cpu">—</strong></div>
+				<div data-resource-app="` + fmt.Sprintf("%d", app.ID) + `"><span>Memory now</span><strong data-resource="memory">—</strong></div>
+				<div data-resource-app="` + fmt.Sprintf("%d", app.ID) + `"><span>Tasks</span><strong data-resource="tasks">—</strong></div>
 			</div>
 		</section>
 
@@ -846,6 +869,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			</div>
 		</details>
 	</main>
+	` + appResourcesScript() + `
 </body></html>`
 }
 
@@ -1085,6 +1109,68 @@ func deployBlock(cfg Config, app panelapp.App) string {
 				<div style="margin-top:14px">` + sshPanel + `</div>
 			</details>
 		</section>`
+}
+
+func appResourcesScript() string {
+	return `<script>
+	(() => {
+		const formatBytes = (bytes) => {
+			if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+			const units = ['B','KB','MB','GB','TB'];
+			let value = bytes;
+			let unit = 0;
+			while (value >= 1024 && unit < units.length - 1) {
+				value /= 1024;
+				unit++;
+			}
+			const digits = unit >= 2 && value < 10 ? 1 : 0;
+			return value.toFixed(digits) + ' ' + units[unit];
+		};
+		const render = (usage) => {
+			const row = document.querySelectorAll('[data-resource-app="' + usage.app_id + '"]');
+			row.forEach((scope) => {
+				const cpu = scope.querySelector('[data-resource="cpu"]');
+				const memory = scope.querySelector('[data-resource="memory"]');
+				const tasks = scope.querySelector('[data-resource="tasks"]');
+				if (usage.state === 'static') {
+					if (cpu) cpu.textContent = 'Caddy';
+					if (memory) memory.textContent = 'shared';
+					if (tasks) tasks.textContent = '—';
+					return;
+				}
+				if (!usage.available) {
+					if (cpu) cpu.textContent = usage.state === 'active' ? '—' : '0%';
+					if (memory) memory.textContent = usage.state === 'active' ? '—' : '0 B';
+					if (tasks) tasks.textContent = usage.state === 'active' ? '—' : '0';
+					return;
+				}
+				if (cpu) cpu.textContent = usage.cpu_percent.toFixed(1) + '%';
+				if (memory) {
+					memory.textContent = formatBytes(usage.memory_bytes);
+					if (usage.memory_limit > 0) memory.title = 'Limit: ' + formatBytes(usage.memory_limit);
+				}
+				if (tasks) {
+					tasks.textContent = String(usage.tasks);
+					if (usage.tasks_limit > 0) tasks.title = 'Limit: ' + usage.tasks_limit;
+				}
+			});
+		};
+		const refresh = async () => {
+			try {
+				const response = await fetch('/apps/resources', {cache:'no-store'});
+				if (!response.ok) return;
+				const data = await response.json();
+				data.forEach(render);
+			} catch (_) {}
+		};
+		refresh();
+		const timer = setInterval(refresh, 5000);
+		document.addEventListener('visibilitychange', () => {
+			if (!document.hidden) refresh();
+		});
+		window.addEventListener('pagehide', () => clearInterval(timer), {once:true});
+	})();
+	</script>`
 }
 
 func defaultString(value, fallback string) string {
