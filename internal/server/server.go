@@ -153,6 +153,7 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Apps != nil && cfg.Users != nil {
 		registerAppRoutes(mux, store, cfg)
+		registerTerminalRoutes(mux, store, cfg)
 	}
 	if cfg.Caddy != nil && cfg.Apps != nil {
 		registerCaddyRoutes(mux, store, cfg)
