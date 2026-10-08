@@ -34,7 +34,7 @@ type Container struct {
 var (
     containerNamePattern = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     imagePattern         = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,255}$")
-    portPattern          = regexp.MustCompile("^([0-9]{1,5}:)?[0-9]{1,5}(/(tcp|udp))?$")
+    portPattern          = regexp.MustCompile("^[0-9]{1,5}:[0-9]{1,5}(/(tcp|udp))?$")
 )
 
 type Manager struct{}
@@ -129,7 +129,7 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
     return containers, nil
 }
 
-func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart bool) error {
+func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart, publicPorts bool) error {
     name = strings.TrimSpace(name)
     image = normalizeImageReference(image)
     if !containerNamePattern.MatchString(name) {
@@ -144,34 +144,48 @@ func (m *Manager) Create(ctx context.Context, name, image, ports string, autosta
         args = append(args, "--restart", "unless-stopped")
     }
 
-    if strings.TrimSpace(ports) != "" {
-        for _, raw := range strings.Split(ports, ",") {
-            mapping := strings.TrimSpace(raw)
-            if mapping == "" {
-                continue
-            }
-            if !portPattern.MatchString(mapping) {
-                return fmt.Errorf("invalid port mapping %q; use 8080:80 or 8080:80/tcp", mapping)
-            }
-            parts := strings.Split(strings.Split(mapping, "/")[0], ":")
-            for _, part := range parts {
-                n := 0
-                for _, ch := range part {
-                    n = n*10 + int(ch-'0')
-                }
-                if n < 1 || n > 65535 {
-                    return fmt.Errorf("invalid port in mapping %q", mapping)
-                }
-            }
-            args = append(args, "-p", mapping)
-        }
+    portArgs, err := publishedPortArgs(ports, publicPorts)
+    if err != nil {
+        return err
     }
+    args = append(args, portArgs...)
 
     if err := dockerCommand(ctx, "pull", image); err != nil {
         return err
     }
     args = append(args, image)
     return dockerCommand(ctx, args...)
+}
+
+// publishedPortArgs binds to loopback unless the administrator explicitly opts in
+// to public publishing. Docker-published public ports may bypass UFW rules.
+func publishedPortArgs(ports string, public bool) ([]string, error) {
+    if strings.TrimSpace(ports) == "" {
+        return nil, nil
+    }
+    bind := "127.0.0.1:"
+    if public {
+        bind = "0.0.0.0:"
+    }
+    var args []string
+    for _, raw := range strings.Split(ports, ",") {
+        mapping := strings.TrimSpace(raw)
+        if !portPattern.MatchString(mapping) {
+            return nil, fmt.Errorf("invalid port mapping %q; use 8080:80 or 8080:80/tcp", mapping)
+        }
+        parts := strings.Split(strings.Split(mapping, "/")[0], ":")
+        for _, part := range parts {
+            n := 0
+            for _, ch := range part {
+                n = n*10 + int(ch-'0')
+            }
+            if n < 1 || n > 65535 {
+                return nil, fmt.Errorf("invalid port in mapping %q", mapping)
+            }
+        }
+        args = append(args, "-p", bind+mapping)
+    }
+    return args, nil
 }
 
 func (m *Manager) RestartService(ctx context.Context) error {

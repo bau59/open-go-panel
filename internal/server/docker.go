@@ -37,6 +37,7 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
             r.FormValue("image"),
             r.FormValue("ports"),
             r.FormValue("autostart") == "1",
+            r.FormValue("public_ports") == "1",
         ); err != nil {
             writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
             return
@@ -203,8 +204,10 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div><label>Image / URL</label><input name="image" placeholder="redis:7, ghcr.io/org/app:latest or Docker Hub URL" required></div>
                 <div><label>Ports</label><input name="ports" placeholder="8080:80, 8443:443"></div>
                 <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
+            <p class="note" style="margin-top:12px">Ports bind to 127.0.0.1 by default. Public ports may bypass UFW rules; enable only when external access is required.</p>
         </section>
         <section class="panel">
             <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">Autostart maps to Docker restart policy <code>unless-stopped</code>.</p></div></div>

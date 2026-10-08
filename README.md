@@ -122,6 +122,10 @@ Database backups are stored in:
 /var/lib/open-go-panel/backups/databases/
 ```
 
+Docker-published container ports bind to `127.0.0.1` by default. To publish
+ports on all interfaces, explicitly enable **Public ports** when creating a
+container. Public Docker ports may bypass UFW policy, so protect them separately.
+
 ## Service
 
 ```bash
