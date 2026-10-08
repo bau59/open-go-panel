@@ -17,6 +17,11 @@ func TestParseRemoteConnection(t *testing.T) {
 			engine: "mysql", host: "example.com", port: "3307", database: "app",
 		},
 		{
+			name: "mysql prefixed go dsn",
+			input: "mysql://user:p@ss&word@tcp(10.16.0.3:3306)/app?parseTime=true&charset=utf8mb4&loc=Local",
+			engine: "mysql", host: "10.16.0.3", port: "3306", database: "app",
+		},
+		{
 			name: "mysql go dsn",
 			input: "user:secret@tcp(10.0.0.2:3306)/app",
 			engine: "mysql", host: "10.0.0.2", port: "3306", database: "app",
