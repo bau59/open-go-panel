@@ -53,12 +53,9 @@ func dashboardUnitStats(ctx context.Context, apps []panelapp.App) map[int64]dash
  if len(ids)==0{return result}
  stdout,err:=exec.CommandContext(ctx,"systemctl",args...).Output()
  if err!=nil{return result}
- for _,block:=range strings.Split(string(stdout),"
-
-"){
+ for _,block:=range strings.Split(string(stdout),"\n\n"){
   vals:=map[string]string{}
-  for _,line:=range strings.Split(block,"
-"){
+  for _,line:=range strings.Split(block,"\n"){
    key,value,ok:=strings.Cut(strings.TrimSpace(line),"=")
    if ok {vals[key]=value}
   }
