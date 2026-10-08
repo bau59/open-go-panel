@@ -305,10 +305,9 @@ func terminalPage(data terminalPageData) string {
 						<label>Working directory</label>
 						<select name="app" id="terminal-app" onchange="this.form.submit()"` + func() string { if data.SelectedUser == "root" { return " disabled" }; return "" }() + `>` + appOptions.String() + `</select>
 					</div>
-					<div class="terminal-connect"><button class="secondary">Switch terminal</button></div>
 				</form>
 				<div class="terminal-target-meta">
-					<span class="status-badge ok">interactive</span>
+					<span class="state-text ok"><i></i>connected</span>
 					<code>` + html.EscapeString(data.SelectedUser) + ` · ` + html.EscapeString(data.WorkDir) + `</code>
 				</div>
 			</div>
