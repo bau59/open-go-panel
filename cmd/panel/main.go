@@ -88,6 +88,41 @@ func main() {
 		}
 	}
 
+	// Metrics ingestion uses a bounded journal batch and its own deadline. A
+	// collector failure never prevents the panel or managed apps from serving.
+	metricsCtx, stopMetrics := context.WithCancel(context.Background())
+	defer stopMetrics()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		pruneAt := time.Time{}
+		for {
+			select {
+			case <-metricsCtx.Done():
+				return
+			default:
+			}
+			pollCtx, cancel := context.WithTimeout(metricsCtx, 12*time.Second)
+			if err := caddyManager.CollectPerformanceJournal(pollCtx); err != nil && metricsCtx.Err() == nil {
+				logger.Warn("HTTP metrics collection failed", "error", err)
+			}
+			cancel()
+			if time.Since(pruneAt) >= time.Hour {
+				pruneCtx, pruneCancel := context.WithTimeout(metricsCtx, 15*time.Second)
+				if err := caddyManager.PrunePerformance(pruneCtx); err != nil && metricsCtx.Err() == nil {
+					logger.Warn("HTTP metrics retention failed", "error", err)
+				}
+				pruneCancel()
+				pruneAt = time.Now()
+			}
+			select {
+			case <-metricsCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
 	// Backups and Git deployment checks run independently. A long backup
 	// must not delay the 30-second interval configured for an application.
 	go func() {
