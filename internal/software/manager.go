@@ -43,6 +43,7 @@ func (m *Manager) Items(ctx context.Context) []Item {
 		nodeStatus(ctx),
 		tailwindStatus(ctx),
 		goStatus(ctx),
+		airStatus(ctx),
 		gitStatus(ctx),
 		buildToolsStatus(ctx),
 	}
@@ -91,7 +92,7 @@ func (m *Manager) Start(id, action string) error {
 
 func supportedID(id string) bool {
 	switch id {
-	case "docker", "node", "tailwind", "go", "git", "build-tools":
+	case "docker", "node", "tailwind", "go", "air", "git", "build-tools":
 		return true
 	default:
 		return false
@@ -108,6 +109,8 @@ func (m *Manager) run(ctx context.Context, id string) error {
 		return installTailwind(ctx)
 	case "go":
 		return installGo(ctx)
+	case "air":
+		return installAir(ctx)
 	case "git":
 		return aptInstall(ctx, "git")
 	case "build-tools":
@@ -175,6 +178,22 @@ func goStatus(ctx context.Context) Item {
 	if out, err := commandOutput(ctx, "go", "version"); err == nil {
 		item.Installed = true
 		item.Version = strings.TrimSpace(out)
+	}
+	return item
+}
+
+func airStatus(ctx context.Context) Item {
+	item := Item{
+		ID: "air", Name: "Air",
+		Description: "Live reload runner used by the Go Air application run mode.",
+		Detail: "/usr/local/bin/air · installed with the Go toolchain.",
+	}
+	if out, err := commandOutput(ctx, "air", "-v"); err == nil {
+		item.Installed = true
+		item.Version = firstVersionLine(out, "air")
+		if item.Version == "" {
+			item.Version = strings.TrimSpace(out)
+		}
 	}
 	return item
 }
@@ -295,6 +314,24 @@ func installGo(ctx context.Context) error {
 		"if [ -d /usr/local/go ]; then mv /usr/local/go \"$OLD\"; fi\n" +
 		"if mv \"$NEW\" /usr/local/go; then rm -rf \"$OLD\"; else test ! -d \"$OLD\" || mv \"$OLD\" /usr/local/go; exit 1; fi\n"
 	return runShell(ctx, script)
+}
+
+func installAir(ctx context.Context) error {
+	goBin := "/usr/local/go/bin/go"
+	if _, err := os.Stat(goBin); err != nil {
+		path, lookupErr := exec.LookPath("go")
+		if lookupErr != nil {
+			return errors.New("Go must be installed before Air")
+		}
+		goBin = path
+	}
+	cmd := exec.CommandContext(ctx, goBin, "install", "github.com/air-verse/air@latest")
+	cmd.Env = append(os.Environ(), "GOBIN=/usr/local/bin")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("install Air: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func runShell(ctx context.Context, script string) error {
