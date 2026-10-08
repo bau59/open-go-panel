@@ -90,7 +90,6 @@ func TestCaddyGlobalSettingsPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	settings := defaultGlobalSettings()
 	for key, value := range map[string]string{
 		"caddy.security_headers": "1",
 		"caddy.frame_protection": "1",
