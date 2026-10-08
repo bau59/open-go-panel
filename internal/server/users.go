@@ -132,6 +132,7 @@ func usersPage(users []linuxuser.User, message string) string {
 			<td><span class="badge">%d keys</span></td>
 			<td>
 				<div class="actions">
+					<a class="secondary" href="/terminal?user=%s">Terminal</a>
 					<form method="post" action="/users/%s/%s"><button class="secondary">%s</button></form>
 					<details>
 						<summary class="secondary">Password</summary>
@@ -160,6 +161,7 @@ func usersPage(users []linuxuser.User, message string) string {
 			statusClass,
 			status,
 			user.SSHKeys,
+			username,
 			username,
 			lockPath,
 			lockLabel,
