@@ -147,6 +147,8 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
    if idErr==nil{ id=nextID;position=0 }
   }
  }
+ backlog:=false
+ if remaining,statErr:=file.Stat();statErr==nil&&position<remaining.Size(){backlog=true}
  checkpoint:=fmt.Sprintf("%s:%d",id,position)
  tx,err:=m.store.DB().BeginTx(ctx,nil)
  if err!=nil{return err}
@@ -173,13 +175,13 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
   if err!=nil{return err}
  }
  _,err=tx.ExecContext(ctx,`INSERT INTO http_perf_cursor
- (driver,cursor,scanned,parse_errors,dropped,last_success_ns,last_error)
- VALUES('file',?,?,?,?,?,'')
+ (driver,cursor,scanned,parse_errors,dropped,last_success_ns,last_error,backlog)
+ VALUES('file',?,?,?,?,?,'',?)
  ON CONFLICT(driver) DO UPDATE SET
  cursor=excluded.cursor,scanned=scanned+excluded.scanned,
  parse_errors=parse_errors+excluded.parse_errors,dropped=dropped+excluded.dropped,
- last_success_ns=excluded.last_success_ns,last_error=''`,
- checkpoint,scanned,malformed,gap,time.Now().UnixNano())
+ last_success_ns=excluded.last_success_ns,last_error='',backlog=excluded.backlog`,
+ checkpoint,scanned,malformed,gap,time.Now().UnixNano(),boolInt(backlog))
  if err!=nil{return err}
  return tx.Commit()
 }
