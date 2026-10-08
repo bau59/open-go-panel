@@ -94,24 +94,6 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
   http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
  })))
 
- mux.Handle("POST /log-retention/performance",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
-  if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
-  detail,e1:=strconv.Atoi(r.FormValue("detail_days"))
-  aggregate,e2:=strconv.Atoi(r.FormValue("aggregate_days"))
-  if e1!=nil||e2!=nil||detail<1||detail>30||aggregate<detail||aggregate>90{
-   http.Error(w,"invalid HTTP metrics retention",400);return
-  }
-  if err:=cfg.State.SetSetting("performance.detail_days",strconv.Itoa(detail));err!=nil{
-   http.Error(w,err.Error(),500);return
-  }
-  if err:=cfg.State.SetSetting("performance.aggregate_days",strconv.Itoa(aggregate));err!=nil{
-   http.Error(w,err.Error(),500);return
-  }
-  ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
-  if err:=cfg.Caddy.PrunePerformance(ctx);err!=nil{http.Error(w,err.Error(),500);return}
-  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
- })))
-
  mux.Handle("POST /log-retention/redis",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
   n,err:=strconv.Atoi(r.FormValue("length"));if err!=nil{http.Error(w,"invalid SLOWLOG limit",400);return}
@@ -169,14 +151,11 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
    }
    appRows=b.String()
   }
-  detailDays,aggregateDays:=7,30
-  if v,ok,_:=cfg.State.Setting("performance.detail_days");ok{if n,e:=strconv.Atoi(v);e==nil&&n>=1&&n<=30{detailDays=n}}
-  if v,ok,_:=cfg.State.Setting("performance.aggregate_days");ok{if n,e:=strconv.Atoi(v);e==nil&&n>=detailDays&&n<=90{aggregateDays=n}}
   source,hasSource,_:=cfg.State.Setting("performance.source")
   if !hasSource||source!="file"{source="journal"}
   path,_,_:=cfg.State.Setting("performance.file_path")
   switches:=logSwitchesPanel(r.Context(),cfg)
-  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,detailDays,aggregateDays,source,path,switches))
+  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,redisLength,msg,appRows,source,path,switches))
  })))
  mux.Handle("POST /log-retention/journal",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
@@ -193,12 +172,12 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
 
 func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows string,options ...any)string{
  source,filePath:="journal",""
- if len(options)>=4{
-  if v,ok:=options[2].(string);ok{source=v}
-  if v,ok:=options[3].(string);ok{filePath=v}
+ if len(options)>=2{
+  if v,ok:=options[0].(string);ok{source=v}
+  if v,ok:=options[1].(string);ok{filePath=v}
  }
  switchPanel:=""
- if len(options)>=5 {if v,ok:=options[4].(string);ok{switchPanel=v}}
+ if len(options)>=3 {if v,ok:=options[2].(string);ok{switchPanel=v}}
  option:=func(current,value int,label string)string{
   attr:="";if current==value{attr=" selected"}
   return fmt.Sprintf(`<option value="%d"%s>%s</option>`,value,attr,label)
