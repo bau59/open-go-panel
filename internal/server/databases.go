@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +37,28 @@ type databasePageData struct {
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	mux.Handle("GET /databases", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeDatabasesPage(w, r, cfg, http.StatusOK, "")
+	})))
+
+	mux.Handle("GET /databases/mysql/logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.Databases.Status(r.Context()).MySQLInstalled {
+			http.NotFound(w, r)
+			return
+		}
+		cmd := exec.CommandContext(r.Context(), "journalctl", "-u", "mysql.service", "-n", "200", "--no-pager", "--output=short-iso")
+		output, err := cmd.CombinedOutput()
+		logs := string(output)
+		if err != nil {
+			logs = "Unable to read MySQL journal: " + err.Error() + "\n" + logs
+		}
+		if strings.TrimSpace(logs) == "" {
+			logs = "No journal entries available for mysql.service."
+		}
+		writeHTML(w, cfg.Logger, http.StatusOK, pageHead("MySQL logs")+ `<body>` + appHeader("databases") + `
+		<main class="shell">
+			<div class="page-head"><div><p class="eyebrow">Data / MySQL</p><h1>MySQL journal</h1><p class="sub">Last 200 systemd journal entries for mysql.service.</p></div>
+			<div class="actions"><a class="secondary" href="/databases">Back to databases</a><a class="secondary" href="/databases/mysql/logs">Refresh</a></div></div>
+			<section class="panel panel-pad"><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:70vh;overflow:auto">` + html.EscapeString(logs) + `</pre></section>
+		</main></body></html>`)
 	})))
 
 	mux.Handle("POST /databases/install", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -308,6 +331,9 @@ func databasesPage(data databasePageData) string {
 			return `<div class="db-service-footer">` + installHTML + `</div>`
 		}
 		parts := `<form method="post" action="/databases/` + engine + `/restart" onsubmit="return confirm('Restart ` + engine + `? Active connections may be interrupted.')"><button class="secondary">Restart</button></form>`
+		if engine == "mysql" && active {
+			parts = `<a class="secondary" href="/databases/mysql/logs">Logs</a>` + parts
+		}
 		if engine == "redis" && active {
 			parts = `<a class="secondary" href="/databases/redis">Open Redis</a>` + parts
 		}
@@ -540,6 +566,29 @@ func databasesPage(data databasePageData) string {
 			</div>
 		</section>
 
+		<section class="panel" style="margin-bottom:16px">
+			<div class="panel-pad database-list-head">
+				<div>
+					<h2>Managed SQL databases</h2>
+					<p class="note" style="margin:6px 0 0">Credentials, backups, Adminer and one-time remote imports.</p>
+				</div>
+				<span class="meta-chip">` + fmt.Sprintf("%d", len(data.Items)) + ` databases</span>
+			</div>
+			<form method="post" action="/databases" class="toolbar toolbar-4">
+				<select name="engine" required>
+					<option value="mysql">MySQL</option>
+					<option value="postgres">PostgreSQL</option>
+				</select>
+				<input name="name" placeholder="Database name" pattern="[A-Za-z][A-Za-z0-9_]{0,62}" required>
+				<input name="user" placeholder="User (optional)">
+				<button class="button">Create database</button>
+			</form>
+			<table>
+				<thead><tr><th>Database</th><th>Engine</th><th>User</th><th>Password</th><th></th></tr></thead>
+				<tbody>` + rows.String() + `</tbody>
+			</table>
+		</section>
+
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div><h2>Automatic backups</h2><p class="note" style="margin:6px 0 0">Runs once per day after the selected UTC hour. Old copies are pruned per database.</p></div>
@@ -571,28 +620,6 @@ func databasesPage(data databasePageData) string {
 			<div class="actions" style="justify-content:flex-start">` + adminerControls + `</div>
 		</section>
 
-		<section class="panel" style="margin-bottom:16px">
-			<div class="panel-pad database-list-head">
-				<div>
-					<h2>Managed SQL databases</h2>
-					<p class="note" style="margin:6px 0 0">Credentials, backups, Adminer and one-time remote imports.</p>
-				</div>
-				<span class="meta-chip">` + fmt.Sprintf("%d", len(data.Items)) + ` databases</span>
-			</div>
-			<form method="post" action="/databases" class="toolbar toolbar-4">
-				<select name="engine" required>
-					<option value="mysql">MySQL</option>
-					<option value="postgres">PostgreSQL</option>
-				</select>
-				<input name="name" placeholder="Database name" pattern="[A-Za-z][A-Za-z0-9_]{0,62}" required>
-				<input name="user" placeholder="User (optional)">
-				<button class="button">Create database</button>
-			</form>
-			<table>
-				<thead><tr><th>Database</th><th>Engine</th><th>User</th><th>Password</th><th></th></tr></thead>
-				<tbody>` + rows.String() + `</tbody>
-			</table>
-		</section>
 	</main>
 </body></html>`
 }
