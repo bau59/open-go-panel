@@ -122,7 +122,7 @@ const baseStyles = `
 	tbody tr:hover{background:rgba(255,255,255,.012)}
 	.muted,.note{color:var(--muted-2);font-size:12px}
 	.muted{margin-top:4px}
-	.badge,.status-badge{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:999px;border:1px solid var(--border);background:#111824;color:#bac3d1;font-size:11px;font-weight:750}
+	.badge,.status-badge,.meta-chip{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:26px;padding:0 10px;border-radius:999px;border:1px solid var(--border);background:#111824;color:#bac3d1;font-size:11px;font-weight:750;line-height:1;vertical-align:middle;white-space:nowrap;flex:0 0 auto}
 	.status-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:#778196}
 	.status-badge.ok{border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc}
 	.status-badge.ok::before{background:var(--success)}
@@ -133,6 +133,20 @@ const baseStyles = `
 	.badge.ok{border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc}
 	.badge.warn{border-color:rgba(246,196,83,.2);background:var(--warning-soft);color:#f7d884}
 	.badge.danger{border-color:rgba(255,107,122,.25);background:var(--danger-soft);color:#ffabb4}
+	.meta-chip{background:#0d131d;color:var(--muted);font-weight:700}
+	.state-text{display:inline-flex;align-items:center;gap:8px;min-height:26px;color:var(--muted);font-size:12px;font-weight:750;line-height:1;white-space:nowrap}
+	.state-text i{display:block;width:7px;height:7px;border-radius:50%;background:#778196;box-shadow:0 0 0 4px rgba(119,129,150,.08)}
+	.state-text.ok{color:#8ceabc}
+	.state-text.ok i{background:var(--success);box-shadow:0 0 0 4px var(--success-soft)}
+	.state-text.warn{color:#f7d884}
+	.state-text.warn i{background:var(--warning);box-shadow:0 0 0 4px var(--warning-soft)}
+	.state-text.danger{color:#ffabb4}
+	.state-text.danger i{background:var(--danger);box-shadow:0 0 0 4px var(--danger-soft)}
+	.page-control-cluster{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+	.page-control-cluster form{margin:0}
+	.service-state{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 13px;border:1px solid var(--border);border-radius:11px;background:#0d121b}
+	.service-state>span:first-child{color:#c8d0dc;font-size:12px;font-weight:700}
+
 	.actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
 	.actions form,.section-title form{margin:0}
 	.metric form{margin-top:12px}
@@ -143,7 +157,7 @@ const baseStyles = `
 	code{font-family:"SFMono-Regular",Consolas,monospace;color:#b8c1d1;font-size:12px}
 	.meta-grid{display:grid;grid-template-columns:130px 1fr;gap:12px 18px;font-size:13px}
 	.meta-grid>span{color:var(--muted-2)}
-	.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+	.section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
 	.metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 	.metric{padding:18px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,var(--surface-2),var(--surface))}
 	.metric>span{display:block;color:var(--muted-2);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
@@ -215,11 +229,12 @@ const baseStyles = `
 	.app-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px}
 	.app-breadcrumb{color:var(--muted);font-size:12px;font-weight:700}
 	.app-breadcrumb:hover{color:var(--text)}
-	.app-title-row{display:flex;align-items:center;gap:10px}
+	.app-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 	.app-runtime-card{margin-bottom:16px}
 	.runtime-head{display:flex;align-items:center;justify-content:space-between;gap:20px}
-	.runtime-state{display:flex;align-items:center;gap:10px}
-	.runtime-state>strong{font-size:28px;letter-spacing:-.03em}
+	.runtime-state{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+	.runtime-state>strong{font-size:28px;line-height:1.1;letter-spacing:-.03em}
+	.runtime-status-line{display:flex;align-items:center;gap:9px;margin-top:8px}
 	.runtime-actions{justify-content:flex-end}
 	.runtime-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:18px}
 	.runtime-facts>div{min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:#0d121b}
@@ -250,13 +265,26 @@ const baseStyles = `
 	.app-quick-actions form{display:inline-flex}
 	.table-path{display:block;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 	.db-services-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-	.db-service-card{display:flex;min-height:190px;flex-direction:column}
+	.db-service-card{display:flex;min-height:280px;flex-direction:column}
+	.db-service-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+	.db-service-head .eyebrow{margin-bottom:5px;font-size:10px}
+	.db-service-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px;margin-top:18px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+	.db-service-facts>div{min-width:0;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.045)}
+	.db-service-facts>div:nth-last-child(-n+2){border-bottom:0}
+	.db-service-facts .span-2{grid-column:1/-1}
+	.db-service-facts span{display:block;margin-bottom:5px;color:var(--muted-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+	.db-service-facts strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dce2ec;font-size:12px;font-weight:700}
+
 	.db-service-footer{display:flex;min-height:64px;margin-top:auto;padding-top:18px;align-items:flex-end}
 	.db-service-footer>form,.db-service-footer>.actions{margin:0;padding:0}
 	.db-service-actions{min-height:40px;align-items:center}
 	.docker-actions{justify-content:flex-start;flex-wrap:wrap}
 	.docker-actions form{display:inline-flex}
 	.docker-metrics{grid-template-columns:repeat(2,minmax(0,1fr));max-width:620px}
+	.docker-create-grid{display:grid;grid-template-columns:minmax(160px,.75fr) minmax(260px,1.5fr) minmax(180px,1fr) auto auto;gap:10px;align-items:end}
+	.docker-autostart{height:42px;margin:0;padding:0 8px}
+	.docker-create-submit{display:flex;align-items:end}
+
 	.empty-state-card{max-width:720px}
 	.db-service-card .note{margin:10px 0 0;line-height:1.45}
 	.db-service-card>form{margin:0}
@@ -279,13 +307,15 @@ const baseStyles = `
 	.deploy-key-block>summary{display:inline-flex}
 	.deploy-key-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}
 	.deploy-key-value{min-height:86px;resize:none}
-	.terminal-shell{width:min(1440px,calc(100% - 32px))}
+	.deploy-auto-switch{margin-top:12px;padding:12px 0 0;border-top:1px solid var(--border)}
+
+	.terminal-shell{width:min(1220px,calc(100% - 32px))}
 	.terminal-panel{overflow:hidden}
-	.terminal-toolbar{display:flex;align-items:end;justify-content:space-between;gap:16px;padding:16px;border-bottom:1px solid var(--border);background:#0d121b}
+	.terminal-toolbar{display:flex;align-items:end;justify-content:space-between;gap:14px;padding:16px;border-bottom:1px solid var(--border);background:#0d121b}
 	.terminal-toolbar form{display:grid;grid-template-columns:180px minmax(260px,1fr) auto;gap:10px;align-items:end;flex:1}
 	.terminal-toolbar label{margin-bottom:5px}
 	.terminal-connect{display:flex;align-items:end}
-	.terminal-target-meta{display:flex;align-items:center;gap:10px;min-width:0}
+	.terminal-target-meta{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;padding-bottom:3px}
 	.terminal-target-meta code{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 	.terminal-warning{padding:10px 16px;border-bottom:1px solid rgba(246,196,83,.2);background:var(--warning-soft);color:#f7d884;font-size:12px}
 	.terminal-screen{height:min(72vh,760px);min-height:460px;padding:10px;background:#080c12}
@@ -347,7 +377,7 @@ const baseStyles = `
 		.caddy-log-filters{grid-template-columns:1fr 1fr}
 		.terminal-toolbar{align-items:stretch;flex-direction:column}
 		.terminal-toolbar form{width:100%}
-		.terminal-target-meta{justify-content:space-between;width:100%}
+		.terminal-target-meta{justify-content:space-between;width:100%;padding-bottom:0}
 		.software-grid{grid-template-columns:1fr}
 		.redis-toolbar{grid-template-columns:140px minmax(220px,1fr)}
 		.backup-settings-grid{grid-template-columns:1fr 1fr}
@@ -375,7 +405,7 @@ const baseStyles = `
 		.terminal-screen{min-height:420px;height:68vh}
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
 		.redis-toolbar{grid-template-columns:1fr}
-		.db-services-grid,.backup-settings-grid,.docker-metrics{grid-template-columns:1fr}
+		.db-services-grid,.backup-settings-grid,.docker-metrics,.docker-create-grid{grid-template-columns:1fr}
 		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
 		.table-path{max-width:180px}
 	}
