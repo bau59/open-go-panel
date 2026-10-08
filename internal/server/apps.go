@@ -221,7 +221,11 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Apps.SetDeployConfig(id, r.FormValue("repository"), r.FormValue("branch"), r.FormValue("auto_deploy") == "1"); err != nil {
+		interval, err := parseAutoDeployIntervalSeconds(r.FormValue("auto_deploy_interval_seconds"))
+		if err == nil {
+			err = cfg.Apps.SetDeployConfigInterval(id, r.FormValue("repository"), r.FormValue("branch"), r.FormValue("auto_deploy") == "1", interval)
+		}
+		if err != nil {
 			app, _ := cfg.Apps.Get(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
 			return
@@ -1153,6 +1157,18 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 		</section>`
 }
 
+func parseAutoDeployIntervalSeconds(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return panelapp.DefaultAutoDeployIntervalSeconds, nil
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds < panelapp.MinAutoDeployIntervalSeconds || seconds > panelapp.MaxAutoDeployIntervalSeconds {
+		return 0, fmt.Errorf("auto deploy interval must be between %d and %d seconds", panelapp.MinAutoDeployIntervalSeconds, panelapp.MaxAutoDeployIntervalSeconds)
+	}
+	return seconds, nil
+}
+
 func deployBlock(cfg Config, app panelapp.App) string {
 	if app.Type == "go" && app.Service.RunMode == "go-binary" {
 		disabled := " disabled"
@@ -1191,6 +1207,10 @@ func deployBlock(cfg Config, app panelapp.App) string {
 	rollbackDisabled := ""
 	if deploy.PreviousCommit == "" {
 		rollbackDisabled = " disabled"
+	}
+	autoInterval := deploy.AutoDeployIntervalSeconds
+	if autoInterval == 0 {
+		autoInterval = panelapp.DefaultAutoDeployIntervalSeconds
 	}
 
 	sshPanel := ""
@@ -1242,10 +1262,19 @@ func deployBlock(cfg Config, app panelapp.App) string {
 					<input name="branch" value="` + html.EscapeString(defaultString(deploy.Branch, "main")) + `" placeholder="main" required>
 					<button class="secondary">Save Git settings</button>
 				</div>
-				<label class="setting-switch deploy-auto-switch">
-					<div><strong>Auto deploy</strong><span>Every 5 minutes Open Go Panel checks this branch and deploys when the remote commit changes.</span></div>
-					<span class="switch"><input type="checkbox" name="auto_deploy" value="1"` + checked(deploy.AutoDeploy) + `><i></i></span>
-				</label>
+				<div class="auto-deploy-controls">
+					<label class="setting-switch deploy-auto-switch">
+						<div><strong>Auto deploy</strong><span>Checks the Git branch at your interval and deploys only when the remote commit changes.</span></div>
+						<span class="switch"><input type="checkbox" name="auto_deploy" value="1"` + checked(deploy.AutoDeploy) + `><i></i></span>
+					</label>
+					<div class="auto-deploy-interval">
+						<label for="auto-deploy-interval-` + fmt.Sprintf("%d", app.ID) + `">Check interval (seconds)</label>
+						<input type="number" id="auto-deploy-interval-` + fmt.Sprintf("%d", app.ID) + `"
+							name="auto_deploy_interval_seconds" min="30" max="86400" step="1"
+							value="` + fmt.Sprintf("%d", autoInterval) + `" required>
+						<p class="note">30 = every 30 seconds · 60 = 1 minute · 300 = 5 minutes. Checks can be delayed while another deploy is running.</p>
+					</div>
+				</div>
 			</form>
 			<div class="actions" style="justify-content:flex-start;margin-top:10px">
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy"><button class="button">Deploy now</button></form>
