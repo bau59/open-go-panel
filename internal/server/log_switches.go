@@ -13,6 +13,27 @@ import (
 )
 
 func registerLogSwitches(mux *http.ServeMux,store *sessionStore,cfg Config){
+
+ mux.Handle("POST /log-retention/performance/clear",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if err:=r.ParseForm();err!=nil{http.Error(w,"Invalid form",400);return}
+  if r.FormValue("confirm")!="CLEAR_HISTORY"{http.Error(w,"Explicit confirmation required",400);return}
+  ctx,cancel:=context.WithTimeout(r.Context(),25*time.Second)
+  defer cancel()
+  tx,err:=cfg.State.DB().BeginTx(ctx,nil)
+  if err!=nil{http.Error(w,err.Error(),500);return}
+  defer tx.Rollback()
+  for _,table:=range []string{
+   "http_perf_requests","http_perf_rollup","http_perf_cursor",
+   "http_perf_restarts","http_perf_lifecycle",
+  }{
+   if _,err=tx.ExecContext(ctx,"DELETE FROM "+table);err!=nil{
+    http.Error(w,"Cleanup failed: "+err.Error(),500);return
+   }
+  }
+  if err=tx.Commit();err!=nil{http.Error(w,err.Error(),500);return}
+  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
+ })))
+
  mux.Handle("POST /log-retention/caddy/toggle",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"Invalid form",400);return}
   ctx,cancel:=context.WithTimeout(r.Context(),20*time.Second);defer cancel()
@@ -135,6 +156,8 @@ func logSwitchesPanel(ctx context.Context,cfg Config)string{
  }
  out.WriteString(`</div><div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
  <h3>Disable all optional logging</h3><p class="note">Disables managed Caddy access, managed app stdout/stderr (effective at their next restart), available DB slow logs, Redis SLOWLOG and audit. This can partially succeed; system and error logs remain active. Existing records are not erased.</p>
+ <form method="post" action="/log-retention/performance/clear" onsubmit="return confirm('Permanently delete old imported HTTP metrics from panel SQLite? The original Caddy logs will not be changed.');" style="margin-bottom:14px">
+ <input type="hidden" name="confirm" value="CLEAR_HISTORY"><button class="secondary">Delete old duplicate HTTP metrics</button></form>
  <form method="post" action="/log-retention/optional/disable" onsubmit="return confirm('Disable all optional logging? App changes become effective after restart.');">
  <input type="hidden" name="confirm" value="DISABLE"><button class="danger">Disable optional logging</button></form></div></section>`)
  return out.String()
