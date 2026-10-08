@@ -13,6 +13,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/app"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/dbmanager"
+	paneldocker "github.com/bau59/open-go-panel/internal/docker"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/security"
 	"github.com/bau59/open-go-panel/internal/software"
@@ -154,6 +155,7 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		Databases:     dbmanager.New(store, t.TempDir()+"/databases.json"),
 		Adminer:       adminer.New(),
 		Software:      software.New(),
+		Docker:        paneldocker.New(),
 	})
 
 	for _, path := range []string{
@@ -165,6 +167,7 @@ func TestFullRouteRegistrationDoesNotPanic(t *testing.T) {
 		"/apps/1",
 		"/terminal",
 		"/software",
+		"/docker",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
