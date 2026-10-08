@@ -10,6 +10,7 @@ import (
     "regexp"
     "sort"
     "strings"
+    "sync"
     "time"
 )
 
@@ -37,7 +38,10 @@ var (
     portPattern          = regexp.MustCompile("^[0-9]{1,5}:[0-9]{1,5}(/(tcp|udp))?$")
 )
 
-type Manager struct{}
+type Manager struct {
+	buildMu sync.Mutex
+	buildTask BuildTask
+}
 
 func New() *Manager { return &Manager{} }
 
@@ -130,6 +134,10 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
 }
 
 func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart, publicPorts bool) error {
+    return m.runImage(ctx, name, image, ports, autostart, publicPorts, true)
+}
+
+func (m *Manager) runImage(ctx context.Context, name, image, ports string, autostart, publicPorts, pull bool) error {
     name = strings.TrimSpace(name)
     image = normalizeImageReference(image)
     if !containerNamePattern.MatchString(name) {
@@ -150,8 +158,10 @@ func (m *Manager) Create(ctx context.Context, name, image, ports string, autosta
     }
     args = append(args, portArgs...)
 
-    if err := dockerCommand(ctx, "pull", image); err != nil {
-        return err
+    if pull {
+        if err := dockerCommand(ctx, "pull", image); err != nil {
+            return err
+        }
     }
     args = append(args, image)
     return dockerCommand(ctx, args...)
