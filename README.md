@@ -217,6 +217,9 @@ autostart setting. You can also configure container runtime settings:
   `#` comments allowed), for example `BRIDGE_API_KEYS=...` and
   `STATE_ENCRYPTION_KEY=...`. These are passed through a restricted,
   temporary environment file to `docker run`, not to the image builder.
+  Alternatively, specify an existing private **server .env file**, such as
+  `/opt/deepseek-bridge/.env` (permissions 0600); the panel reuses that file
+  without copying or overwriting its secrets. Enter variables OR a file path.
 - **Persistent mounts** (one `/host/path:/container/path` or
   `named_volume:/container/path` per line). For a DeepSeek bridge,
   `/opt/deepseek-bridge/data:/app/data` preserves session state across
