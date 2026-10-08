@@ -2,7 +2,11 @@ module github.com/bau59/open-go-panel
 
 go 1.25.0
 
-require modernc.org/sqlite v1.56.0
+require (
+	github.com/creack/pty v1.1.24
+	github.com/gorilla/websocket v1.5.3
+	modernc.org/sqlite v1.56.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
