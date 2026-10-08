@@ -173,6 +173,13 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 	if err!=nil {return PerformanceResult{},err}
 	result:=PerformanceResult{}
 	if len(records)>performanceMaxRecords {records=records[:performanceMaxRecords];result.Truncated=true}
+	return buildPerformanceResult(records,f,result.Truncated),nil
+}
+
+
+// Shared analysis for persisted legacy history and on-demand log samples.
+func buildPerformanceResult(records []PerformancePoint, f PerformanceFilter, truncated bool) PerformanceResult {
+	result := PerformanceResult{Truncated:truncated}
 	result.Total = len(records)
 	durations := make([]float64, 0, len(records))
 	type group struct {point PerformanceRoute; times []float64}
@@ -235,6 +242,5 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 	if end > len(records) { end = len(records) }
 	result.HasNext = end < len(records)
 	result.Rows = records[start:end]
-	return result,nil
+	return result
 }
-
