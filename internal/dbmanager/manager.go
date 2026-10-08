@@ -27,6 +27,7 @@ var (
 	databaseNameRE = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_]{0,62}$")
 	mysqlUserRE    = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_]{0,31}$")
 	postgresUserRE = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_]{0,62}$")
+	errOperationInProgress = errors.New("another database backup, import, restore or deletion is already running")
 )
 
 type Database struct {
@@ -97,6 +98,7 @@ type BackupSchedule struct {
 
 type Manager struct {
 	mu              sync.Mutex
+	operationMu     sync.Mutex
 	importMu        sync.Mutex
 	importTask      RemoteImportTask
 	store           *state.Store
@@ -643,6 +645,14 @@ func (m *Manager) PostgresDatabaseSizes(ctx context.Context) ([]DatabaseSize, er
 }
 
 func (m *Manager) Backup(ctx context.Context, id int64) (Backup, error) {
+	if !m.operationMu.TryLock() {
+		return Backup{}, errOperationInProgress
+	}
+	defer m.operationMu.Unlock()
+	return m.backupUnlocked(ctx, id)
+}
+
+func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) {
 	item, err := m.Get(id)
 	if err != nil {
 		return Backup{}, err
@@ -727,6 +737,14 @@ func (m *Manager) BackupFile(id int64, path string) (string, error) {
 }
 
 func (m *Manager) Restore(ctx context.Context, id int64, path string) error {
+	if !m.operationMu.TryLock() {
+		return errOperationInProgress
+	}
+	defer m.operationMu.Unlock()
+	return m.restoreUnlocked(ctx, id, path)
+}
+
+func (m *Manager) restoreUnlocked(ctx context.Context, id int64, path string) error {
 	item, err := m.Get(id)
 	if err != nil {
 		return err
@@ -800,16 +818,27 @@ func (m *Manager) PruneBackups(id int64, keep int) error {
 	if keep < 1 {
 		return errors.New("backup retention must keep at least one backup")
 	}
+	if !m.operationMu.TryLock() {
+		return errOperationInProgress
+	}
+	defer m.operationMu.Unlock()
 	backups, err := m.Backups(id)
 	if err != nil {
 		return err
 	}
-	for _, backup := range backups[keep:] {
+	for _, backup := range backupPruneCandidates(backups, keep) {
 		if err := os.Remove(backup.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 	return nil
+}
+
+func backupPruneCandidates(backups []Backup, keep int) []Backup {
+	if len(backups) <= keep {
+		return nil
+	}
+	return backups[keep:]
 }
 
 func (m *Manager) Create(ctx context.Context, engine, name, username string) (Database, error) {
@@ -896,6 +925,10 @@ func (m *Manager) Create(ctx context.Context, engine, name, username string) (Da
 }
 
 func (m *Manager) Delete(ctx context.Context, id int64) error {
+	if !m.operationMu.TryLock() {
+		return errOperationInProgress
+	}
+	defer m.operationMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
