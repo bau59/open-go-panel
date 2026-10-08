@@ -57,6 +57,27 @@ func applyJournalPolicy(ctx context.Context,sizeMB,days int)error{
 }
 
 func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Config){
+ mux.Handle("POST /log-retention/app/{id}",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  id,err:=strconv.ParseInt(r.PathValue("id"),10,64)
+  if err!=nil||id<=0{http.Error(w,"invalid application",400);return}
+  if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
+  days,err:=strconv.Atoi(r.FormValue("days"))
+  if err!=nil{http.Error(w,"invalid period",400);return}
+  allowed:=map[int]bool{1:true,3:true,7:true,14:true,30:true,60:true,90:true}
+  if !allowed[days]{http.Error(w,"unsupported log retention period",400);return}
+  app,err:=cfg.Apps.Get(id)
+  if err!=nil{http.NotFound(w,r);return}
+  if app.Type=="static"||app.Service.Mode=="raw"{
+   http.Error(w,"raw and static services cannot use managed journal namespace retention",400);return
+  }
+  app.Service.LogRetentionDays=days
+  ctx,cancel:=context.WithTimeout(r.Context(),20*time.Second);defer cancel()
+  if err:=cfg.Apps.SetServiceConfig(ctx,id,app.Service);err!=nil{
+   http.Error(w,err.Error(),400);return
+  }
+  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
+ })))
+
  mux.Handle("POST /log-retention/source",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
   source:=r.FormValue("source")
