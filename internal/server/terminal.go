@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -63,10 +62,6 @@ func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		})))
 	}
 	mux.Handle("GET /terminal", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !terminalRequestIsLocal(r) {
-			writeHTML(w, cfg.Logger, http.StatusForbidden, terminalUnavailablePage())
-			return
-		}
 		users, err := cfg.Users.List(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -105,10 +100,6 @@ func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 	}
 
 	mux.Handle("GET /terminal/ws", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !terminalRequestIsLocal(r) {
-			http.Error(w, "terminal is available only through a local connection or SSH tunnel", http.StatusForbidden)
-			return
-		}
 		users, err := cfg.Users.List(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -196,33 +187,6 @@ func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			}
 		}
 	})))
-}
-
-func terminalRequestIsLocal(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = strings.TrimSpace(r.RemoteAddr)
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func terminalUnavailablePage() string {
-	return pageHead("Terminal") + `<body>` + appHeader("terminal") + `
-	<main class="shell">
-		<div class="page-head">
-			<div><p class="eyebrow">Server shell</p><h1>Terminal</h1><p class="sub">The web terminal is intentionally disabled over a public panel connection.</p></div>
-		</div>
-		<section class="panel panel-pad">
-			<h2>Connect through an SSH tunnel</h2>
-			<p class="sub">This protects the root-capable terminal from being exposed directly to the Internet.</p>
-			<pre class="security-output" style="margin-top:16px">ssh -L 8443:127.0.0.1:8443 root@SERVER_IP
-
-Then open:
-http://127.0.0.1:8443/terminal</pre>
-		</section>
-	</main>
-</body></html>`
 }
 
 func timeNowPlusSecond() time.Time {
@@ -316,7 +280,7 @@ func terminalPage(data terminalPageData) string {
 
 	rootWarning := ""
 	if data.SelectedUser == "root" {
-		rootWarning = `<div class="terminal-warning">Root terminal has unrestricted server access. Commands run immediately as root.</div>`
+		rootWarning = `<div class="terminal-warning">Root terminal has unrestricted server access. Use the panel through an SSH tunnel or HTTPS on untrusted networks.</div>`
 	}
 
 	return head + `<body>` + appHeader("terminal") + `
@@ -325,7 +289,7 @@ func terminalPage(data terminalPageData) string {
 			<div>
 				<p class="eyebrow">Server shell</p>
 				<h1>Terminal</h1>
-				<p class="sub">Open an interactive shell as root or any Open Go Panel managed Linux user.</p>
+				<p class="sub">Open an authenticated interactive shell as root or any Open Go Panel managed Linux user.</p>
 			</div>
 		</div>
 		` + alert + `
