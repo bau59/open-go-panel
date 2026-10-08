@@ -117,7 +117,8 @@ jobs:
           test "$LOGIN_CODE" = "303"
           CSRF="$(curl -fsS -b /tmp/ogp-close-cookies http://127.0.0.1:8443/ | grep -o 'name="ogp_csrf" value="[^"]*"' | head -n1 | cut -d '"' -f4)"
           test -n "$CSRF"
-          curl -fsS -b /tmp/ogp-close-cookies --data-urlencode "ogp_csrf=$CSRF" http://127.0.0.1:8443/panel/close | grep -q "Panel is closing"
+          curl -fsS -b /tmp/ogp-close-cookies --data-urlencode "ogp_csrf=$CSRF" -o /tmp/ogp-close-response.html http://127.0.0.1:8443/panel/close
+          grep -q "Panel is closing" /tmp/ogp-close-response.html
           for _ in $(seq 1 25); do
             if ! sudo systemctl is-active --quiet open-go-panel.service; then
               break
