@@ -394,7 +394,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         </details>
         <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-github" style="margin-bottom:16px">
             <summary><strong>Build from GitHub</strong><span>Clone, build and deploy from a GitHub repository</span></summary>
-            <form method="post" action="/docker/github/key" class="docker-create-grid" style="margin:12px 0">
+            <form method="post" action="/docker/github/key" class="docker-key-form" style="margin:16px 0 22px">
                 <div><label>GitHub repository for deploy key</label><input name="repository" value="` + html.EscapeString(key.Repository) + `" placeholder="owner/repository" required></div>
                 <div class="docker-create-submit"><button class="secondary" type="submit">Generate SSH deploy key</button></div>
             </form>
