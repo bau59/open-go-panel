@@ -489,75 +489,7 @@ func (m *Manager) Deploy(ctx context.Context, id int64) error {
 }
 
 func (m *Manager) deployUnlocked(ctx context.Context, id int64) error {
-	app, err := m.Get(id)
-	if err != nil {
-		return err
-	}
-	cfg, err := m.DeployConfig(id)
-	if err != nil {
-		return err
-	}
-	if cfg.Repository == "" {
-		return errors.New("configure a Git repository before deploying")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		return errors.New("git is not installed")
-	}
-	gitEnv, err := m.gitEnvironment(id, cfg.Repository)
-	if err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(filepath.Join(app.Root, ".git")); errors.Is(err, os.ErrNotExist) {
-		if _, err := runAsUser(ctx, app.User, app.Root, "git", "init"); err != nil {
-			return err
-		}
-		if _, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "remote", "add", "origin", cfg.Repository); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return fmt.Errorf("inspect app repository: %w", err)
-	} else {
-		if _, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "remote", "set-url", "origin", cfg.Repository); err != nil {
-			return err
-		}
-	}
-
-	previous := ""
-	if out, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "HEAD"); err == nil {
-		previous = strings.TrimSpace(out)
-	}
-
-	if _, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "fetch", "--prune", "origin", cfg.Branch); err != nil {
-		return err
-	}
-	targetOut, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "FETCH_HEAD")
-	if err != nil {
-		return err
-	}
-	target := strings.TrimSpace(targetOut)
-	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", target); err != nil {
-		return m.recoverDeployment(app, id, previous, fmt.Errorf("reset deployed commit: %w", err))
-	}
-
-	if err := m.prepareDeployment(ctx, app); err != nil {
-		return m.recoverDeployment(app, id, previous, fmt.Errorf("prepare deployment: %w", err))
-	}
-	if app.Type != "static" {
-		if err := m.Restart(ctx, id); err != nil {
-			return m.recoverDeployment(app, id, previous, fmt.Errorf("restart deployment: %w", err))
-		}
-	}
-
-	_, err = m.store.DB().Exec(`
-		UPDATE deployments
-		SET current_commit = ?, previous_commit = ?, deployed_at = ?
-		WHERE app_id = ?
-	`, target, previous, time.Now().UTC().Format(time.RFC3339Nano), id)
-	if err != nil {
-		return m.recoverDeployment(app, id, previous, fmt.Errorf("save deployment result: %w", err))
-	}
-	return nil
+	return m.deployStaged(ctx, id, false)
 }
 
 func (m *Manager) RemoteCommit(ctx context.Context, id int64) (string, error) {
@@ -648,42 +580,7 @@ func (m *Manager) Rollback(ctx context.Context, id int64) error {
 	m.deployMu.Lock()
 	defer m.deployMu.Unlock()
 
-	app, err := m.Get(id)
-	if err != nil {
-		return err
-	}
-	cfg, err := m.DeployConfig(id)
-	if err != nil {
-		return err
-	}
-	if cfg.PreviousCommit == "" {
-		return errors.New("no previous deployment is available")
-	}
-
-	originalOut, err := runAsUser(ctx, app.User, app.Root, "git", "rev-parse", "HEAD")
-	if err != nil {
-		return fmt.Errorf("read current deployed commit: %w", err)
-	}
-	original := strings.TrimSpace(originalOut)
-	if original == "" {
-		return errors.New("current deployed commit is unknown")
-	}
-
-	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", cfg.PreviousCommit); err != nil {
-		return m.recoverDeployment(app, id, original, fmt.Errorf("reset rollback commit: %w", err))
-	}
-	if err := m.prepareDeployment(ctx, app); err != nil {
-		return m.recoverDeployment(app, id, original, fmt.Errorf("prepare rollback: %w", err))
-	}
-	if app.Type != "static" {
-		if err := m.Restart(ctx, id); err != nil {
-			return m.recoverDeployment(app, id, original, fmt.Errorf("restart rolled back application: %w", err))
-		}
-	}
-	if err := m.recordRollback(id, cfg.PreviousCommit, original); err != nil {
-		return m.recoverDeployment(app, id, original, fmt.Errorf("save rollback result: %w", err))
-	}
-	return nil
+	return m.deployStaged(ctx, id, true)
 }
 
 // A manual rollback must not be immediately undone by the periodic auto deploy.
