@@ -4,6 +4,7 @@ import (
  "context"
  "encoding/json"
  "fmt"
+ "math"
  "net/http"
  "os/exec"
  "strconv"
@@ -17,6 +18,7 @@ type dashboardUnitResource struct {
  Name string `json:"name"`
  Active bool `json:"active"`
  Memory string `json:"memory"`
+ MemoryBytes uint64 `json:"memory_bytes"`
  CPUTime string `json:"cpu_time"`
 }
 
@@ -30,8 +32,11 @@ type dashboardContainerResource struct {
 type dashboardResources struct {
  AppsTotal int `json:"apps_total"`
  AppsRunning int `json:"apps_running"`
+ AppsMemory string `json:"apps_memory"`
  ContainersTotal int `json:"containers_total"`
  ContainersRunning int `json:"containers_running"`
+ ContainersMemory string `json:"containers_memory"`
+ ContainersCPU string `json:"containers_cpu"`
  Units []dashboardUnitResource `json:"units"`
  Containers []dashboardContainerResource `json:"containers"`
  DockerError string `json:"docker_error,omitempty"`
@@ -64,6 +69,7 @@ func dashboardUnitStats(ctx context.Context, apps []panelapp.App) map[int64]dash
   item:=dashboardUnitResource{Active:vals["ActiveState"]=="active",Memory:"No data",CPUTime:"No data"}
   if value,err:=strconv.ParseUint(vals["MemoryCurrent"],10,64);err==nil&&value!=^uint64(0){
    item.Memory=formatBytes(value)
+   item.MemoryBytes=value
   }
   if value,err:=strconv.ParseUint(vals["CPUUsageNSec"],10,64);err==nil&&value!=^uint64(0){
    item.CPUTime=fmt.Sprintf("%.1f s total",float64(value)/1e9)
@@ -80,13 +86,16 @@ func (cfg Config) readDashboardResources(ctx context.Context) dashboardResources
   if err!=nil {result.AppsError="Applications unavailable"} else {
    result.AppsTotal=len(apps)
    units:=dashboardUnitStats(ctx,apps)
+   var totalAppMem uint64
    for _,a:=range apps{
     unit,ok:=units[a.ID]
     if !ok{unit=dashboardUnitResource{Memory:"No data",CPUTime:"No data"}}
     unit.Name=a.Name
     if unit.Active{result.AppsRunning++}
+    if unit.Active{totalAppMem+=unit.MemoryBytes}
     if len(result.Units)<25 {result.Units=append(result.Units,unit)}
    }
+   result.AppsMemory=formatBytes(totalAppMem)
   }
  }
  if cfg.Docker!=nil{
@@ -97,6 +106,16 @@ func (cfg Config) readDashboardResources(ctx context.Context) dashboardResources
     if c.Running{result.ContainersRunning++}
    }
    stats,err:=cfg.Docker.Stats(ctx)
+   var totalDockerMem uint64
+   var totalDockerCPU float64
+   for _,c:=range containers{
+    if !c.Running{continue}
+    if stat,ok:=stats[c.ID];ok{
+     totalDockerMem+=parseDockerUsedBytes(stat.Memory)
+     if value,err:=strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(stat.CPU),"%"),64);err==nil && !math.IsNaN(value)&&!math.IsInf(value,0){totalDockerCPU+=value}
+    }
+   }
+   if err==nil{result.ContainersMemory=formatBytes(totalDockerMem);result.ContainersCPU=fmt.Sprintf("%.1f%% CPU",totalDockerCPU)}
    if err!=nil{result.DockerError="Container resource statistics unavailable"}
    for _,c:=range containers{
     if len(result.Containers)>=25{break}
@@ -110,6 +129,21 @@ func (cfg Config) readDashboardResources(ctx context.Context) dashboardResources
   }
  }
  return result
+}
+
+func parseDockerUsedBytes(value string)uint64{
+ raw:=strings.TrimSpace(strings.SplitN(value,"/",2)[0])
+ units:=[]struct{suffix string;factor float64}{
+  {"TiB",1099511627776},{"GiB",1073741824},{"MiB",1048576},{"KiB",1024},
+  {"TB",1e12},{"GB",1e9},{"MB",1e6},{"kB",1000},{"B",1},
+ }
+ for _,unit:=range units{
+  if strings.HasSuffix(raw,unit.suffix){
+   count,err:=strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(raw,unit.suffix)),64)
+   if err==nil&&count>=0 && !math.IsInf(count,0) && !math.IsNaN(count){return uint64(count*unit.factor)}
+  }
+ }
+ return 0
 }
 
 func registerDashboardResources(mux *http.ServeMux,store *sessionStore,cfg Config) {
