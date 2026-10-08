@@ -60,10 +60,11 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
  err=m.store.DB().QueryRowContext(ctx,`SELECT cursor FROM http_perf_cursor WHERE driver='file'`).Scan(&prev)
  if err!=nil && !errors.Is(err,sql.ErrNoRows){return err}
  previousID:=""
- var position int64
- if parts:=strings.Split(prev,":");len(parts)==3 {
+ var position,generation int64
+ if parts:=strings.Split(prev,":");len(parts)>=3 {
   previousID=parts[0]+":"+parts[1]
   position,_=strconv.ParseInt(parts[2],10,64)
+  if len(parts)>=4{generation,_=strconv.ParseInt(parts[3],10,64)}
  }
  gap:=int64(0)
  switched:=false
@@ -83,12 +84,14 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
    // silently pretending the stream remained continuous.
    gap++
    position=0
+   generation=0
   }
  }
  info,err:=file.Stat()
  if err!=nil{return err}
  if position>info.Size(){
   position=0
+  generation++ // same inode, new file content: prevent offset-key collisions
   gap++ // copytruncate or another unrecoverable discontinuity
  }
  if _,err=file.Seek(position,io.SeekStart);err!=nil{return err}
@@ -129,8 +132,10 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
   for header,values:=range raw.RespHeaders{
    if strings.EqualFold(header,"Server-Timing"){timing=append(timing,values...)}
   }
+  key:=fmt.Sprintf("file:%s:%d",id,offset)
+  if generation>0{key+=fmt.Sprintf(":g%d",generation)}
   records=append(records,point{
-   key:fmt.Sprintf("file:%s:%d",id,offset),
+   key:key,
    p:PerformancePoint{Time:entry.Time,Domain:domain,AppID:associated[domain],
     Method:entry.Method,Route:cleanPerformanceRoute(entry.URI),
     Protocol:entry.Protocol,Status:entry.Status,DurationMS:entry.DurationMS,
@@ -144,14 +149,14 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
   if err==nil{
    nextID,idErr:=fileIdentity(newFile)
    _=newFile.Close()
-   if idErr==nil{ id=nextID;position=0 }
+   if idErr==nil{ id=nextID;position=0;generation=0 }
   }
  }
  backlog:=false
  if !switched || !reachedEOF{
   if remaining,statErr:=file.Stat();statErr==nil&&position<remaining.Size(){backlog=true}
  }
- checkpoint:=fmt.Sprintf("%s:%d",id,position)
+ checkpoint:=fmt.Sprintf("%s:%d:%d",id,position,generation)
  tx,err:=m.store.DB().BeginTx(ctx,nil)
  if err!=nil{return err}
  defer tx.Rollback()
