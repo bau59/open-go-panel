@@ -123,3 +123,46 @@ func TestWriteGzipBackupRemovesFailedDump(t *testing.T) {
 		t.Fatalf("unfinished backup left %d files", len(entries))
 	}
 }
+
+func TestValidateCompressedBackup(t *testing.T) {
+	dir := t.TempDir()
+	valid, err := writeGzipBackup(dir, "valid", func(w io.Writer) error {
+		_, err := io.WriteString(w, "CREATE TABLE messages (id INTEGER);\n")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCompressedBackup(valid); err != nil {
+		t.Fatalf("valid backup rejected: %v", err)
+	}
+
+	bytes, err := os.ReadFile(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, payload []byte) {
+		t.Helper()
+		path := filepath.Join(dir, name+".sql.gz")
+		if err := os.WriteFile(path, payload, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateCompressedBackup(path); err == nil {
+			t.Fatalf("%s: invalid archive accepted", name)
+		}
+	}
+
+	check("truncated", bytes[:len(bytes)-6])
+	corrupted := append([]byte(nil), bytes...)
+	corrupted[len(corrupted)-5] ^= 0xff
+	check("checksum", corrupted)
+	check("not-gzip", []byte("plain text"))
+
+	empty, err := writeGzipBackup(dir, "empty", func(io.Writer) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCompressedBackup(empty); err == nil {
+		t.Fatal("empty gzip backup accepted")
+	}
+}
