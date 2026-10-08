@@ -466,9 +466,22 @@ func (m *Manager) AlertsDataSince(ctx context.Context, since string) ([]Alert, e
 	return out, nil
 }
 
+func isMissingPanelAllowlist(err error) bool {
+	if err == nil { return false }
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "allowlist 'open-go-panel' not found") ||
+		strings.Contains(text, "allowlist \"open-go-panel\" not found")
+}
+
 func (m *Manager) AllowlistData(ctx context.Context) (Allowlist, error) {
 	raw, err := cliJSON(ctx, "allowlists", "inspect", allowlistName)
 	if err != nil {
+		// A fresh CrowdSec installation has no panel-owned allowlist yet.
+		// Only the explicit not-found response is an empty state; preserve
+		// errors caused by permissions, connectivity, or broken cscli.
+		if isMissingPanelAllowlist(err) {
+			return Allowlist{Name: allowlistName}, nil
+		}
 		return Allowlist{}, err
 	}
 	root, ok := raw.(map[string]any)
