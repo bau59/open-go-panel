@@ -24,6 +24,7 @@ type redisPageData struct {
 }
 
 func registerRedisRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+	registerRedisSlowLogRoutes(mux, store, cfg)
 	mux.Handle("GET /databases/redis", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeRedisPage(w, r, cfg, http.StatusOK, "")
 	})))
@@ -224,6 +225,7 @@ func redisPage(data redisPageData) string {
 			</div>
 			<div class="actions">
 				<a class="secondary" href="/databases">Databases</a>
+				<a class="secondary" href="/databases/redis/slow-queries">Slow commands</a>
 				<form method="post" action="/databases/redis/restart" onsubmit="return confirm('Restart Redis? Existing client connections will be interrupted.')"><button class="secondary">Restart Redis</button></form>
 			</div>
 		</div>
