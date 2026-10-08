@@ -176,3 +176,20 @@ func TestProductionBinaryManualRollbackSwap(t *testing.T) {
 		t.Fatalf("rollback exchange failed: active=%q previous=%q restarts=%d",nowActive,nowPrevious,restartCalled)
 	}
 }
+
+func TestAirGitDeployDoesNotBuildOrDownloadGoModules(t *testing.T) {
+	root:=t.TempDir()
+	// If the deploy preparation invokes Go at all, this intentionally bad
+	// module would fail instead of letting Air manage its own development run.
+	if err:=os.WriteFile(filepath.Join(root,"go.mod"),[]byte("this is not a Go module"),0644);err!=nil{t.Fatal(err)}
+	manager:=&Manager{}
+	err:=manager.prepareDeployment(context.Background(),App{Type:"go",Root:root,
+		Service:ServiceConfig{RunMode:"go-air",Mode:"form"}})
+	if err!=nil{t.Fatalf("Air development should not build during deployment: %v",err)}
+	if got:=runnerCommand(App{Service:ServiceConfig{RunMode:"go-air"}});got!="exec air"{
+		t.Fatalf("Air must remain the development process, got %q",got)
+	}
+	if got:=runnerCommand(App{Service:ServiceConfig{RunMode:"go-binary"}});got!="exec ./.ogp-app"{
+		t.Fatalf("production must execute prebuilt binary, got %q",got)
+	}
+}
