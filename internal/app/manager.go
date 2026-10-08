@@ -611,9 +611,20 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 		if remote == cfg.CurrentCommit {
 			continue
 		}
+		// A manual rollback may have disabled auto deploy while the
+		// remote query was running. Re-check the setting under deployMu.
 		m.deployMu.Lock()
-		err = m.deployUnlocked(ctx, app.ID)
+		latest, checkErr := m.DeployConfig(app.ID)
+		skip := checkErr == nil && !shouldContinueAutoDeploy(cfg, latest, remote)
+		if checkErr != nil {
+			err = checkErr
+		} else if !skip {
+			err = m.deployUnlocked(ctx, app.ID)
+		}
 		m.deployMu.Unlock()
+		if skip {
+			continue
+		}
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", app.Name, err))
 			continue
@@ -624,6 +635,13 @@ func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
 		return deployed, errors.New(strings.Join(failures, "; "))
 	}
 	return deployed, nil
+}
+
+func shouldContinueAutoDeploy(before, after DeployConfig, remote string) bool {
+	return after.AutoDeploy &&
+		after.Repository == before.Repository &&
+		after.Branch == before.Branch &&
+		after.CurrentCommit != remote
 }
 // Rollback and Deploy must never mutate the same working tree concurrently.
 func (m *Manager) Rollback(ctx context.Context, id int64) error {
