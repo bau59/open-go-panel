@@ -18,6 +18,7 @@ type ResourceUsage struct {
 	Available     bool    `json:"available"`
 	State         string  `json:"state"`
 	CPUPercent    float64 `json:"cpu_percent"`
+	CPULimit      float64 `json:"cpu_limit_percent,omitempty"`
 	MemoryBytes   uint64  `json:"memory_bytes"`
 	MemoryLimit   uint64  `json:"memory_limit,omitempty"`
 	Tasks         uint64  `json:"tasks"`
@@ -102,6 +103,9 @@ func (m *Manager) ResourceUsageMany(ctx context.Context, apps []App) []ResourceU
 			results[i].CPUPercent = float64(secondCPU-sample.CPUUsec) / float64(elapsedUsec) * 100
 		}
 
+		if limit, unlimited, err := readCPULimit(filepath.Join(root, "cpu.max")); err == nil && !unlimited {
+			results[i].CPULimit = limit
+		}
 		if value, err := readUintFile(filepath.Join(root, "memory.current")); err == nil {
 			results[i].MemoryBytes = value
 		}
@@ -191,6 +195,29 @@ func readCPUUsec(path string) (uint64, error) {
 		return 0, err
 	}
 	return 0, errors.New("usage_usec not found in cpu.stat")
+}
+
+func readCPULimit(path string) (float64, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false, err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return 0, false, errors.New("invalid cpu.max")
+	}
+	if fields[0] == "max" {
+		return 0, true, nil
+	}
+	quota, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0, false, err
+	}
+	period, err := strconv.ParseFloat(fields[1], 64)
+	if err != nil || period <= 0 {
+		return 0, false, errors.New("invalid cpu.max period")
+	}
+	return quota / period * 100, false, nil
 }
 
 func readUintFile(path string) (uint64, error) {
