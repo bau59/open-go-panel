@@ -14,6 +14,15 @@ type ServiceTarget struct {
  Name string
 }
 
+type ProcessLifecycle struct {
+ AppID int64
+ Service string
+ Time time.Time
+ Kind string
+ Source string
+ Reason string
+}
+
 type ProcessStart struct {
  AppID int64
  Service string
@@ -43,18 +52,67 @@ func (m *Manager) ObserveProcessStarts(ctx context.Context, targets []ServiceTar
   if i>=80 || ctx.Err()!=nil{break}
   if target.AppID<=0{continue}
   service:=fmt.Sprintf("open-go-panel-app-%d.service",target.AppID)
-  out,err:=exec.CommandContext(ctx,"systemctl","show","--property=ExecMainStartTimestamp","--value",service).Output()
+  out,err:=exec.CommandContext(ctx,"systemctl","show",
+   "--property=ExecMainStartTimestamp","--property=ActiveExitTimestamp","--property=Result",service).Output()
   if err!=nil{continue}
-  value:=strings.TrimSpace(string(out))
-  if value==""||value=="n/a"{continue}
-  started,err:=time.Parse("Mon 2006-01-02 15:04:05 MST",value)
-  if err!=nil || started.IsZero() || started.After(time.Now().Add(time.Minute)) ||
-   started.Before(time.Now().AddDate(0,0,-30)){continue}
-  if _,err=m.store.DB().ExecContext(ctx,`INSERT OR IGNORE INTO http_perf_restarts
-   (app_id,started_ns,service,source,reason) VALUES(?,?,?,'systemd','unknown')`,
-   target.AppID,started.UnixNano(),service);err!=nil{return err}
+  properties:=parseSystemdProperties(out)
+  started:=parseSystemdEventTime(properties["ExecMainStartTimestamp"])
+  if validSystemdEventTime(started){
+   if _,err=m.store.DB().ExecContext(ctx,`INSERT OR IGNORE INTO http_perf_restarts
+    (app_id,started_ns,service,source,reason) VALUES(?,?,?,'systemd','unknown')`,
+    target.AppID,started.UnixNano(),service);err!=nil{return err}
+   if _,err=m.store.DB().ExecContext(ctx,`INSERT OR IGNORE INTO http_perf_lifecycle
+    (app_id,event_ns,kind,service,source,reason) VALUES(?,?,'start',?,'systemd','')`,
+    target.AppID,started.UnixNano(),service);err!=nil{return err}
+  }
+  stopped:=parseSystemdEventTime(properties["ActiveExitTimestamp"])
+  if validSystemdEventTime(stopped){
+   reason:=strings.TrimSpace(properties["Result"])
+   if reason==""{reason="unknown"}
+   if len(reason)>64{reason=reason[:64]}
+   if _,err=m.store.DB().ExecContext(ctx,`INSERT OR IGNORE INTO http_perf_lifecycle
+    (app_id,event_ns,kind,service,source,reason) VALUES(?,?,'stop',?,'systemd',?)`,
+    target.AppID,stopped.UnixNano(),service,reason);err!=nil{return err}
+  }
  }
  return ctx.Err()
+}
+
+func parseSystemdProperties(output []byte)map[string]string{
+ result:=map[string]string{}
+ for _,line:=range strings.Split(string(output),"\n"){
+  key,value,ok:=strings.Cut(line,"=")
+  if ok{result[strings.TrimSpace(key)]=strings.TrimSpace(value)}
+ }
+ return result
+}
+
+func parseSystemdEventTime(value string)time.Time{
+ result,err:=time.Parse("Mon 2006-01-02 15:04:05 MST",strings.TrimSpace(value))
+ if err!=nil{return time.Time{}}
+ return result
+}
+
+func validSystemdEventTime(t time.Time)bool{
+ return !t.IsZero() && !t.After(time.Now().Add(time.Minute)) &&
+  !t.Before(time.Now().AddDate(0,0,-30))
+}
+
+func (m *Manager) PerformanceLifecycle(ctx context.Context,since,until time.Time)([]ProcessLifecycle,error){
+ rows,err:=m.store.DB().QueryContext(ctx,`SELECT app_id,event_ns,kind,service,source,reason
+ FROM http_perf_lifecycle WHERE event_ns>=? AND event_ns<=? ORDER BY event_ns DESC LIMIT 150`,
+ since.UnixNano(),until.UnixNano())
+ if err!=nil{return nil,err}
+ defer rows.Close()
+ var result []ProcessLifecycle
+ for rows.Next(){
+  var e ProcessLifecycle
+  var nano int64
+  if err:=rows.Scan(&e.AppID,&nano,&e.Kind,&e.Service,&e.Source,&e.Reason);err!=nil{return nil,err}
+  e.Time=time.Unix(0,nano)
+  result=append(result,e)
+ }
+ return result,rows.Err()
 }
 
 func (m *Manager) PerformanceRestarts(ctx context.Context,since,until time.Time) ([]ProcessStart,error){
