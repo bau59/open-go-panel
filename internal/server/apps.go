@@ -1144,14 +1144,17 @@ func appResourcesScript() string {
 					if (tasks) tasks.textContent = usage.state === 'active' ? '—' : '0';
 					return;
 				}
-				if (cpu) cpu.textContent = usage.cpu_percent.toFixed(1) + '%';
+				if (cpu) {
+					cpu.textContent = usage.cpu_percent.toFixed(1) + '%' + (usage.cpu_limit_percent > 0 ? ' / ' + usage.cpu_limit_percent.toFixed(0) + '%' : '');
+					if (usage.cpu_limit_percent > 0) cpu.title = 'Current / CPU limit';
+				}
 				if (memory) {
-					memory.textContent = formatBytes(usage.memory_bytes);
-					if (usage.memory_limit > 0) memory.title = 'Limit: ' + formatBytes(usage.memory_limit);
+					memory.textContent = formatBytes(usage.memory_bytes) + (usage.memory_limit > 0 ? ' / ' + formatBytes(usage.memory_limit) : '');
+					if (usage.memory_limit > 0) memory.title = 'Current / memory limit';
 				}
 				if (tasks) {
-					tasks.textContent = String(usage.tasks);
-					if (usage.tasks_limit > 0) tasks.title = 'Limit: ' + usage.tasks_limit;
+					tasks.textContent = String(usage.tasks) + (usage.tasks_limit > 0 ? ' / ' + usage.tasks_limit : '');
+					if (usage.tasks_limit > 0) tasks.title = 'Current / task limit';
 				}
 			});
 		};
