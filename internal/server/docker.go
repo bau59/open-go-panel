@@ -329,13 +329,16 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
                 <div><label>Image / URL</label><input name="image" placeholder="redis:7, ghcr.io/org/app:latest or Docker Hub URL" required></div>
                 <div><label>Ports</label><input name="ports" placeholder="8080:80, 8443:443"></div>
-                <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
-                <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-toggle-row">
+                    <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                    <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                    <label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label>
+                    <div class="docker-shm-field"><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div>
+                </div>
                 <div class="docker-runtime-fields">
                     <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p>
                     <label style="margin-top:10px">Or existing .env file on the server</label><input name="environment_file" placeholder="/opt/deepseek-bridge/.env"><p class="note">Use either variables above or the existing .env file (0600 permissions). Do not rotate saved encryption keys.</p></div>
                     <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
-                    <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
                 </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
@@ -354,18 +357,56 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div><label>Branch (blank = default)</label><input name="branch" placeholder="main"></div>
                 <div><label>Dockerfile in repository</label><input name="dockerfile" value="Dockerfile" required></div>
                 <div><label>Ports</label><input name="ports" placeholder="8080:80"></div>
-                <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
-                <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-toggle-row">
+                    <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
+                    <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                    <label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label>
+                    <div class="docker-shm-field"><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div>
+                </div>
                 <div class="docker-runtime-fields">
                     <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p>
                     <label style="margin-top:10px">Or existing .env file on the server</label><input name="environment_file" placeholder="/opt/deepseek-bridge/.env"><p class="note">Use either variables above or the existing .env file (0600 permissions). Do not rotate saved encryption keys.</p></div>
                     <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
-                    <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
                 </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + func() string { if build.Running { return " disabled" }; return "" }() + `>Build &amp; run</button></div>
             </form>
             <p class="note" style="margin-top:12px">For private repositories: add a read-only deploy key to GitHub. To update a container already running, use Rebuild GitHub in its Actions row.</p>
         </details>
 __CONTAINER_TABLE__
-    </main>` + refresh + `</body></html>`
+    </main>
+    <script>
+    (function(){
+      function asBytes(s){
+        const m=String(s||'').trim().match(/^([0-9.]+)\s*(B|KiB|MiB|GiB|TiB|kB|MB|GB|TB)?$/);
+        if(!m)return 0;
+        const units={B:1,KiB:1024,MiB:1048576,GiB:1073741824,TiB:1099511627776,kB:1000,MB:1000000,GB:1000000000,TB:1000000000000};
+        return parseFloat(m[1])*(units[m[2]]||1);
+      }
+      async function pollStats(){
+        try{
+          const res=await fetch('/docker/stats',{cache:'no-store'});
+          if(!res.ok)throw new Error('stats unavailable');
+          const stats=await res.json();
+          let cpu=0,mem=0;
+          document.querySelectorAll('td.docker-usage').forEach(cell=>{
+            const st=stats[cell.dataset.dockerId];
+            const field=cell.querySelector('[data-field]');
+            if(!field)return;
+            if(!st){field.textContent='—';return}
+            field.textContent=field.dataset.field==='cpu'?(st.cpu||'—'):(st.memory||'—');
+            const pct=cell.querySelector('[data-field="mem_pct"]');
+            if(pct)pct.textContent=st.mem_pct||'';
+          });
+          Object.values(stats).forEach(st=>{
+            cpu+=parseFloat(st.cpu)||0;
+            mem+=asBytes(String(st.memory||'').split('/')[0]);
+          });
+          document.getElementById('docker-total-cpu').textContent=cpu.toFixed(1)+'%';
+          document.getElementById('docker-total-memory').textContent=(mem/1048576).toFixed(0)+' MiB';
+        }catch(e){}
+        setTimeout(pollStats,10000);
+      }
+      pollStats();
+    })();
+    </script>` + refresh + `</body></html>`
 }
