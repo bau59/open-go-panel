@@ -418,6 +418,8 @@ const baseStyles = `
 		.metrics-grid{grid-template-columns:1fr 1fr}
 		.service-grid-3,.service-grid-4,.security-grid,.domain-summary,.app-overview-grid,.health-grid,.service-summary{grid-template-columns:1fr 1fr}
 		.app-form-row-deploy,.app-form-row-db{grid-template-columns:1fr 140px}
+		.app-promotion-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+		.app-promotion-grid>div:last-child{grid-column:1/-1}
 		.log-toolbar{grid-template-columns:1fr 1fr}
 		.app-dashboard-grid{grid-template-columns:1fr}
 		.app-card-wide{grid-column:auto}
@@ -435,6 +437,7 @@ const baseStyles = `
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid,.toolbar-4,.toolbar-3{grid-template-columns:1fr}
+		.app-promotion-grid{grid-template-columns:1fr}
 		.service-form-grid .span-2{grid-column:auto}
 		.setting-switch{align-items:flex-start}
 		.list-toolbar{align-items:stretch;flex-direction:column}
