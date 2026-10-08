@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -210,5 +209,3 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 	return result,nil
 }
 
-// Keep page and status filters numeric to avoid using uncontrolled journalctl arguments.
-var _ = strconv.Itoa
