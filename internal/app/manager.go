@@ -662,15 +662,20 @@ func (m *Manager) Rollback(ctx context.Context, id int64) error {
 			return m.recoverDeployment(app, id, original, fmt.Errorf("restart rolled back application: %w", err))
 		}
 	}
-	_, err = m.store.DB().Exec(`
-		UPDATE deployments
-		SET current_commit = ?, previous_commit = ?, deployed_at = ?, auto_deploy = 0
-		WHERE app_id = ?
-	`, cfg.PreviousCommit, original, time.Now().UTC().Format(time.RFC3339Nano), id)
-	if err != nil {
+	if err := m.recordRollback(id, cfg.PreviousCommit, original); err != nil {
 		return m.recoverDeployment(app, id, original, fmt.Errorf("save rollback result: %w", err))
 	}
 	return nil
+}
+
+// A manual rollback must not be immediately undone by the periodic auto deploy.
+func (m *Manager) recordRollback(id int64, target, original string) error {
+	_, err := m.store.DB().Exec(`
+		UPDATE deployments
+		SET current_commit = ?, previous_commit = ?, deployed_at = ?, auto_deploy = 0
+		WHERE app_id = ?
+	`, target, original, time.Now().UTC().Format(time.RFC3339Nano), id)
+	return err
 }
 
 // Recover both Git files and runtime dependencies after a failed deployment.
