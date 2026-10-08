@@ -50,6 +50,15 @@ func (m *Manager) ClearImportTask() {
 }
 
 func (m *Manager) StartRemoteImport(id int64, connection string) error {
+	m.importMu.Lock()
+	if m.importTask.Running {
+		current := m.importTask
+		m.importMu.Unlock()
+		return fmt.Errorf("database import for #%d is already running", current.DatabaseID)
+	}
+	m.importTask = RemoteImportTask{}
+	m.importMu.Unlock()
+
 	target, err := m.Get(id)
 	if err != nil {
 		return err
@@ -63,11 +72,6 @@ func (m *Manager) StartRemoteImport(id int64, connection string) error {
 	}
 
 	m.importMu.Lock()
-	if m.importTask.Running {
-		current := m.importTask
-		m.importMu.Unlock()
-		return fmt.Errorf("database import for #%d is already running", current.DatabaseID)
-	}
 	m.importTask = RemoteImportTask{
 		DatabaseID: id,
 		Engine: target.Engine,
