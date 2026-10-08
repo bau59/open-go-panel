@@ -99,7 +99,7 @@ jobs:
 
           CSRF="$(curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/ | grep -o 'name="ogp_csrf" value="[^"]*"' | head -n1 | cut -d '"' -f4)"
           test -n "$CSRF"
-          USER_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'username=ogpsmoke&password=SmokePass123!' http://127.0.0.1:8443/users)"
+          USER_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -H 'Origin: https://panel.example.com' -H 'Sec-Fetch-Site: same-origin' --data-urlencode "ogp_csrf=$CSRF" -d 'username=ogpsmoke&password=SmokePass123!' http://127.0.0.1:8443/users)"
           test "$USER_CODE" = "303"
           id ogpsmoke
 

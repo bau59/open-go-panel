@@ -79,14 +79,19 @@ func csrfProtection(store *sessionStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authenticated := store.authenticated(r)
 		if r.Method == http.MethodPost && r.URL.Path != "/login" && authenticated {
-			if !sameOriginMutation(r) {
-				http.Error(w, "cross-origin mutation refused", http.StatusForbidden)
-				return
-			}
-			// Adminer is a third-party app behind a reverse proxy. Its HTML is
-			// not rendered by writeHTML; retain Adminer's own form handling
-			// while rejecting identifiable cross-origin browser requests.
-			if !strings.HasPrefix(r.URL.Path, "/db-admin/") {
+			// Adminer renders its own forms, without our session-bound CSRF
+			// token. Retain the Origin/Fetch Metadata gate for Adminer.
+			if strings.HasPrefix(r.URL.Path, "/db-admin/") {
+				if !sameOriginMutation(r) {
+					http.Error(w, "cross-origin mutation refused", http.StatusForbidden)
+					return
+				}
+			} else {
+				// Native forms carry a CSRF token tied to the authenticated
+				// session. Verifying that token is sufficient even when a
+				// reverse proxy rewrites Host or Origin differs from the
+				// upstream address. Strict Host/Origin equality incorrectly
+				// blocked legitimate SSH tunnels and reverse proxies.
 				if err := r.ParseForm(); err != nil {
 					http.Error(w, "invalid form", http.StatusBadRequest)
 					return
