@@ -57,3 +57,25 @@ func TestRecoveryWithoutPreviousRevisionReportsOriginalFailure(t *testing.T) {
 	}
 }
 
+func TestAutoDeployRechecksStateAfterManualRollback(t *testing.T) {
+	before := DeployConfig{Repository: "https://example.test/repo.git", Branch: "main", CurrentCommit: "old", AutoDeploy: true}
+	remote := "new"
+	if !shouldContinueAutoDeploy(before, before, remote) {
+		t.Fatal("expected unchanged auto deploy configuration to proceed")
+	}
+	stopped := before
+	stopped.AutoDeploy = false
+	if shouldContinueAutoDeploy(before, stopped, remote) {
+		t.Fatal("manual rollback must disable pending auto deploy")
+	}
+	changedBranch := before
+	changedBranch.Branch = "stable"
+	if shouldContinueAutoDeploy(before, changedBranch, remote) {
+		t.Fatal("stale remote revision must not deploy to a different branch")
+	}
+	alreadyCurrent := before
+	alreadyCurrent.CurrentCommit = remote
+	if shouldContinueAutoDeploy(before, alreadyCurrent, remote) {
+		t.Fatal("already deployed remote revision must not be redeployed")
+	}
+}
