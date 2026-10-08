@@ -178,6 +178,54 @@ Docker-published container ports bind to `127.0.0.1` by default. To publish
 ports on all interfaces, explicitly enable **Public ports** when creating a
 container. Public Docker ports may bypass UFW policy, so protect them separately.
 
+## Open the panel only when needed
+
+The panel normally listens on `127.0.0.1:8443`, reachable through an SSH tunnel.
+Use **Close panel** in the top navigation to schedule a stop of
+`open-go-panel.service`. The action also disables its autostart on reboot.
+Your websites, managed services, containers, Caddy, and databases are not stopped.
+
+To reopen it on demand, connect with SSH and run:
+
+```bash
+sudo systemctl start open-go-panel.service
+```
+
+If you are accessing the server remotely, establish a local SSH tunnel:
+
+```bash
+ssh -L 8443:127.0.0.1:8443 root@YOUR_SERVER
+```
+
+Then open `http://127.0.0.1:8443`. To restore automatic startup at boot
+explicitly, run `sudo systemctl enable open-go-panel.service`. Note that
+running the panel installer/upgrade enables and starts the panel again.
+
+## Build Docker containers from private GitHub repositories
+
+In **Docker → Build from GitHub**, enter your `owner/repository` and click
+**Generate SSH deploy key**. Copy the displayed **public key** into the
+matching GitHub repository's **Settings → Deploy keys → Add deploy key**.
+Leave write access **disabled**. GitHub deploy keys are repository-specific;
+generate a distinct key for each private repository.
+
+Provide the repository URL, optional branch (blank uses the default branch),
+Dockerfile path relative to the repository, container name, ports, and
+autostart setting. Click **Build & run**. The panel clones the source into a
+temporary build context, runs `docker build`, creates the container, and
+removes the temporary clone. By default Docker ports bind to `127.0.0.1`;
+explicit public publishing is optional. GitHub SSH host keys are fetched
+from GitHub's HTTPS metadata API and verified during SSH clone. The SSH
+private key remains server-side under `/etc/open-go-panel/docker-git/`
+with restricted permissions. The build never passes the private key into
+Docker as an argument, layer or build context.
+
+Public GitHub repositories can be built without a deploy key. Git, an SSH
+client and a running Docker daemon are required. The build runs as a
+background operation in the **panel process**; do not close or restart the
+panel before it finishes. Private clone and build require outbound access
+to GitHub over SSH (port 22) and HTTPS (GitHub host-key metadata).
+
 ## Service
 
 ```bash
