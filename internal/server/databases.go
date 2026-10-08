@@ -277,13 +277,13 @@ func databasesPage(data databasePageData) string {
 
 	engineControls := func(engine string, installed, active bool, installHTML string) string {
 		if !installed {
-			return installHTML
+			return `<div class="db-service-footer">` + installHTML + `</div>`
 		}
 		parts := `<form method="post" action="/databases/` + engine + `/restart" onsubmit="return confirm('Restart ` + engine + `? Active connections may be interrupted.')"><button class="secondary">Restart</button></form>`
 		if engine == "redis" && active {
 			parts = `<a class="secondary" href="/databases/redis">Open Redis</a>` + parts
 		}
-		return `<div class="actions db-service-actions">` + parts + `</div>`
+		return `<div class="db-service-footer"><div class="actions db-service-actions">` + parts + `</div></div>`
 	}
 
 	importNotice := ""
