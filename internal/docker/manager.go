@@ -41,6 +41,7 @@ var (
 type Manager struct {
 	buildMu   sync.Mutex
 	keyMu     sync.Mutex
+	lifecycleMu sync.Mutex
 	buildTask BuildTask
 }
 
@@ -184,6 +185,8 @@ func (m *Manager) Create(ctx context.Context, name, image, ports string, autosta
 }
 
 func (m *Manager) CreateConfigured(ctx context.Context, name, image, ports string, autostart, publicPorts bool, cfg RuntimeConfig) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
     return m.runImage(ctx, name, image, ports, autostart, publicPorts, true, cfg)
 }
 
@@ -266,12 +269,30 @@ func (m *Manager) RestartService(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) Start(ctx context.Context, id string) error { return dockerCommand(ctx, "start", id) }
-func (m *Manager) Stop(ctx context.Context, id string) error { return dockerCommand(ctx, "stop", id) }
-func (m *Manager) Restart(ctx context.Context, id string) error { return dockerCommand(ctx, "restart", id) }
-func (m *Manager) Remove(ctx context.Context, id string) error { return dockerCommand(ctx, "rm", "-f", id) }
+func (m *Manager) Start(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "start", id)
+}
+func (m *Manager) Stop(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "stop", id)
+}
+func (m *Manager) Restart(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "restart", id)
+}
+func (m *Manager) Remove(ctx context.Context, id string) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
+    return dockerCommand(ctx, "rm", "-f", id)
+}
 
 func (m *Manager) SetAutostart(ctx context.Context, id string, enabled bool) error {
+    m.lifecycleMu.Lock()
+    defer m.lifecycleMu.Unlock()
     policy := "no"
     if enabled { policy = "unless-stopped" }
     return dockerCommand(ctx, "update", "--restart", policy, id)
