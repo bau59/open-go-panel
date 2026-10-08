@@ -629,11 +629,45 @@ func (m *Manager) prepareDeployment(ctx context.Context, app App) error {
 		}
 	case "go":
 		if _, err := os.Stat(filepath.Join(app.Root, "go.mod")); err == nil {
-			_, err = runAsUser(ctx, app.User, app.Root, "go", "mod", "download")
+			// runuser inherits the panel service's PATH, which may not
+			// contain /usr/local/go/bin even when Go is installed and
+			// available to the application's own systemd service.
+			goBinary, err := resolveDeployGo()
+			if err != nil {
+				return err
+			}
+			_, err = runAsUser(ctx, app.User, app.Root, goBinary, "mod", "download")
 			return err
 		}
 	}
 	return nil
+}
+
+// resolveDeployGo returns an absolute executable path so runuser does not
+// depend on the panel daemon's PATH when preparing staged Go releases.
+func resolveDeployGo() (string, error) {
+	candidates := []string{"/usr/local/go/bin/go", "/usr/local/bin/go", "/usr/bin/go", "/bin/go"}
+	if path, err := exec.LookPath("go"); err == nil {
+		candidates = append(candidates, path)
+	}
+	if path := firstExecutableGo(candidates); path != "" {
+		return path, nil
+	}
+	return "", errors.New("Go toolchain is not installed or executable; install Go from Software before deploying this application")
+}
+
+func firstExecutableGo(candidates []string) string {
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(absolute)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return absolute
+		}
+	}
+	return ""
 }
 
 func runAsUser(ctx context.Context, username, dir, name string, args ...string) (string, error) {
