@@ -548,6 +548,33 @@ func managedStaticTemplate(settings GlobalSettings) string {
 	return strings.Join(lines, "\n")
 }
 
+// ManagedSiteTemplate returns the generated defaults for an individual site.
+// Custom site overrides are applied only by the caller during configuration reload.
+func ManagedSiteTemplate(site Site, settings GlobalSettings) string {
+	switch site.Kind {
+	case "parked", "redirect":
+		address := "{domain}"
+		if !settings.HTTPS {
+			address = "http://{domain}"
+		}
+		lines := []string{address + " {"}
+		lines = append(lines, securityHeaderLines(settings)...)
+		if site.Kind == "redirect" {
+			lines = append(lines, "\tredir {root} 301")
+		} else {
+			lines = append(lines, "\trespond \"Domain not configured\" 404")
+		}
+		return strings.Join(append(lines, "}"), "\n")
+	case "static":
+		return managedStaticTemplate(settings)
+	default:
+		if site.Port == 0 {
+			return managedStaticTemplate(settings)
+		}
+		return managedProxyTemplate(settings)
+	}
+}
+
 func (m *Manager) Template() (string, error) {
 	var value string
 	err := m.store.DB().QueryRow(`SELECT value FROM settings WHERE key = 'caddy.site_template'`).Scan(&value)
@@ -586,8 +613,8 @@ func (m *Manager) DefaultTemplateForSite(site Site) string {
 	if err != nil {
 		settings = defaultGlobalSettings()
 	}
-	if site.Kind == "static" || site.Port == 0 {
-		return managedStaticTemplate(settings)
+	if site.Kind == "static" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
+		return ManagedSiteTemplate(site, settings)
 	}
 	template, err := m.Template()
 	if err != nil || strings.TrimSpace(template) == "" {
@@ -681,27 +708,12 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	b.WriteString("# Managed by Open Go Panel\n\n")
 	for _, site := range sites {
 		siteTemplate := template
-		if site.Kind == "static" || site.Port == 0 {
+		if site.Kind == "static" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
 			settings, err := m.GlobalSettings()
 			if err != nil {
 				settings = defaultGlobalSettings()
 			}
-			siteTemplate = managedStaticTemplate(settings)
-		}
-		if site.Kind == "parked" || site.Kind == "redirect" {
-			settings, err := m.GlobalSettings()
-			if err != nil {
-				settings = defaultGlobalSettings()
-			}
-			address := "{domain}"
-			if !settings.HTTPS {
-				address = "http://{domain}"
-			}
-			if site.Kind == "parked" {
-				siteTemplate = address + " {\n respond \"Domain not configured\" 404\n}"
-			} else {
-				siteTemplate = address + " {\n redir {root} 301\n}"
-			}
+			siteTemplate = ManagedSiteTemplate(site, settings)
 		}
 		if strings.TrimSpace(site.Template) != "" {
 			siteTemplate = site.Template
