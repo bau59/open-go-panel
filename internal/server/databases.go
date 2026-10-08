@@ -412,7 +412,7 @@ func databasesPage(data databasePageData) string {
 		fmt.Fprintf(&rows, `
 		<tr>
 			<td><strong>%s</strong><div class="muted">#%d · %s</div></td>
-			<td><span class="badge">%s</span></td>
+			<td><span class="meta-chip">%s</span></td>
 			<td><code>%s</code></td>
 			<td><code>%s</code></td>
 			<td>
@@ -538,7 +538,7 @@ func databasesPage(data databasePageData) string {
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div><h2>Adminer</h2><p class="note" style="margin:6px 0 0">Runs only on 127.0.0.1:8787 and is exposed through the authenticated panel proxy.</p></div>
-				` + badge(data.Adminer.Active) + `
+				` + stateText(data.Adminer.Active) + `
 			</div>
 			<div class="actions" style="justify-content:flex-start">` + adminerControls + `</div>
 		</section>
@@ -549,7 +549,7 @@ func databasesPage(data databasePageData) string {
 					<h2>Managed SQL databases</h2>
 					<p class="note" style="margin:6px 0 0">Credentials, backups, Adminer and one-time remote imports.</p>
 				</div>
-				<span class="badge">` + fmt.Sprintf("%d", len(data.Items)) + ` databases</span>
+				<span class="meta-chip">` + fmt.Sprintf("%d", len(data.Items)) + ` databases</span>
 			</div>
 			<form method="post" action="/databases" class="toolbar toolbar-4">
 				<select name="engine" required>
