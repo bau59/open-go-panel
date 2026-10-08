@@ -1,6 +1,7 @@
 package server
 
 import (
+    "fmt"
     "html"
     "net/http"
     "strings"
