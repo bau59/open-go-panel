@@ -197,6 +197,14 @@ func (s *Store) Audit(ctx context.Context, action, target, details string) {
 		 VALUES(strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?)`,
 		action, target, details,
 	)
+	// Audit retention is applied on writes, so the cap remains effective without
+	// a background worker or a new service. Invalid settings are ignored.
+	var days int
+	if err := s.db.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'logs.audit_retention_days'`).Scan(&days); err == nil && days >= 1 && days <= 365 {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM audit_log
+			WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
+			fmt.Sprintf("-%d days", days))
+	}
 }
 
 func (s *Store) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
