@@ -489,6 +489,91 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (m *Manager) SetPort(ctx context.Context, id int64, port int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if port < 1024 || port > 65535 {
+		return errors.New("application port must be between 1024 and 65535")
+	}
+
+	apps, err := m.load()
+	if err != nil {
+		return err
+	}
+
+	index := -1
+	for i := range apps {
+		if apps[i].ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("app %d not found", id)
+	}
+	app := apps[index]
+	if app.Type != "go" && app.Type != "node" {
+		return errors.New("only Go and Node applications use a managed HTTP port")
+	}
+	if app.Service.Mode == "raw" {
+		return errors.New("managed port changes are unavailable in raw systemd mode")
+	}
+	if app.Port == port {
+		return nil
+	}
+
+	for _, other := range apps {
+		if other.ID != id && other.Port == port {
+			return fmt.Errorf("port %d is already assigned to app %q", port, other.Name)
+		}
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return fmt.Errorf("port %d is already in use: %w", port, err)
+	}
+	_ = listener.Close()
+
+	wasActive := false
+	if out, err := exec.CommandContext(ctx, "systemctl", "is-active", serviceName(id)).Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+		wasActive = true
+	}
+
+	previous := app
+	app.Port = port
+	apps[index] = app
+
+	if err := m.ensureStorage(); err != nil {
+		return err
+	}
+	if err := m.writeUnit(app); err != nil {
+		return err
+	}
+	if err := systemctl(ctx, "daemon-reload"); err != nil {
+		_ = m.writeUnit(previous)
+		_ = systemctl(context.Background(), "daemon-reload")
+		return err
+	}
+	if wasActive {
+		if err := systemctl(ctx, "restart", serviceName(id)); err != nil {
+			_ = m.writeUnit(previous)
+			_ = systemctl(context.Background(), "daemon-reload")
+			_ = systemctl(context.Background(), "restart", serviceName(id))
+			return err
+		}
+	}
+
+	if err := m.save(apps); err != nil {
+		_ = m.writeUnit(previous)
+		_ = systemctl(context.Background(), "daemon-reload")
+		if wasActive {
+			_ = systemctl(context.Background(), "restart", serviceName(id))
+		}
+		return err
+	}
+	return nil
+}
+
 func (m *Manager) SetCommand(ctx context.Context, id int64, command string) error {
 	return m.SetServiceConfig(ctx, id, ServiceConfig{
 		Mode:       "form",
