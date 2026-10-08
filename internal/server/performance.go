@@ -91,8 +91,8 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  if maxv>0 && len(data.Buckets)>1{
   graph:=func(pick func(caddy.PerformanceBucket)float64)string{
    var points strings.Builder
-   for i,b:=range data.Buckets{
-    x:=float64(i)*940/float64(len(data.Buckets)-1)+20
+   for _,b:=range data.Buckets{
+    x:=math.Max(20,math.Min(960,20+940*float64(b.Time.Sub(f.Since))/float64(f.Until.Sub(f.Since))))
     y:=180-(pick(b)/maxv)*150
     fmt.Fprintf(&points,"%.1f,%.1f ",x,y)
    }
@@ -104,8 +104,8 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
    {"#53c2bd",graph(func(b caddy.PerformanceBucket)float64{return b.P95})},
    {"#ffab70",graph(func(b caddy.PerformanceBucket)float64{return b.P99})},
   }{graphic.WriteString(`<polyline fill="none" stroke="`+line.color+`" stroke-width="2" points="`+line.points+`"/>`)}
-  for i,b:=range data.Buckets{
-   x:=float64(i)*940/float64(len(data.Buckets)-1)+20
+  for _,b:=range data.Buckets{
+   x:=math.Max(20,math.Min(960,20+940*float64(b.Time.Sub(f.Since))/float64(f.Until.Sub(f.Since))))
    y:=180-(b.P95/maxv)*150
    fmt.Fprintf(&graphic,`<circle cx="%.1f" cy="%.1f" r="4" fill="#53c2bd"><title>%s | %d requests | P50 %.2f ms | P95 %.2f ms | P99 %.2f ms</title></circle>`,
     x,y,html.EscapeString(b.Time.Local().Format("2006-01-02 15:04")),b.Count,b.P50,b.P95,b.P99)
