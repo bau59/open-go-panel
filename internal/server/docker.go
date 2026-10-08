@@ -32,13 +32,14 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
             http.Error(w, "invalid request", http.StatusBadRequest)
             return
         }
-        if err := cfg.Docker.Create(
+        if err := cfg.Docker.CreateConfigured(
             r.Context(),
             r.FormValue("name"),
             r.FormValue("image"),
             r.FormValue("ports"),
             r.FormValue("autostart") == "1",
             r.FormValue("public_ports") == "1",
+            dockerRuntimeForm(r),
         ); err != nil {
             writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
             return
@@ -63,7 +64,7 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
             http.Error(w, "invalid form", http.StatusBadRequest)
             return
         }
-        if err := cfg.Docker.StartGitHubBuild(
+        if err := cfg.Docker.StartGitHubBuildConfigured(
             r.FormValue("name"),
             r.FormValue("repository"),
             r.FormValue("branch"),
@@ -71,6 +72,7 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
             r.FormValue("ports"),
             r.FormValue("autostart") == "1",
             r.FormValue("public_ports") == "1",
+            dockerRuntimeForm(r),
         ); err != nil {
             writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
             return
@@ -127,6 +129,15 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
         }
         http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
+}
+
+func dockerRuntimeForm(r *http.Request) paneldocker.RuntimeConfig {
+    return paneldocker.RuntimeConfig{
+        Environment: r.FormValue("environment"),
+        Volumes:     r.FormValue("volumes"),
+        Init:        r.FormValue("init") == "1",
+        ShmSize:     r.FormValue("shm_size"),
+    }
 }
 
 func writeDockerPage(w http.ResponseWriter, r *http.Request, cfg Config, statusCode int, message string) {
@@ -273,6 +284,11 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div><label>Ports</label><input name="ports" placeholder="8080:80, 8443:443"></div>
                 <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
                 <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-runtime-fields">
+                    <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p></div>
+                    <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
+                    <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
+                </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
             <p class="note" style="margin-top:12px">Ports bind to 127.0.0.1 by default. Public ports may bypass UFW rules; enable only when external access is required.</p>
@@ -293,9 +309,14 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div><label>Ports</label><input name="ports" placeholder="8080:80"></div>
                 <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
                 <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
+                <div class="docker-runtime-fields">
+                    <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p></div>
+                    <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
+                    <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
+                </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + func() string { if build.Running { return " disabled" }; return "" }() + `>Build &amp; run</button></div>
             </form>
-            <p class="note" style="margin-top:12px">For private repositories: first generate the deploy key, add it to the specific GitHub repository in Settings → Deploy keys, then Build &amp; run. Ports default to 127.0.0.1.</p>
+            <p class="note" style="margin-top:12px">For private repositories: first generate the deploy key, add it to the specific GitHub repository in Settings → Deploy keys, then Build &amp; run. Ports default to 127.0.0.1. Existing containers are not modified; rebuilding under an existing name requires deliberate migration.</p>
         </section>
         <section class="panel">
             <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">Autostart maps to Docker restart policy <code>unless-stopped</code>.</p></div></div>
