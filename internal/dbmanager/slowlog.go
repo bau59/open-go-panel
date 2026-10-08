@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
@@ -259,5 +258,3 @@ func parsePostgresSlowQueries(log, database string, limit int) []SlowQuery {
 	return queries
 }
 
-// Avoid inadvertently interpreting huge query output as an unbounded response.
-var _ = time.Second
