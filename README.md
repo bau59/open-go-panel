@@ -308,14 +308,17 @@ Create two **Go** applications with separate roots and ports:
    production application and the Go main-package directory (normally `.`,
    or `./cmd/server`). Click **Build → Production**.
 
-The panel copies the current development tree to a temporary directory, runs
-`go build` there as the development Linux user, and copies **only the compiled
-executable** into a separately staged copy of the production app. The live
-Air working tree is never modified and never stopped. Once compilation
-succeeds, the production app directory is atomically exchanged; the panel
-restarts its existing systemd service and checks that it is active and
-listening. If activation fails, the previous production files are exchanged
-back and the service is restarted.
+The panel copies the current development tree to a temporary directory and
+runs `go build` there as the development Linux user. The live Air working
+tree is never modified or stopped. Once compilation succeeds, **only the
+production `.ogp-app` executable is atomically replaced**; the production
+directory, databases, uploads and session data remain in place. The previous
+executable is saved as `.ogp-app.previous` for manual rollback. The panel
+then restarts the existing production systemd service and verifies that it
+is active and listening. If activation fails, it automatically restores
+the previous executable and restarts the service. A **Rollback production
+binary** button is available on the production app page after the first
+successful replacement.
 
 The production environment, ports, domains and data are **not copied from
 development**. Do not place production secrets in a development Git checkout.
