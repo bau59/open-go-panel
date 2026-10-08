@@ -50,8 +50,8 @@ func performanceColdPanel(e performanceExtras,appFilter int64)string{
   if appFilter>0 && appFilter!=s.AppID{continue}
   later:="No data"
   if s.LaterSameRouteCount>0{later=fmt.Sprintf("%.2f ms (%d requests)",s.LaterSameRouteAverageMS,s.LaterSameRouteCount)}
-  fmt.Fprintf(&firsts,`<tr><td>#%d</td><td>%s</td><td><code>%s</code></td><td>%.2f ms</td><td>%d / %.2f ms</td><td>%s</td></tr>`,
-   s.AppID,html.EscapeString(s.Started.Local().Format("2006-01-02 15:04")),
+  fmt.Fprintf(&firsts,`<tr><td>#%d</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%.2f ms</td><td>%d / %.2f ms</td><td>%s</td></tr>`,
+   s.AppID,html.EscapeString(s.Started.Local().Format("2006-01-02 15:04")),html.EscapeString(s.Source),
    html.EscapeString(s.FirstRoute),s.FirstDurationMS,s.FirstMinuteRequests,s.FirstMinuteAverageMS,
    html.EscapeString(later))
  }
@@ -62,14 +62,14 @@ func performanceColdPanel(e performanceExtras,appFilter int64)string{
    html.EscapeString(s.Route),s.Gap.Minutes(),s.DurationMS)
  }
  if starts.Len()==0{starts.WriteString(`<tr><td colspan="4" class="empty">No confirmed process starts for this interval.</td></tr>`)}
- if firsts.Len()==0{firsts.WriteString(`<tr><td colspan="6" class="empty">No first requests after a confirmed process start in the available history.</td></tr>`)}
+ if firsts.Len()==0{firsts.WriteString(`<tr><td colspan="7" class="empty">No first requests after a confirmed process start in the available history.</td></tr>`)}
  if idles.Len()==0{idles.WriteString(`<tr><td colspan="5" class="empty">No observed requests after 15 minutes of inactivity.</td></tr>`)}
  return `<section class="panel panel-pad" style="margin-top:16px">
-  <h2>Cold starts — confirmed systemd events</h2>
-  <p class="note">Only actual systemd ExecMainStartTimestamp is used. Reasons for termination and Air child restarts are not inferred. The first request is the first observed request in the saved history.</p>
+  <h2>Cold starts — observed systemd and Air events</h2>
+  <p class="note">Systemd process launches use ExecMainStartTimestamp. Air child runs are recorded only from explicit Air running... journal markers and are labelled air-log; these are observations, not verified process PIDs. Exit reasons are not inferred. First requests are the first observed in the saved history.</p>
   <div class="table-scroll"><table><thead><tr><th>App</th><th>Process started</th><th>Service</th><th>Source</th></tr></thead><tbody>`+starts.String()+`</tbody></table></div>
   <h2 style="margin-top:20px">First request and first minute after start</h2>
-  <div class="table-scroll"><table><thead><tr><th>App</th><th>Start</th><th>First observed route</th><th>First request</th><th>First minute: count / average</th><th>Later same route (1 hour)</th></tr></thead><tbody>`+firsts.String()+`</tbody></table></div>
+  <div class="table-scroll"><table><thead><tr><th>App</th><th>Start</th><th>Source</th><th>First observed route</th><th>First request</th><th>First minute: count / average</th><th>Later same route (1 hour)</th></tr></thead><tbody>`+firsts.String()+`</tbody></table></div>
   <h2 style="margin-top:20px">Requests after 15 minutes idle</h2>
   <p class="note">Inactivity is a separate observation, not a process restart. It is calculated from consecutive requests captured for each app.</p>
   <div class="table-scroll"><table><thead><tr><th>App</th><th>Time</th><th>Route</th><th>Idle</th><th>Caddy duration</th></tr></thead><tbody>`+idles.String()+`</tbody></table></div>
