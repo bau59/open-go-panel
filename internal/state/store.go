@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	for _, statement := range []string{
 		"ALTER TABLE domains ADD COLUMN root TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE domains ADD COLUMN kind TEXT NOT NULL DEFAULT 'proxy'",
+		"ALTER TABLE deployments ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0",
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("migrate sqlite state: %w", err)
