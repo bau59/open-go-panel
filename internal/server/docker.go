@@ -133,8 +133,9 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 func dockerRuntimeForm(r *http.Request) paneldocker.RuntimeConfig {
     return paneldocker.RuntimeConfig{
-        Environment: r.FormValue("environment"),
-        Volumes:     r.FormValue("volumes"),
+        Environment:     r.FormValue("environment"),
+        EnvironmentFile: r.FormValue("environment_file"),
+        Volumes:         r.FormValue("volumes"),
         Init:        r.FormValue("init") == "1",
         ShmSize:     r.FormValue("shm_size"),
     }
@@ -285,7 +286,8 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
                 <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
                 <div class="docker-runtime-fields">
-                    <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p></div>
+                    <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p>
+                    <label style="margin-top:10px">Or existing .env file on the server</label><input name="environment_file" placeholder="/opt/deepseek-bridge/.env"><p class="note">Use either variables above or the existing .env file (0600 permissions). Do not rotate saved encryption keys.</p></div>
                     <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
                     <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
                 </div>
@@ -310,7 +312,8 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <label class="check-row"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
                 <label class="check-row"><input type="checkbox" name="public_ports" value="1"><span>Public ports (0.0.0.0)</span></label>
                 <div class="docker-runtime-fields">
-                    <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p></div>
+                    <div><label>Environment variables (one KEY=value per line)</label><textarea name="environment" rows="5" maxlength="65536" spellcheck="false" placeholder="BRIDGE_API_KEYS=sk-...&#10;STATE_ENCRYPTION_KEY=..."></textarea><p class="note">Stored in the container environment, not in the Docker image or build context. Avoid putting real secrets in repository files.</p>
+                    <label style="margin-top:10px">Or existing .env file on the server</label><input name="environment_file" placeholder="/opt/deepseek-bridge/.env"><p class="note">Use either variables above or the existing .env file (0600 permissions). Do not rotate saved encryption keys.</p></div>
                     <div><label>Persistent mounts (one source:destination per line)</label><textarea name="volumes" rows="5" maxlength="8192" spellcheck="false" placeholder="/opt/deepseek-bridge/data:/app/data&#10;or: deepseek_data:/app/data"></textarea><p class="note">Host directories are created with restricted permissions if missing. Named Docker volumes are also supported.</p></div>
                     <div class="docker-runtime-settings"><label class="check-row"><input type="checkbox" name="init" value="1"><span>Init process (--init)</span></label><div><label>Shared memory (--shm-size)</label><input name="shm_size" placeholder="512m"></div></div>
                 </div>
