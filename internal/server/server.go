@@ -47,6 +47,7 @@ type Config struct {
 	Software      *software.Manager
 	Docker        *paneldocker.Manager
 	State         *state.Store
+	ClosePanel    func(context.Context) error
 }
 
 type sessionStore struct {
@@ -150,6 +151,25 @@ func New(cfg Config) http.Handler {
 
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	})
+
+	if cfg.ClosePanel != nil {
+		mux.Handle("POST /panel/close", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := cfg.ClosePanel(r.Context()); err != nil {
+				http.Error(w, "could not schedule panel shutdown: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeHTML(w, cfg.Logger, http.StatusOK, pageHead("Panel closing")+ `<body>
+				<main class="shell" style="max-width:700px;padding-top:64px">
+					<section class="panel panel-pad">
+						<h1>Panel is closing</h1>
+						<p>The panel service will stop and its listening port will close. Managed applications, databases and Docker containers continue running.</p>
+						<p>To open the panel again, connect to the server through SSH and run:</p>
+						<pre><code>sudo systemctl start open-go-panel.service</code></pre>
+						<p>If you use an SSH tunnel: <code>ssh -L 8443:127.0.0.1:8443 user@server</code></p>
+					</section>
+				</main></body></html>`)
+		})))
+	}
 
 	mux.Handle("GET /", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		info, err := systeminfo.Read()
