@@ -182,6 +182,11 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /databases/import/dismiss", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg.Databases.ClearImportTask()
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /databases/{id}/delete", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -278,16 +283,16 @@ func databasesPage(data databasePageData) string {
 		if engine == "redis" && active {
 			parts = `<a class="secondary" href="/databases/redis">Open Redis</a>` + parts
 		}
-		return `<div class="actions" style="justify-content:flex-start;margin-top:10px">` + parts + `</div>`
+		return `<div class="actions db-service-actions">` + parts + `</div>`
 	}
 
 	importNotice := ""
 	if data.ImportTask.Running {
 		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>Database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` from ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup was created first. The import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
 	} else if data.ImportTask.Error != "" {
-		importNotice = `<div class="alert">Last database import failed: ` + html.EscapeString(data.ImportTask.Error) + `</div>`
+		importNotice = `<div class="alert import-status"><div><strong>Last database import failed</strong><p>` + html.EscapeString(data.ImportTask.Error) + `</p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	} else if !data.ImportTask.FinishedAt.IsZero() {
-		importNotice = `<div class="alert" style="border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc">Remote database import completed. Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></div>`
+		importNotice = `<div class="alert import-status success"><div><strong>Remote database import completed</strong><p>Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	}
 
 	mysqlMetrics := ""
@@ -374,7 +379,7 @@ func databasesPage(data databasePageData) string {
 							<form method="post" action="/databases/%d/import" onsubmit="return confirm('Replace the local database with a snapshot from the remote database? A safety backup will be created first.')">
 								<label>Remote connection</label>
 								<input type="password" name="connection" autocomplete="off" placeholder="%s" required>
-								<p class="note" style="margin:8px 0 0">One-time snapshot import. Credentials are used only for this operation and are not stored.</p>
+								<p class="note" style="margin:8px 0 0">Accepts standard URLs and Go MySQL DSNs, including <code>mysql://user:pass@tcp(host:3306)/db</code>. Credentials are used once and are not stored.</p>
 								<button class="button" style="margin-top:10px">Import & replace local</button>
 							</form>
 						</div>
@@ -441,18 +446,16 @@ func databasesPage(data databasePageData) string {
 			<div>
 				<p class="eyebrow">Data</p>
 				<h1>Databases</h1>
-				<p class="sub">Local MySQL, PostgreSQL and Redis services, credentials, migration, tuning and backups.</p>
+				<p class="sub">MySQL, PostgreSQL and Redis with backups, migrations and server controls.</p>
 			</div>
 		</div>
 
 		` + alert + importNotice + `
 
-		<section class="metrics-grid" style="margin-bottom:16px">
-			<div class="metric"><span>MySQL</span><strong>3306</strong><small>` + badge(data.Status.MySQLActive) + `</small>` + engineControls("mysql", data.Status.MySQLInstalled, data.Status.MySQLActive, installMySQL) + `</div>
-			<div class="metric"><span>PostgreSQL</span><strong>5432</strong><small>` + badge(data.Status.PostgresActive) + `</small>` + engineControls("postgres", data.Status.PostgresInstalled, data.Status.PostgresActive, installPostgres) + `</div>
-			<div class="metric"><span>Redis</span><strong>6379</strong><small>` + badge(data.Status.RedisActive) + `</small>` + engineControls("redis", data.Status.RedisInstalled, data.Status.RedisActive, installRedis) + `</div>
-			<div class="metric"><span>Managed SQL databases</span><strong>` + fmt.Sprintf("%d", len(data.Items)) + `</strong><small>tracked in panel.db</small></div>
-			<div class="metric"><span>Network</span><strong>localhost</strong><small>database ports stay private</small></div>
+		<section class="db-services-grid" style="margin-bottom:16px">
+			<div class="metric db-service-card"><span>MySQL</span><strong>3306</strong><small>` + badge(data.Status.MySQLActive) + `</small><p class="note">Local SQL server</p>` + engineControls("mysql", data.Status.MySQLInstalled, data.Status.MySQLActive, installMySQL) + `</div>
+			<div class="metric db-service-card"><span>PostgreSQL</span><strong>5432</strong><small>` + badge(data.Status.PostgresActive) + `</small><p class="note">Local SQL server</p>` + engineControls("postgres", data.Status.PostgresInstalled, data.Status.PostgresActive, installPostgres) + `</div>
+			<div class="metric db-service-card"><span>Redis</span><strong>6379</strong><small>` + badge(data.Status.RedisActive) + `</small><p class="note">Local cache / key-value store</p>` + engineControls("redis", data.Status.RedisInstalled, data.Status.RedisActive, installRedis) + `</div>
 		</section>
 
 		` + mysqlMetrics + `
@@ -461,11 +464,11 @@ func databasesPage(data databasePageData) string {
 			<div class="section-title">
 				<div><h2>Automatic backups</h2><p class="note" style="margin:6px 0 0">Runs once per day after the selected UTC hour. Old copies are pruned per database.</p></div>
 			</div>
-			<form method="post" action="/databases/backups/schedule" class="grid service-grid-4">
-				<label class="check-row"><input type="checkbox" name="enabled" value="1"` + checked(data.Schedule.Enabled) + `><span>Enabled</span></label>
+			<form method="post" action="/databases/backups/schedule" class="backup-settings-grid">
+				<label class="check-row backup-enabled"><input type="checkbox" name="enabled" value="1"` + checked(data.Schedule.Enabled) + `><span>Enabled</span></label>
 				<div><label>Hour UTC</label><input type="number" name="hour_utc" min="0" max="23" value="` + fmt.Sprintf("%d", data.Schedule.HourUTC) + `"></div>
 				<div><label>Keep copies</label><input type="number" name="keep" min="1" max="100" value="` + fmt.Sprintf("%d", data.Schedule.Keep) + `"></div>
-				<div style="display:flex;align-items:end"><button class="button">Save schedule</button></div>
+				<div class="backup-save"><button class="button">Save schedule</button></div>
 			</form>
 		</section>
 
@@ -480,6 +483,13 @@ func databasesPage(data databasePageData) string {
 		</section>
 
 		<section class="panel" style="margin-bottom:16px">
+			<div class="panel-pad database-list-head">
+				<div>
+					<h2>Managed SQL databases</h2>
+					<p class="note" style="margin:6px 0 0">Credentials, backups, Adminer and one-time remote imports.</p>
+				</div>
+				<span class="badge">` + fmt.Sprintf("%d", len(data.Items)) + ` databases</span>
+			</div>
 			<form method="post" action="/databases" class="toolbar toolbar-4">
 				<select name="engine" required>
 					<option value="mysql">MySQL</option>
