@@ -39,7 +39,8 @@ var (
 )
 
 type Manager struct {
-	buildMu sync.Mutex
+	buildMu   sync.Mutex
+	keyMu     sync.Mutex
 	buildTask BuildTask
 }
 
