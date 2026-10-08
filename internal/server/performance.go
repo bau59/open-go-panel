@@ -56,6 +56,7 @@ func registerPerformanceRoutes(mux *http.ServeMux, store *sessionStore, cfg Conf
    }
   }
   if status,err:=cfg.Caddy.PerformanceCollectorStatus(ctx);err==nil{extra.Collector=status}
+  if rollups,err:=cfg.Caddy.PerformanceRollups(ctx,f);err==nil{extra.Rollups=rollups}
   if restarts,err:=cfg.Caddy.PerformanceRestarts(ctx,from,now);err==nil{extra.Restarts=restarts}
   if cold,err:=cfg.Caddy.ColdStartupSamples(ctx,from,now);err==nil{extra.Cold=cold}
   if idle,err:=cfg.Caddy.IdlePerformanceSamples(ctx,from,now);err==nil{extra.Idle=idle}
@@ -184,6 +185,6 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  <section class="panel"><div class="panel-pad"><h2>Request log</h2><p class="note">Query strings and client IP addresses are not retained in performance results.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th><th>Size</th><th></th></tr></thead><tbody>`+rows.String()+`</tbody></table></div>
  <div class="pager" style="padding:16px"><span class="pager-info">Page `+strconv.Itoa(f.Page)+`</span><div class="pager-actions">`+prev+next+`</div></div></section>
- `+performanceColdPanel(extra,f.AppID)+performanceThresholdForm(func()performanceThresholds{if f.AppID>0 {return extra.PerApp[f.AppID]};return extra.Global}(),f.AppID,extra.Apps)+`
+ `+performanceRollupPanel(extra)+performanceColdPanel(extra,f.AppID)+performanceThresholdForm(func()performanceThresholds{if f.AppID>0 {return extra.PerApp[f.AppID]};return extra.Global}(),f.AppID,extra.Apps)+`
  </main></body></html>`
 }
