@@ -88,6 +88,8 @@ func main() {
 		}
 	}
 
+	// Backups and Git deployment checks run independently. A long backup
+	// must not delay the 30-second interval configured for an application.
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -100,15 +102,24 @@ func main() {
 			} else if ran {
 				logger.Info("scheduled database backup completed")
 			}
+			<-ticker.C
+		}
+	}()
 
-			deployCtx, deployCancel := context.WithTimeout(context.Background(), 20*time.Minute)
-			deployed, deployErr := apps.RunAutoDeploys(deployCtx)
-			deployCancel()
-			if deployErr != nil {
-				logger.Error("automatic app deploy check failed", "err", deployErr)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			deployCtx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+			deployed, err := apps.RunAutoDeploysDue(deployCtx, time.Now())
+			cancel()
+			if err != nil {
+				logger.Error("automatic app deploy check failed", "err", err)
 			} else if deployed > 0 {
 				logger.Info("automatic app deploy completed", "count", deployed)
 			}
+			// Checks are serialized; while a deployment is running, subsequent
+			// checks may be delayed but will not overlap with it.
 			<-ticker.C
 		}
 	}()
