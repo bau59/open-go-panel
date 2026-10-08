@@ -135,7 +135,7 @@ func redisPage(data redisPageData) string {
 		fmt.Fprintf(&rows, `
 			<tr>
 				<td><a href="/databases/redis?%s"><code>%s</code></a></td>
-				<td><span class="badge">%s</span></td>
+				<td><span class="meta-chip">%s</span></td>
 				<td>%s</td>
 				<td>%s</td>
 				<td>
