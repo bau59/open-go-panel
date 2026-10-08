@@ -66,6 +66,13 @@ func validatePromotion(source, target App, pkg string) error {
 	if !filepath.IsAbs(source.Root) || !filepath.IsAbs(target.Root) {
 		return errors.New("application roots must be absolute")
 	}
+	for _, pair := range [][2]string{{source.Root, target.Root}, {target.Root, source.Root}} {
+		relative, err := filepath.Rel(pair[0], pair[1])
+		if err == nil && (relative == "." || relative == ".." ||
+			!strings.HasPrefix(relative, ".."+string(os.PathSeparator)) && !filepath.IsAbs(relative)) {
+			return errors.New("development and production directories cannot overlap")
+		}
+	}
 	if _, err := normalizeGoPackage(pkg); err != nil {
 		return err
 	}
