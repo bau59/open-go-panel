@@ -2,7 +2,6 @@ package dbmanager
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,4 +69,3 @@ func TestBackupRemotePath(t *testing.T) {
 	}
 }
 
-var _ = errors.Is
