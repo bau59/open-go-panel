@@ -158,7 +158,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             <td><code>` + html.EscapeString(item.Image) + `</code></td>
             <td><span class="status-badge ` + stateClass + `">` + html.EscapeString(item.State) + `</span></td>
             <td><code>` + html.EscapeString(item.Ports) + `</code></td>
-            <td><span class="badge">` + html.EscapeString(item.RestartPolicy) + `</span></td>
+            <td><span class="meta-chip">` + html.EscapeString(item.RestartPolicy) + `</span></td>
             <td><div class="actions docker-actions">` + actionButton + `
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/autostart"><input type="hidden" name="enabled" value="` + toggleValue + `"><button class="secondary compact-action">` + toggleLabel + `</button></form>
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/delete" onsubmit="return confirm('Remove this Docker container? Volumes are not removed.')"><button class="danger compact-action">Delete</button></form>
@@ -190,7 +190,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         </section>
         <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
             <div class="section-title">
-                <div><h2>Run container</h2><p class="note" style="margin:6px 0 0">Paste an image or registry reference such as <code>nginx:latest</code> or <code>ghcr.io/org/app:latest</code>.</p></div>
+                <div><h2>Run container</h2><p class="note" style="margin:6px 0 0">Paste an image reference or URL. Examples: <code>nginx:latest</code>, <code>ghcr.io/org/app:latest</code> or a Docker Hub page URL.</p></div>
             </div>
             <form method="post" action="/docker/create" class="docker-create-grid">
                 <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
