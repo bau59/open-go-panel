@@ -490,8 +490,8 @@ func dashboardPage(info systeminfo.Info, appCount, userCount, activeApps int) st
 			<div class="metrics-grid" style="margin:12px 0 16px">
 				<div class="metric"><span>Apps running</span><strong id="res-apps">Loading…</strong></div>
 				<div class="metric"><span>Docker containers</span><strong id="res-containers">Loading…</strong></div>
-				<div class="metric"><span>Container resources</span><strong id="res-docker-usage">Loading…</strong><small>Per-container breakdown below</small></div>
-				<div class="metric"><span>Process memory</span><strong id="res-app-memory">Loading…</strong><small>Tracked systemd units, not all server processes</small></div>
+				<div class="metric"><span>Container resources</span><strong id="res-docker-usage">Loading…</strong><small>Sum of running container measurements</small></div>
+				<div class="metric"><span>Process memory</span><strong id="res-app-memory">Loading…</strong><small>Sum of measured active app units (not total host RAM)</small></div>
 			</div>
 			<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px">
 				<div><h3 style="margin-bottom:10px">Applications</h3><div class="table-scroll"><table><thead><tr><th>App</th><th>State</th><th>Memory</th><th>CPU time</th></tr></thead><tbody id="res-app-table"><tr><td colspan="4">Loading…</td></tr></tbody></table></div></div>
@@ -513,11 +513,11 @@ func dashboardPage(info systeminfo.Info, appCount, userCount, activeApps int) st
 					byId('res-apps').textContent=data.apps_running+' / '+data.apps_total;
 					byId('res-containers').textContent=data.containers_running+' / '+data.containers_total;
 					const used=(data.units||[]).filter(x=>x.active&&x.memory!=='No data');
-					byId('res-app-memory').textContent=used.length+' measured apps';
+					byId('res-app-memory').textContent=data.apps_memory||'No data';
 					const busy=(data.containers||[]).filter(x=>x.running&&x.cpu!=='No data');
-					byId('res-docker-usage').textContent=busy.length+' measured containers';
-					renderTable('res-app-table',data.units,['name','active','memory','cpu_time']);
-					renderTable('res-docker-table',data.containers,['name','running','cpu','memory']);
+					byId('res-docker-usage').textContent=(data.containers_memory||'No data')+' / '+(data.containers_cpu||'No data');
+					renderTable('res-app-table',(data.units||[]).map(x=>({...x,active:x.active?'Running':'Stopped'})),['name','active','memory','cpu_time']);
+					renderTable('res-docker-table',(data.containers||[]).map(x=>({...x,running:x.running?'Running':'Stopped'})),['name','running','cpu','memory']);
 					byId('res-status').textContent=[data.apps_error,data.docker_error].filter(Boolean).join(' · ')||'Snapshot loaded. No periodic resource polling.';
 				})
 				.catch(e=>{byId('res-status').textContent=e.message;for(const id of ['res-apps','res-containers','res-app-memory','res-docker-usage'])byId(id).textContent='Unavailable';});
