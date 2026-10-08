@@ -116,6 +116,8 @@ func (m *Manager) collectPerformanceFile(ctx context.Context,path string)error{
   if len(line)>1024*1024{malformed++;continue}
   entry,ok:=parseCaddyLog(strings.TrimSpace(string(line)))
   if !ok||entry.Kind!="access"{continue}
+  if entry.Time.IsZero() || entry.Time.Before(time.Now().AddDate(0,0,-90)) ||
+   entry.Time.After(time.Now().Add(time.Minute)){malformed++;continue}
   var raw struct {
    Duration *float64 `json:"duration"`
    RequestID string `json:"request_id"`
