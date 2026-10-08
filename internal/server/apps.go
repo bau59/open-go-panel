@@ -678,6 +678,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				` + primaryAction + `
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/stop"><button class="secondary">Stop</button></form>
 				<a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">Logs</a>
+				<a class="secondary" href="/terminal?user=` + html.EscapeString(app.User) + `&app=` + fmt.Sprintf("%d", app.ID) + `">Terminal</a>
 				<a class="secondary" href="#service-settings" onclick="document.getElementById('service-settings').open=true">Service settings</a>
 			</div>`
 
@@ -769,6 +770,25 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		</details>`
 	}
 
+	portFact := `<div><span>Port</span><code>` + port + `</code></div>`
+	if app.Type == "go" || app.Type == "node" {
+		portFact = `
+			<div class="runtime-port-fact">
+				<span>Port</span>
+				<div class="runtime-port-row">
+					<code>` + port + `</code>
+					<details>
+						<summary class="mini-link">Change</summary>
+						<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/port" class="inline-popover">
+							<label>Internal port</label>
+							<input type="number" name="port" min="1024" max="65535" value="` + port + `" required>
+							<button class="button">Change port</button>
+						</form>
+					</details>
+				</div>
+			</div>`
+	}
+
 	return pageHead(app.Name) + `<body>` + appHeader("apps") + `
 	<main class="shell app-shell">
 		<div class="app-page-head">
@@ -797,7 +817,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			</div>
 			<div class="runtime-facts">
 				<div><span>Owner</span><strong>` + html.EscapeString(app.User) + `</strong></div>
-				<div><span>Port</span><code>` + port + `</code></div>
+				` + portFact + `
 				<div><span>Run mode</span><strong>` + html.EscapeString(runMode) + `</strong></div>
 				<div><span>Autostart</span><strong>` + html.EscapeString(autoStart) + `</strong></div>
 				<div><span>Resources</span><strong>` + html.EscapeString(resourceLimit) + `</strong></div>
@@ -985,6 +1005,8 @@ func deployBlock(cfg Config, app panelapp.App) string {
 	if err != nil {
 		return `<div class="alert" style="margin-top:18px">` + html.EscapeString(err.Error()) + `</div>`
 	}
+	keyInfo, keyErr := cfg.Apps.DeployKeyInfo(app.ID)
+
 	deployed := "never"
 	if !deploy.DeployedAt.IsZero() {
 		deployed = deploy.DeployedAt.Local().Format("2006-01-02 15:04")
@@ -1001,6 +1023,44 @@ func deployBlock(cfg Config, app panelapp.App) string {
 	if deploy.PreviousCommit == "" {
 		rollbackDisabled = " disabled"
 	}
+
+	sshPanel := ""
+	if keyErr == nil {
+		if !keyInfo.Generated {
+			sshPanel = `
+				<p class="note">For private repositories use an SSH URL such as <code>git@github.com:org/repo.git</code>. Generate a unique key for this app, then add its public key as a Deploy key in GitHub/GitLab.</p>
+				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy/key">
+					<button class="secondary">Generate SSH deploy key</button>
+				</form>`
+		} else {
+			hostState := `<span class="status-badge warn">host not trusted</span>`
+			hostAction := ""
+			if keyInfo.HostKnown {
+				hostState = `<span class="status-badge ok">host trusted</span>`
+			} else if keyInfo.Host != "" {
+				hostAction = `
+					<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy/trust-host">
+						<button class="secondary">Trust ` + html.EscapeString(keyInfo.Host) + `</button>
+					</form>`
+			}
+			hostLabel := keyInfo.Host
+			if hostLabel == "" {
+				hostLabel = "Save an SSH repository URL to detect the Git host."
+				hostState = ""
+			}
+			sshPanel = `
+				<div class="deploy-key-head">
+					<div><strong>SSH deploy key</strong><p class="note" style="margin:5px 0 0">` + html.EscapeString(hostLabel) + `</p></div>
+					` + hostState + `
+				</div>
+				<textarea class="codearea deploy-key-value" readonly id="deploy-key-` + fmt.Sprintf("%d", app.ID) + `">` + html.EscapeString(keyInfo.PublicKey) + `</textarea>
+				<div class="actions" style="justify-content:flex-start;margin-top:10px">
+					<button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('deploy-key-` + fmt.Sprintf("%d", app.ID) + `').value)">Copy public key</button>
+					` + hostAction + `
+				</div>`
+		}
+	}
+
 	return `
 		<section class="panel panel-pad app-card app-card-wide">
 			<div class="section-title">
@@ -1009,7 +1069,7 @@ func deployBlock(cfg Config, app panelapp.App) string {
 			</div>
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/deploy/config">
 				<div class="app-form-row app-form-row-deploy">
-					<input name="repository" value="` + html.EscapeString(deploy.Repository) + `" placeholder="git@github.com:org/repo.git or https://..." required>
+					<input name="repository" value="` + html.EscapeString(deploy.Repository) + `" placeholder="git@github.com:org/private-repo.git or https://..." required>
 					<input name="branch" value="` + html.EscapeString(defaultString(deploy.Branch, "main")) + `" placeholder="main" required>
 					<button class="secondary">Save Git settings</button>
 				</div>
@@ -1019,6 +1079,11 @@ func deployBlock(cfg Config, app panelapp.App) string {
 				<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/rollback" onsubmit="return confirm('Rollback to the previous deployed commit?')"><button class="secondary"` + rollbackDisabled + `>Rollback</button></form>
 			</div>
 			<p class="note" style="margin:10px 0 0">Current: <code>` + html.EscapeString(defaultString(current, "—")) + `</code> · Previous: <code>` + html.EscapeString(defaultString(previous, "—")) + `</code></p>
+
+			<details class="advanced-block deploy-key-block" style="margin-top:16px">
+				<summary class="secondary">Private Git / SSH deploy key</summary>
+				<div style="margin-top:14px">` + sshPanel + `</div>
+			</details>
 		</section>`
 }
 
