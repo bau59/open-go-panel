@@ -2,7 +2,7 @@
 
 Lightweight open-source Linux server control panel written in Go.
 
-> Technical preview. Open Go Panel runs privileged server-management operations and is intended for developer-managed Ubuntu servers.
+> Production baseline for single-administrator, developer-managed Ubuntu servers. The panel runs privileged server-management operations and is intended to be accessed through an SSH tunnel, not exposed as a public multi-tenant hosting panel.
 
 ## Included
 
@@ -14,6 +14,8 @@ Lightweight open-source Linux server control panel written in Go.
 - Git deploy and one-step rollback;
 - domains, automatic TLS and per-domain Caddy configuration;
 - MySQL and PostgreSQL provisioning;
+- Redis installation, metrics, key browser and cache controls;
+- one-time remote MySQL/PostgreSQL snapshot import with automatic pre-import safety backup;
 - application ↔ database attachments;
 - MySQL server metrics and resource-aware tuning preset;
 - database backups, restore and daily retention schedule;
@@ -22,6 +24,9 @@ Lightweight open-source Linux server control panel written in Go.
 - UFW recommended firewall policy;
 - structured CrowdSec decisions, allowlist and alerts;
 - audit log for successful panel changes;
+- system-wide software management for Docker, Node.js LTS, Tailwind CLI, Go, Air, Git, build tools and common CLI utilities;
+- SSH-tunnel-only web terminal with root and managed-user shells;
+- release checksum verification, post-update health checks and automatic binary rollback;
 - Linux amd64 and arm64 release builds.
 
 ## Install
@@ -92,7 +97,9 @@ Open Go Panel uses native Linux components instead of containers:
 OpenSSH
 systemd
 Caddy
-MySQL / PostgreSQL
+MySQL / PostgreSQL / Redis
+Docker
+Git / OpenSSH
 CrowdSec
 nftables firewall bouncer
 UFW
@@ -137,7 +144,7 @@ Updates preserve:
 /var/lib/open-go-panel
 Linux users and home directories
 application files
-MySQL/PostgreSQL data
+MySQL/PostgreSQL/Redis data
 Caddy certificates/configuration
 CrowdSec state
 UFW rules
@@ -157,17 +164,31 @@ Purge Open Go Panel's own configuration and state:
 curl -fsSL https://raw.githubusercontent.com/bau59/open-go-panel/main/uninstall.sh | bash -s -- --purge
 ```
 
-Even purge mode intentionally leaves Linux users, application files, actual MySQL/PostgreSQL databases, Caddy, CrowdSec and UFW untouched.
+Even purge mode intentionally leaves Linux users, application files, actual MySQL/PostgreSQL databases, Redis data/packages, Caddy, Docker, CrowdSec and UFW untouched.
 
 ## Security model
 
 The panel is intended to be reached through an SSH tunnel and binds to localhost on new installations. Application traffic is exposed through Caddy. CrowdSec provides behavioral detection and dynamic bans; the official firewall bouncer enforces decisions through nftables; UFW provides the static inbound policy.
 
-The panel currently uses a single administrator account and in-memory web sessions. It remains a technical preview and should not be treated as a multi-tenant hosting control panel.
+The panel currently uses a single administrator account and in-memory web sessions. Login attempts are throttled, HTML responses carry restrictive browser security headers, and the root-capable terminal is available only from a loopback connection (normally an SSH tunnel). It should not be treated as a public multi-tenant hosting control panel.
+
+## Release safety
+
+Release artifacts include a `SHA256SUMS` file. The installer verifies the selected binary and bundled terminal assets before replacing the running panel.
+
+During an update the previous binary is kept at:
+
+```text
+/usr/local/bin/open-go-panel.previous
+```
+
+After replacement the installer restarts Open Go Panel and checks `/health`. If the new binary fails to start or does not become healthy, the previous binary is restored automatically.
+
+Release builds are gated by Go tests/vet plus an Ubuntu 24.04 production smoke test that installs the panel, authenticates through the web UI, creates a Linux user and app, checks self-hosted terminal assets, exercises Redis access, and verifies automatic rollback with an intentionally broken update.
 
 ## Next
 
-- background jobs and progress for long-running deploy/backup/install operations;
+- persistent background-job history and richer progress UI;
 - richer deployment history;
-- runtime/package management;
-- optional terminal and file management.
+- optional file manager;
+- broader real-server integration coverage for MySQL/PostgreSQL/CrowdSec/Docker.
