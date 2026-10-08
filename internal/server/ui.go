@@ -251,9 +251,16 @@ const baseStyles = `
 	.table-path{display:block;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 	.db-services-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 	.db-service-card{display:flex;min-height:190px;flex-direction:column}
+	.db-service-footer{display:flex;min-height:64px;margin-top:auto;padding-top:18px;align-items:flex-end}
+	.db-service-footer>form,.db-service-footer>.actions{margin:0;padding:0}
+	.db-service-actions{min-height:40px;align-items:center}
+	.docker-actions{justify-content:flex-start;flex-wrap:wrap}
+	.docker-actions form{display:inline-flex}
+	.docker-metrics{grid-template-columns:repeat(2,minmax(0,1fr));max-width:620px}
+	.empty-state-card{max-width:720px}
 	.db-service-card .note{margin:10px 0 0;line-height:1.45}
-	.db-service-card>form{margin-top:auto;padding-top:16px}
-	.db-service-actions{justify-content:flex-start;margin-top:auto;padding-top:16px;flex-wrap:wrap}
+	.db-service-card>form{margin:0}
+	.db-service-actions{justify-content:flex-start;flex-wrap:wrap}
 	.backup-settings-grid{display:grid;grid-template-columns:minmax(130px,.7fr) minmax(150px,1fr) minmax(150px,1fr) auto;gap:16px;align-items:end}
 	.backup-enabled{height:42px;margin:0}
 	.backup-save{display:flex;align-items:end}
@@ -368,7 +375,7 @@ const baseStyles = `
 		.terminal-screen{min-height:420px;height:68vh}
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
 		.redis-toolbar{grid-template-columns:1fr}
-		.db-services-grid,.backup-settings-grid{grid-template-columns:1fr}
+		.db-services-grid,.backup-settings-grid,.docker-metrics{grid-template-columns:1fr}
 		.database-list-head,.import-status{align-items:flex-start;flex-direction:column}
 		.table-path{max-width:180px}
 	}
@@ -451,6 +458,7 @@ func appHeader(active string) string {
 		{"caddy", "/caddy", "Caddy"},
 		{"security", "/security", "Security"},
 		{"software", "/software", "Software"},
+		{"docker", "/docker", "Docker"},
 		{"terminal", "/terminal", "Terminal"},
 		{"activity", "/activity", "Activity"},
 	}
