@@ -178,11 +178,25 @@ func goStatus(ctx context.Context) Item {
 		Description: "Latest stable Go toolchain from go.dev.",
 		Detail: "/usr/local/go · used by Go application run modes.",
 	}
-	if out, err := commandOutput(ctx, "go", "version"); err == nil {
+	// The panel runs as a systemd service, whose PATH may not include
+	// /usr/local/go/bin. Check the actual managed toolchain before PATH.
+	if version, err := detectGoVersion(ctx, "/usr/local/go/bin/go", "go"); err == nil {
 		item.Installed = true
-		item.Version = strings.TrimSpace(out)
+		item.Version = version
 	}
 	return item
+}
+
+func detectGoVersion(ctx context.Context, candidates ...string) (string, error) {
+	var lastErr error
+	for _, candidate := range candidates {
+		output, err := commandOutput(ctx, candidate, "version")
+		if err == nil {
+			return strings.TrimSpace(output), nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
 }
 
 func airStatus(ctx context.Context) Item {
@@ -329,7 +343,7 @@ func installTailwind(ctx context.Context) error {
 func installGo(ctx context.Context) error {
 	script := "set -euo pipefail\n" +
 		"case $(uname -m) in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo unsupported architecture >&2; exit 1 ;; esac\n" +
-		"VERSION=$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n1)\n" +
+		"VERSION=$(curl -fsSL 'https://go.dev/VERSION?m=text' | sed -n '1p')\n" +
 		"test -n \"$VERSION\"\n" +
 		"TMP=$(mktemp --suffix=.tar.gz)\nNEW=/usr/local/.go-new-$$\nOLD=/usr/local/.go-old-$$\n" +
 		"trap 'rm -f \"$TMP\"; rm -rf \"$NEW\"' EXIT\n" +
@@ -337,7 +351,15 @@ func installGo(ctx context.Context) error {
 		"mkdir -p \"$NEW\"\ntar -xzf \"$TMP\" -C \"$NEW\" --strip-components=1\n" +
 		"test -x \"$NEW/bin/go\"\n" +
 		"if [ -d /usr/local/go ]; then mv /usr/local/go \"$OLD\"; fi\n" +
-		"if mv \"$NEW\" /usr/local/go; then rm -rf \"$OLD\"; else test ! -d \"$OLD\" || mv \"$OLD\" /usr/local/go; exit 1; fi\n"
+		"if mv \"$NEW\" /usr/local/go; then\n" +
+		"  for tool in go gofmt; do\n" +
+		"    if [ -e \"/usr/local/bin/$tool\" ] && [ ! -L \"/usr/local/bin/$tool\" ]; then\n" +
+		"      echo \"cannot link $tool: /usr/local/bin/$tool is not a symlink\" >&2; exit 1\n" +
+		"    fi\n" +
+		"    ln -sfn \"/usr/local/go/bin/$tool\" \"/usr/local/bin/$tool\"\n" +
+		"  done\n" +
+		"  rm -rf \"$OLD\"\n" +
+		"else test ! -d \"$OLD\" || mv \"$OLD\" /usr/local/go; exit 1; fi\n"
 	return runShell(ctx, script)
 }
 
