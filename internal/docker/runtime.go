@@ -23,10 +23,11 @@ var (
 // RuntimeConfig is supplied when creating a container, not during image build.
 // It is never embedded in an image, Dockerfile, build arguments or log line.
 type RuntimeConfig struct {
-	Environment string
-	Volumes     string
-	Init        bool
-	ShmSize     string
+	Environment     string
+	EnvironmentFile string
+	Volumes         string
+	Init            bool
+	ShmSize         string
 }
 
 type volumeMount struct {
@@ -104,9 +105,32 @@ func parseVolumes(raw string) ([]volumeMount, error) {
 }
 
 func (cfg RuntimeConfig) validate() (string, []volumeMount, error) {
+	if cfg.EnvironmentFile != "" && strings.TrimSpace(cfg.Environment) != "" {
+		return "", nil, errors.New("choose environment variables OR a server .env file, not both")
+	}
 	env, err := parseEnvironment(cfg.Environment)
 	if err != nil {
 		return "", nil, err
+	}
+	if cfg.EnvironmentFile != "" {
+		filePath := strings.TrimSpace(cfg.EnvironmentFile)
+		if !filepath.IsAbs(filePath) || filepath.Clean(filePath) != filePath {
+			return "", nil, errors.New("environment file must be an absolute server path")
+		}
+		info, err := os.Lstat(filePath)
+		if err != nil {
+			return "", nil, fmt.Errorf("inspect environment file: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+			return "", nil, errors.New("environment file must be a regular file private to its owner (chmod 600)")
+		}
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", nil, fmt.Errorf("read environment file: %w", err)
+		}
+		if _, err := parseEnvironment(string(content)); err != nil {
+			return "", nil, fmt.Errorf("invalid environment file: %w", err)
+		}
 	}
 	mounts, err := parseVolumes(cfg.Volumes)
 	if err != nil {
@@ -127,7 +151,9 @@ func runtimeArgs(cfg RuntimeConfig, environment string, mounts []volumeMount) ([
 	if shm := strings.TrimSpace(cfg.ShmSize); shm != "" {
 		args = append(args, "--shm-size", shm)
 	}
-	if environment != "" {
+	if cfg.EnvironmentFile != "" {
+		args = append(args, "--env-file", cfg.EnvironmentFile)
+	} else if environment != "" {
 		file, err := os.CreateTemp("", "ogp-docker-env-")
 		if err != nil {
 			return nil, cleanup, fmt.Errorf("create temporary Docker environment file: %w", err)
