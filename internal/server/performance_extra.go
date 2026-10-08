@@ -14,6 +14,7 @@ type performanceExtras struct {
  PerApp map[int64]performanceThresholds
  Apps []performanceAppOption
  Restarts []caddy.ProcessStart
+ Lifecycle []caddy.ProcessLifecycle
  Cold []caddy.ColdSample
  Idle []caddy.IdleSample
  Collector caddy.CollectorStatus
@@ -40,13 +41,22 @@ func (e performanceExtras) restartFor(appID int64,when time.Time)string {
 }
 
 func performanceColdPanel(e performanceExtras,appFilter int64)string{
- var starts,firsts,idles strings.Builder
+ var starts,firsts,idles,lifecycle strings.Builder
  for _,event:=range e.Restarts {
   if appFilter>0 && appFilter!=event.AppID{continue}
   fmt.Fprintf(&starts,`<tr><td>#%d</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
    event.AppID,html.EscapeString(event.Time.Local().Format("2006-01-02 15:04:05")),
    html.EscapeString(event.Service),html.EscapeString(event.Source))
  }
+ for _,ev:=range e.Lifecycle {
+  if appFilter>0&&appFilter!=ev.AppID{continue}
+  reason:=ev.Reason
+  if reason==""{reason="Not reported"}
+  fmt.Fprintf(&lifecycle,`<tr><td>#%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+    ev.AppID,html.EscapeString(ev.Time.Local().Format("2006-01-02 15:04:05")),
+    html.EscapeString(ev.Kind),html.EscapeString(ev.Service),html.EscapeString(reason))
+ }
+ if lifecycle.Len()==0{lifecycle.WriteString(`<tr><td colspan="5" class="empty">No verified systemd lifecycle events.</td></tr>`)}
  for _,s:=range e.Cold{
   if appFilter>0 && appFilter!=s.AppID{continue}
   later:="No data"
@@ -69,6 +79,9 @@ func performanceColdPanel(e performanceExtras,appFilter int64)string{
   <h2>Cold starts — observed systemd and Air events</h2>
   <p class="note">Systemd process launches use ExecMainStartTimestamp. Air child runs are recorded only from explicit Air running... journal markers and are labelled air-log; these are observations, not verified process PIDs. Exit reasons are not inferred. First requests are the first observed in the saved history.</p>
   <div class="table-scroll"><table><thead><tr><th>App</th><th>Process started</th><th>Service</th><th>Source</th></tr></thead><tbody>`+starts.String()+`</tbody></table></div>
+  <h2 style="margin-top:20px">Systemd process lifecycle</h2>
+  <p class="note">Stop reasons are shown only where systemd reports a Result. A service's latest status is not interpreted as a reason for an earlier restart.</p>
+  <div class="table-scroll"><table><thead><tr><th>App</th><th>When</th><th>Event</th><th>Service</th><th>Reported result</th></tr></thead><tbody>`+lifecycle.String()+`</tbody></table></div>
   <h2 style="margin-top:20px">First request and first minute after start</h2>
   <div class="table-scroll"><table><thead><tr><th>App</th><th>Start</th><th>Source</th><th>First observed route</th><th>First request</th><th>First minute: count / average</th><th>Later same route (1 hour)</th></tr></thead><tbody>`+firsts.String()+`</tbody></table></div>
   <h2 style="margin-top:20px">Requests after 15 minutes idle</h2>
