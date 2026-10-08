@@ -55,11 +55,13 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  }
  var rows strings.Builder
  for _,entry:=range data.Rows{
-  fmt.Fprintf(&rows,`<tr><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%d</td><td><strong>%.2f ms</strong></td><td>%d B</td></tr>`,
+  fmt.Fprintf(&rows,`<tr><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%d</td><td><strong>%.2f ms</strong></td><td>%d B</td><td><details><summary class="secondary">Details</summary><div class="inline-popover wide">
+  <p>Caddy: %.2f ms · Protocol: %s</p><p>Backend / Server-Timing: No data</p><p>Request ID: No data</p><p>Related restart: No data</p></div></details></td></tr>`,
    html.EscapeString(entry.Time.Local().Format("01-02 15:04:05")),html.EscapeString(entry.Domain),
-   html.EscapeString(entry.Method),html.EscapeString(entry.Route),entry.Status,entry.DurationMS,entry.Size)
+   html.EscapeString(entry.Method),html.EscapeString(entry.Route),entry.Status,entry.DurationMS,entry.Size,
+   entry.DurationMS,html.EscapeString(entry.Protocol))
  }
- if rows.Len()==0 {rows.WriteString(`<tr><td colspan="7" class="empty">No measured HTTP requests in the selected interval.</td></tr>`)}
+ if rows.Len()==0 {rows.WriteString(`<tr><td colspan="8" class="empty">No measured HTTP requests in the selected interval.</td></tr>`)}
  var routes strings.Builder
  for i,route:=range data.Routes{
   if i>=40 {break}
@@ -98,6 +100,12 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
    {"#53c2bd",graph(func(b caddy.PerformanceBucket)float64{return b.P95})},
    {"#ffab70",graph(func(b caddy.PerformanceBucket)float64{return b.P99})},
   }{graphic.WriteString(`<polyline fill="none" stroke="`+line.color+`" stroke-width="2" points="`+line.points+`"/>`)}
+  for i,b:=range data.Buckets{
+   x:=float64(i)*940/float64(len(data.Buckets)-1)+20
+   y:=180-(b.P95/maxv)*150
+   fmt.Fprintf(&graphic,`<circle cx="%.1f" cy="%.1f" r="4" fill="#53c2bd"><title>%s | %d requests | P50 %.2f ms | P95 %.2f ms | P99 %.2f ms</title></circle>`,
+    x,y,html.EscapeString(b.Time.Local().Format("2006-01-02 15:04")),b.Count,b.P50,b.P95,b.P99)
+  }
   graphic.WriteString(`</svg><p class="note">Purple P50 · Turquoise P95 · Orange P99. Vertical scale: 0–`+fmt.Sprintf("%.2f",maxv)+` ms.</p>`)
  }else{graphic.WriteString(`<p class="note">Not enough time buckets for a percentile trend.</p>`)}
  var buckets strings.Builder
@@ -131,7 +139,7 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  <section class="panel" style="margin-bottom:16px"><div class="panel-pad"><h2>Slowest routes by P95</h2><p class="note">Numeric path segments and UUIDs are grouped; unknown dynamic route templates are not inferred.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Domain</th><th>Route</th><th>Count</th><th>P50 ms</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th><th>5xx</th></tr></thead><tbody>`+routes.String()+`</tbody></table></div></section>
  <section class="panel"><div class="panel-pad"><h2>Request log</h2><p class="note">Query strings and client IP addresses are not retained in performance results.</p></div>
- <div class="table-scroll"><table><thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th><th>Size</th></tr></thead><tbody>`+rows.String()+`</tbody></table></div>
+ <div class="table-scroll"><table><thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th><th>Size</th><th></th></tr></thead><tbody>`+rows.String()+`</tbody></table></div>
  <div class="pager" style="padding:16px"><span class="pager-info">Page `+strconv.Itoa(f.Page)+`</span><div class="pager-actions">`+prev+next+`</div></div></section>
  <section class="panel panel-pad" style="margin-top:16px"><h2>Cold starts and backend timing</h2><p class="note">No data: process restart correlation and Server-Timing are not available from the current Caddy access-log fields. These measurements are not estimated.</p></section>
  </main></body></html>`
