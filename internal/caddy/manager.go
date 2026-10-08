@@ -200,7 +200,7 @@ func (m *Manager) SetStandaloneRedirect(ctx context.Context, id int64, destinati
 	if destination != "" {
 		u, err := url.Parse(destination)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") ||
-			u.Hostname() == "" || u.User != nil || strings.ContainsAny(destination, "\r\n\t {}") {
+			u.Hostname() == "" || u.User != nil || strings.ContainsAny(destination, "\r\n\t {}\"'\\") {
 			return errors.New("invalid redirect destination")
 		}
 	}
