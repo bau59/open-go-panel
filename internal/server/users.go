@@ -129,7 +129,7 @@ func usersPage(users []linuxuser.User, message string) string {
 		<tr>
 			<td><strong>%s</strong><div class="muted">%s</div></td>
 			<td><span class="status-badge %s">%s</span></td>
-			<td><span class="badge">%d keys</span></td>
+			<td><span class="meta-chip">%d keys</span></td>
 			<td>
 				<div class="actions">
 					<a class="secondary" href="/terminal?user=%s">Terminal</a>
