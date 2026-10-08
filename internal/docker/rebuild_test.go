@@ -1,6 +1,8 @@
 package docker
 
 import (
+    "context"
+    "path/filepath"
 	"os"
 	"strings"
 	"testing"
@@ -85,4 +87,46 @@ func TestRebuildStoppedContainerStaysStopped(t *testing.T) {
 	if err!=nil{t.Fatal(err)}
 	cleanup()
 	if len(args)==0||args[0]!="create"{t.Fatalf("stopped container would be started: %#v",args)}
+}
+
+func TestRebuildRunFailureRestoresPreviousContainer(t *testing.T) {
+	dir:=t.TempDir()
+	logPath:=filepath.Join(dir,"docker-actions.log")
+	dockerPath:=filepath.Join(dir,"docker")
+	const oldID="0123456789abcdef0123456789abcdef"
+	const inspectJSON = `[{"Id":"`+oldID+`","Name":"/deepseek-bridge","Config":{"Image":"ogp/old:build","Env":["STATE_ENCRYPTION_KEY=original"],"Labels":{}},"State":{"Running":true},"HostConfig":{"RestartPolicy":{"Name":"unless-stopped"},"NetworkMode":"bridge"},"Mounts":[]}]`
+	script := "#!/bin/sh\n"+
+		"printf '%s\\n' \"$*\" >> \"$OGP_TEST_LOG\"\n"+
+		"if [ \"$1\" = inspect ]; then\n"+
+		"  if [ \"$2\" = --format ]; then exit 1; fi\n"+
+		"  printf '%s\\n' '"+inspectJSON+"'\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"if [ \"$1\" = run ]; then exit 42; fi\n"+
+		"exit 0\n"
+	if err:=os.WriteFile(dockerPath,[]byte(script),0700);err!=nil{t.Fatal(err)}
+	t.Setenv("PATH",dir+":"+os.Getenv("PATH"))
+	t.Setenv("OGP_TEST_LOG",logPath)
+	m:=New()
+	err:=m.replaceWithBuiltImage(context.Background(),oldID,"ogp/deepseek:build-new")
+	if err==nil||!strings.Contains(err.Error(),"previous container restored"){
+		t.Fatalf("expected safe rollback, got: %v",err)
+	}
+	data,err:=os.ReadFile(logPath)
+	if err!=nil{t.Fatal(err)}
+	actions:=string(data)
+	for _,action:=range []string{
+		"inspect "+oldID,
+		"stop "+oldID,
+		"rename "+oldID+" ogp-prev-deepseek-bridge-",
+		"update --restart=no ogp-prev-deepseek-bridge-",
+		"run -d --name deepseek-bridge",
+		"update --restart=unless-stopped deepseek-bridge",
+		"start deepseek-bridge",
+	}{
+		if !strings.Contains(actions,action){t.Errorf("missing Docker action %q:\n%s",action,actions)}
+	}
+	if strings.Contains(actions,"rm -f deepseek-bridge") {
+		t.Fatalf("rollback attempted to delete a non-existent or unrelated container:\n%s",actions)
+	}
 }
