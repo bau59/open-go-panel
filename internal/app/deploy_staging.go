@@ -39,7 +39,7 @@ func stageApplication(ctx context.Context, app App) (string, error) {
 		}
 	}()
 
-	cmd := exec.CommandContext(ctx, "cp", "-a", "--", filepath.Join(app.Root, "."), stage)
+	cmd := exec.CommandContext(ctx, "cp", "-a", "--", app.Root+string(os.PathSeparator)+".", stage)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("stage current application: %w: %s", err, strings.TrimSpace(string(out)))
 	}
