@@ -6,9 +6,13 @@ on:
       - main
     paths:
       - "install.sh"
-      - "internal/server/**"
-      - "internal/terminal/**"
+      - "cmd/panel/**"
+      - "internal/app/**"
+      - "internal/dbmanager/**"
       - "internal/docker/**"
+      - "internal/server/**"
+      - "internal/state/**"
+      - "internal/terminal/**"
       - ".github/workflows/smoke.yml"
   workflow_dispatch:
 
