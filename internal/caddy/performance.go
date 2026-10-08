@@ -1,13 +1,11 @@
 package caddy
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"sort"
@@ -128,75 +126,39 @@ func percentile(sorted []float64, p float64) float64 {
 }
 
 func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (PerformanceResult, error) {
-	if f.Since.IsZero() || f.Until.IsZero() || !f.Since.Before(f.Until) {
-		return PerformanceResult{}, fmt.Errorf("invalid performance time window")
+	if f.Since.IsZero() || f.Until.IsZero() || !f.Since.Before(f.Until) { return PerformanceResult{}, fmt.Errorf("invalid performance time window") }
+	if f.Until.Sub(f.Since)>31*24*time.Hour { return PerformanceResult{}, fmt.Errorf("performance window cannot exceed 31 days") }
+	if f.ThresholdMS<=0 { f.ThresholdMS=500 }
+	if f.Page<1 { f.Page=1 }
+	if f.PerPage<1||f.PerPage>200 { f.PerPage=50 }
+	q:=`SELECT time_ns,domain,method,route,protocol,status,duration_ms,response_bytes,request_id,server_timings
+	FROM http_perf_requests WHERE time_ns>=? AND time_ns<=?`
+	args:=[]any{f.Since.UnixNano(),f.Until.UnixNano()}
+	if f.Domain!="" {q+=" AND domain=?";args=append(args,f.Domain)}
+	if f.Method!="" {q+=" AND method=?";args=append(args,f.Method)}
+	if f.Route!="" {q+=" AND instr(lower(route),lower(?))>0";args=append(args,f.Route)}
+	if f.Status>0 {q+=" AND status BETWEEN ? AND ?";args=append(args,(f.Status/100)*100,(f.Status/100)*100+99)}
+	if f.SlowOnly {q+=" AND duration_ms>=?";args=append(args,f.ThresholdMS)}
+	q+=" ORDER BY time_ns DESC LIMIT ?"
+	args=append(args,performanceMaxRecords+1)
+	rows,err:=m.store.DB().QueryContext(ctx,q,args...)
+	if err!=nil {return PerformanceResult{},err}
+	var records []PerformancePoint
+	for rows.Next(){
+		var point PerformancePoint
+		var nano int64
+		var timings string
+		if err=rows.Scan(&nano,&point.Domain,&point.Method,&point.Route,&point.Protocol,&point.Status,
+			&point.DurationMS,&point.Size,&point.RequestID,&timings);err!=nil{break}
+		point.Time=time.Unix(0,nano).UTC()
+		_ = json.Unmarshal([]byte(timings),&point.ServerTimings)
+		records=append(records,point)
 	}
-	if f.Until.Sub(f.Since) > 31*24*time.Hour {
-		return PerformanceResult{}, fmt.Errorf("performance window cannot exceed 31 days")
-	}
-	if f.ThresholdMS <= 0 { f.ThresholdMS = 500 }
-	if f.Page < 1 { f.Page = 1 }
-	if f.PerPage < 1 || f.PerPage > 200 { f.PerPage = 50 }
-	cmd := exec.CommandContext(ctx, "journalctl", "-u", "caddy.service", "-o", "json",
-		"--no-pager", "--since", f.Since.Format("2006-01-02 15:04:05"),
-		"--until", f.Until.Format("2006-01-02 15:04:05"))
-	out, err := cmd.StdoutPipe()
-	if err != nil { return PerformanceResult{}, err }
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil { return PerformanceResult{}, err }
-
-	result := PerformanceResult{}
-	records := make([]PerformancePoint, 0, 1024)
-	scanner := bufio.NewScanner(out)
-	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
-	for scanner.Scan() {
-		var env journalEnvelope
-		if json.Unmarshal(scanner.Bytes(), &env) != nil { continue }
-		entry, ok := parseCaddyLog(env.Message)
-		if !ok || entry.Kind != "access" || entry.Time.Before(f.Since) || entry.Time.After(f.Until) { continue }
-		// A missing duration must not be counted as a measured zero.
-		var timing struct {
-			Duration *float64 `json:"duration"`
-			RequestID string `json:"request_id"`
-			RespHeaders map[string][]string `json:"resp_headers"`
-		}
-		if json.Unmarshal([]byte(entry.Raw), &timing) != nil || timing.Duration == nil ||
-			*timing.Duration < 0 || math.IsNaN(*timing.Duration) || math.IsInf(*timing.Duration, 0) {
-			continue
-		}
-		route := cleanPerformanceRoute(entry.URI)
-		if f.Domain != "" && !strings.EqualFold(entry.Domain, f.Domain) { continue }
-		if f.Method != "" && !strings.EqualFold(entry.Method, f.Method) { continue }
-		if f.Route != "" && !strings.Contains(strings.ToLower(route), strings.ToLower(f.Route)) { continue }
-		if f.Status > 0 && entry.Status/100 != f.Status/100 { continue }
-		if f.SlowOnly && entry.DurationMS < f.ThresholdMS { continue }
-		if len(records) >= performanceMaxRecords { result.Truncated = true; break }
-		var serverTiming []string
-		for key, values := range timing.RespHeaders {
-			if strings.EqualFold(key,"Server-Timing") {
-				serverTiming=append(serverTiming,values...)
-			}
-		}
-		requestID := timing.RequestID
-		if len(requestID)>128 { requestID=requestID[:128] }
-		records = append(records, PerformancePoint{
-			Time: entry.Time, Domain: entry.Domain, Method: entry.Method,
-			Route: route, Protocol: entry.Protocol, Status: entry.Status,
-			DurationMS: entry.DurationMS, Size: entry.Size,
-			RequestID:requestID, ServerTimings:parseServerTiming(serverTiming),
-		})
-	}
-	scanErr := scanner.Err()
-	// Close stdout before Wait to avoid hanging when the sample limit is reached.
-	_ = out.Close()
-	if result.Truncated && cmd.Process != nil { _ = cmd.Process.Kill() }
-	waitErr := cmd.Wait()
-	if scanErr != nil && !result.Truncated { return result, scanErr }
-	if waitErr != nil && !result.Truncated && ctx.Err() == nil {
-		return result, fmt.Errorf("read Caddy journal: %w: %s", waitErr, stderr.String())
-	}
-	if ctx.Err() != nil { return result, ctx.Err() }
+	if err==nil {err=rows.Err()}
+	_ = rows.Close()
+	if err!=nil {return PerformanceResult{},err}
+	result:=PerformanceResult{}
+	if len(records)>performanceMaxRecords {records=records[:performanceMaxRecords];result.Truncated=true}
 	result.Total = len(records)
 	durations := make([]float64, 0, len(records))
 	type group struct {point PerformanceRoute; times []float64}
