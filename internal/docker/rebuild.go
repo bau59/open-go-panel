@@ -205,7 +205,7 @@ func (m *Manager) replaceWithBuiltImage(ctx context.Context, existingID, image s
 	spec,err:=inspectReplacement(ctx,existingID)
 	if err!=nil{return err}
 	if spec.ID!=existingID{return errors.New("container changed while rebuilding; refusing replacement")}
-	backupName:=fmt.Sprintf("ogp-prev-%s-%d",spec.Name,time.Now().Unix())
+	backupName:=fmt.Sprintf("ogp-prev-%s-%s",spec.Name,strconv.FormatInt(time.Now().UnixNano(),36))
 	if len(backupName)>127 {backupName=backupName[:127]}
 	specArgs,cleanup,err:=spec.launchArgs(image)
 	if err!=nil{return err}
@@ -219,25 +219,34 @@ func (m *Manager) replaceWithBuiltImage(ctx context.Context, existingID, image s
 	}
 	// The old container is retained but must not autostart in parallel on reboot.
 	if err:=dockerCommand(ctx,"update","--restart=no",backupName);err!=nil{
-		return rollbackReplacement(spec,backupName,err)
+		return rollbackReplacement(spec,backupName,image,err)
 	}
 	if err:=dockerCommand(ctx,specArgs...);err!=nil{
-		return rollbackReplacement(spec,backupName,fmt.Errorf("start rebuilt container: %w",err))
+		return rollbackReplacement(spec,backupName,image,fmt.Errorf("start rebuilt container: %w",err))
 	}
 	if spec.Running {
 		if err:=waitRebuiltContainer(ctx,spec.Name,spec.HasHealthcheck);err!=nil{
-			return rollbackReplacement(spec,backupName,fmt.Errorf("new container did not become ready: %w",err))
+			return rollbackReplacement(spec,backupName,image,fmt.Errorf("new container did not become ready: %w",err))
 		}
 	}
 	return nil
 }
 
-func rollbackReplacement(spec replacementSpec,backupName string,reason error) error {
+func rollbackReplacement(spec replacementSpec,backupName,image string,reason error) error {
 	ctx,cancel:=context.WithTimeout(context.Background(),2*time.Minute)
 	defer cancel()
-	// A failed docker run may have created a stopped container with the new name.
-	_ = dockerCommand(ctx,"rm","-f",spec.Name)
 	var problems []error
+	// Remove a partially created replacement only if it actually uses the
+	// image just built. Never delete a container created by another actor.
+	if out,err:=exec.CommandContext(ctx,"docker","inspect","--format","{{.Config.Image}}",spec.Name).CombinedOutput();err==nil{
+		if strings.TrimSpace(string(out))==image {
+			if err:=dockerCommand(ctx,"rm","-f",spec.Name);err!=nil{
+				problems=append(problems,fmt.Errorf("remove failed replacement: %w",err))
+			}
+		} else {
+			problems=append(problems,errors.New("original container name is occupied by another image; refusing to remove it"))
+		}
+	}
 	if err:=dockerCommand(ctx,"rename",backupName,spec.Name);err!=nil{
 		problems=append(problems,fmt.Errorf("rename old container: %w",err))
 	} else {
