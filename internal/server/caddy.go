@@ -178,7 +178,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<td><a href="/caddy?app=%d"><strong>%s</strong></a></td>
 				<td>#%d</td>
 				<td><code>%s</code></td>
-				<td><span class="badge">%s</span></td>
+				<td><span class="meta-chip">%s</span></td>
 				<td><div class="actions table-actions"><a class="secondary" href="/caddy?app=%d">Settings</a></div></td>
 			</tr>`,
 			site.AppID,
@@ -246,9 +246,9 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		}
 	}
 
-	statusClass := " warn"
+	statusClass := "warn"
 	if status == "active" {
-		statusClass = " ok"
+		statusClass = "ok"
 	}
 
 	switchRow := func(name, label, description string, enabled bool) string {
@@ -270,9 +270,9 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<h1>Caddy</h1>
 				<p class="sub">Global web defaults and domain routing. Most projects should inherit the global settings.</p>
 			</div>
-			<div class="actions">
+			<div class="page-control-cluster">
+				<div class="service-state"><span>Caddy</span><span class="state-text ` + statusClass + `"><i></i>` + html.EscapeString(status) + `</span></div>
 				<a class="secondary" href="/caddy/logs">Access logs</a>
-				<span class="status-badge` + statusClass + `">` + html.EscapeString(status) + `</span>
 			</div>
 		</div>
 		` + alert + `
@@ -379,7 +379,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 			<section class="panel panel-pad app-card">
 				<div class="section-title">
 					<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Public address and reverse proxy routing.</p></div>
-					<span class="status-badge ok">connected</span>
+					<span class="state-text ok"><i></i>connected</span>
 				</div>
 				<div class="domain-summary">
 					<div><span>Domain</span><a href="` + scheme + `://` + html.EscapeString(site.Domain) + `" target="_blank" rel="noopener"><strong>` + html.EscapeString(site.Domain) + `</strong></a></div>
