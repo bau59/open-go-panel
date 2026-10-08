@@ -63,6 +63,15 @@ const baseStyles = `
 	.brand{display:flex;align-items:center;gap:11px;font-size:14px;font-weight:750;letter-spacing:-.01em}
 	.brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:linear-gradient(145deg,#7c6cff,#5146d8);box-shadow:0 8px 22px rgba(109,93,252,.28);font-size:11px;font-weight:850;color:#fff}
 	.nav{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--border);border-radius:12px;background:#0c111a}
+	.nav>details{position:relative}
+	.nav>details>summary{list-style:none;cursor:pointer;padding:8px 12px;border-radius:9px;font-size:13px;color:var(--muted);font-weight:650;white-space:nowrap}
+	.nav>details>summary::-webkit-details-marker{display:none}
+	.nav>details>summary:after{content:"⌄";margin-left:7px;font-size:12px}
+	.nav>details.current>summary,.nav>details[open]>summary{color:var(--text);background:var(--primary-soft)}
+	.nav-dropdown{position:absolute;z-index:60;left:0;top:calc(100% + 9px);min-width:195px;padding:6px;display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-strong);border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
+	.nav-dropdown a{display:block;white-space:nowrap}
+	@media(max-width:820px){.nav>details{position:static}.nav-dropdown{position:absolute;left:12px;right:12px;top:auto;min-width:0;max-width:calc(100% - 24px)}}
+
 	.nav a{padding:8px 12px;border-radius:9px;color:var(--muted);font-size:13px;font-weight:650;transition:.15s ease}
 	.nav a:hover{color:var(--text);background:var(--surface-2)}
 	.nav a.active{color:#fff;background:var(--primary-soft);box-shadow:inset 0 0 0 1px rgba(109,93,252,.25)}
@@ -580,37 +589,46 @@ func pageHead(title string) string {
 }
 
 func appHeader(active string) string {
-	nav := []struct {
-		key   string
-		href  string
-		label string
-	}{
+	type menuItem struct {key,href,label string}
+	link := func(item menuItem) string {
+		class := ""
+		if item.key == active {class = ` class="active" aria-current="page"`}
+		return `<a` + class + ` href="` + item.href + `">` + item.label + `</a>`
+	}
+	group := func(title string, children ...menuItem) string {
+		current := false
+		var contents strings.Builder
+		for _, item := range children {
+			if item.key == active {current = true}
+			contents.WriteString(link(item))
+		}
+		openClass := ""
+		if current {openClass = ` class="current"`}
+		return `<details` + openClass + `><summary>` + title + `</summary><div class="nav-dropdown">` +
+			contents.String() + `</div></details>`
+	}
+	var nav strings.Builder
+	for _, item := range []menuItem{
 		{"overview", "/", "Overview"},
 		{"apps", "/apps", "Apps"},
-		{"users", "/users", "Users"},
 		{"databases", "/databases", "Databases"},
-		{"caddy", "/caddy", "Caddy"},
-		{"performance", "/performance", "Performance"},
-		{"log-retention", "/log-retention", "Logs"},
-		{"security", "/security", "Security"},
-		{"software", "/software", "Software"},
 		{"docker", "/docker", "Docker"},
-		{"terminal", "/terminal", "Terminal"},
-		{"activity", "/activity", "Activity"},
-	}
-
-	var items strings.Builder
-	for _, item := range nav {
-		class := ""
-		if item.key == active {
-			class = ` class="active"`
-		}
-		items.WriteString(`<a` + class + ` href="` + item.href + `">` + item.label + `</a>`)
-	}
-
+	} {nav.WriteString(link(item))}
+	nav.WriteString(group("Infrastructure",
+		menuItem{"caddy","/caddy","Caddy & domains"},
+		menuItem{"users","/users","Users"},
+		menuItem{"software","/software","Software"},
+		menuItem{"terminal","/terminal","Terminal"},
+	))
+	nav.WriteString(group("Observability",
+		menuItem{"performance","/performance","Performance"},
+		menuItem{"log-retention","/log-retention","Logs & retention"},
+		menuItem{"activity","/activity","Activity"},
+	))
+	nav.WriteString(link(menuItem{"security","/security","Security"}))
 	return `<div class="topbar-wrap"><div class="shell"><header class="topbar">
 		<a class="brand" href="/"><span class="brand-mark">OG</span><span>Open Go Panel</span></a>
-		<nav class="nav">` + items.String() + `</nav>
+		<nav class="nav" aria-label="Main navigation">` + nav.String() + `</nav>
 		<div class="header-actions">
 			<form method="post" action="/panel/close" onsubmit="return confirm('Stop and disable the panel service? To reopen it, use SSH: sudo systemctl start open-go-panel.service')"><button class="secondary compact-action" type="submit" title="Stop the panel service and close its port">Close panel</button></form>
 			<form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
