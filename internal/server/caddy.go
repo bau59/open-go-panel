@@ -258,7 +258,9 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		if strings.TrimSpace(site.Template) != "" {
 			mode = "Custom"
 		}
-		if site.AppID < 0 && mode == "Global defaults" { mode = "Parked" }
+		if site.AppID < 0 && mode == "Global defaults" {
+			if site.Kind == "redirect" { mode = "301 redirect" } else { mode = "Parked" }
+		}
 		fmt.Fprintf(&rows, `
 			<tr>
 				<td><a href="/caddy?app=%d"><strong>%s</strong></a></td>
@@ -288,6 +290,9 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			override := strings.TrimSpace(site.Template)
 			modeText := "This domain inherits the global defaults."
 			buttonText := "Save custom config"
+			if site.AppID < 0 {
+				modeText = "This domain is independent from applications."
+			}
 			if override != "" {
 				modeText = "This domain has a custom Caddy override."
 				buttonText = "Update custom config"
@@ -316,7 +321,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<div><span>Application</span><strong>` + func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }() + `</strong></div>
 				<div><span>Type</span><strong>` + html.EscapeString(defaultString(site.Kind, "proxy")) + `</strong></div>
 				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
-				<div><span>Configuration</span><strong>` + func() string { if override == "" { return "Global defaults" }; return "Custom override" }() + `</strong></div>
+				<div><span>Configuration</span><strong>` + func() string { if override != "" { return "Custom override" }; if site.AppID < 0 { if site.Kind == "redirect" { return "Managed redirect" }; return "Parked" }; return "Global defaults" }() + `</strong></div>
 			</div>
 			<div style="margin-top:16px">
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/rename" class="compact-form">
