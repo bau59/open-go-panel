@@ -102,6 +102,9 @@ func (m *Manager) CollectPerformanceJournal(ctx context.Context) error {
    p,ok:=parseCaddyLog(line.Message)
    if !ok{parseErrors++;continue}
    if p.Kind!="access"{continue}
+   // Never persist malformed or implausible Caddy timestamps.
+   if p.Time.IsZero() || p.Time.Before(time.Now().AddDate(0,0,-90)) ||
+    p.Time.After(time.Now().Add(time.Minute)){parseErrors++;continue}
    var raw struct{
     Duration *float64 `json:"duration"`
     RequestID string `json:"request_id"`
