@@ -117,6 +117,49 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /apps/{id}/port", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
+		if err != nil {
+			http.Error(w, "invalid application port", http.StatusBadRequest)
+			return
+		}
+		app, err := cfg.Apps.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		oldPort := app.Port
+		if err := cfg.Apps.SetPort(r.Context(), id, port); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if cfg.Caddy != nil {
+			if site, ok, err := cfg.Caddy.SiteForApp(id); err == nil && ok {
+				updated, getErr := cfg.Apps.Get(id)
+				if getErr != nil {
+					_ = cfg.Apps.SetPort(context.Background(), id, oldPort)
+					http.Error(w, getErr.Error(), http.StatusInternalServerError)
+					return
+				}
+				if err := cfg.Caddy.SetSite(r.Context(), id, site.Domain, updated.Port, updated.Root, site.Kind); err != nil {
+					_ = cfg.Apps.SetPort(context.Background(), id, oldPort)
+					http.Error(w, "port changed but Caddy update failed and was rolled back: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /apps/{id}/delete", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -136,6 +179,34 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			return
 		}
 		http.Redirect(w, r, "/apps", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/deploy/key", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if _, err := cfg.Apps.EnsureDeployKey(r.Context(), id); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /apps/{id}/deploy/trust-host", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid app id", http.StatusBadRequest)
+			return
+		}
+		if _, err := cfg.Apps.TrustDeployHost(r.Context(), id); err != nil {
+			app, _ := cfg.Apps.Get(id)
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), deployBlock(cfg, app)))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
 
 	mux.Handle("POST /apps/{id}/deploy/config", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
