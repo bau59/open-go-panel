@@ -402,11 +402,29 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		</div>
 		` + alert + `
 
+		<section class="panel" style="margin-bottom:16px">
+			<div class="panel-pad" style="padding-bottom:10px">
+				<div class="section-title" style="margin-bottom:0">
+					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Domains may be connected to apps or parked independently.</p></div>
+				</div>
+			</div>
+			<form method="post" action="/caddy/domain" class="toolbar compact-form" style="margin-top:0">
+				<input name="domain" placeholder="example.com" required aria-label="Standalone domain">
+				<button class="button">Add domain</button>
+			</form>
+			<table>
+				<thead><tr><th>Domain</th><th>App</th><th>Target</th><th>Config</th><th></th></tr></thead>
+				<tbody>` + rows.String() + `</tbody>
+			</table>
+		</section>
+
+		` + selectedEditor + `
+
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div>
 					<h2>Global defaults</h2>
-					<p class="note" style="margin:6px 0 0">These settings apply to every domain unless that domain has an advanced custom override.</p>
+					<p class="note" style="margin:6px 0 0">Defaults for domains using generated Caddy configuration. Advanced custom overrides are preserved.</p>
 				</div>
 			</div>
 			<form method="post" action="/caddy/settings">
@@ -457,23 +475,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</form>
 		</section>
 
-		<section class="panel" style="margin-bottom:16px">
-			<div class="panel-pad" style="padding-bottom:10px">
-				<div class="section-title" style="margin-bottom:0">
-					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Domains may be connected to apps or parked independently.</p></div>
-				</div>
-			</div>
-			<form method="post" action="/caddy/domain" class="toolbar compact-form" style="margin-top:0">
-				<input name="domain" placeholder="example.com" required aria-label="Standalone domain">
-				<button class="button">Add domain</button>
-			</form>
-			<table>
-				<thead><tr><th>Domain</th><th>App</th><th>Target</th><th>Config</th><th></th></tr></thead>
-				<tbody>` + rows.String() + `</tbody>
-			</table>
-		</section>
 
-		` + selectedEditor + `
 
 		<details class="panel panel-pad advanced-block" style="margin-bottom:16px">
 			<summary class="section-title" style="margin:0;cursor:pointer">
