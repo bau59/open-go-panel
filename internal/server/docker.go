@@ -1,6 +1,7 @@
 package server
 
 import (
+    "encoding/json"
     "fmt"
     "html"
     "net/http"
@@ -13,6 +14,31 @@ import (
 func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
     mux.Handle("GET /docker", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         writeDockerPage(w, r, cfg, http.StatusOK, "")
+    })))
+
+    mux.Handle("GET /docker/stats", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        stats, err := cfg.Docker.Stats(r.Context())
+        if err != nil {
+            http.Error(w, "Docker usage statistics unavailable", http.StatusServiceUnavailable)
+            return
+        }
+        w.Header().Set("Content-Type", "application/json; charset=utf-8")
+        w.Header().Set("Cache-Control", "no-store")
+        _ = json.NewEncoder(w).Encode(stats)
+    })))
+
+    mux.Handle("POST /docker/{id}/rebuild", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid request", http.StatusBadRequest)
+            return
+        }
+        if err := cfg.Docker.StartGitHubRebuild(r.Context(),
+            r.PathValue("id"), r.FormValue("repository"),
+            r.FormValue("branch"), r.FormValue("dockerfile")); err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
 
     mux.Handle("POST /docker/install", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,20 +240,31 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         if item.Running {
             actionButton = `<form method="post" action="/docker/` + html.EscapeString(item.ID) + `/restart"><button class="secondary compact-action">Restart</button></form><form method="post" action="/docker/` + html.EscapeString(item.ID) + `/stop"><button class="secondary compact-action">Stop</button></form>`
         }
+        rebuildForm := `<details class="docker-row-rebuild"><summary class="secondary compact-action">Rebuild GitHub</summary>
+            <form method="post" action="/docker/`+html.EscapeString(item.ID)+`/rebuild" class="docker-rebuild-form"
+                onsubmit="return confirm('Build and deploy updated GitHub image? Existing volumes, ports and secrets will be reused. The previous container is kept as backup.')">
+                <label>Repository<input name="repository" required placeholder="owner/repository" value="`+html.EscapeString(item.Repository)+`"></label>
+                <label>Branch<input name="branch" placeholder="Default branch" value="`+html.EscapeString(item.Branch)+`"></label>
+                <label>Dockerfile<input name="dockerfile" required value="`+html.EscapeString(func()string{if item.Dockerfile!=""{return item.Dockerfile};return "Dockerfile"}())+`"></label>
+                <p class="note">Only switch after successful build. Existing Docker config is reused; old container is retained.</p>
+                <button class="button compact-action" type="submit">Rebuild &amp; deploy</button>
+            </form></details>`
         rows.WriteString(`<tr>
-            <td><strong>` + html.EscapeString(item.Name) + `</strong><div class="muted"><code>` + html.EscapeString(item.ID) + `</code></div></td>
+            <td><strong>` + html.EscapeString(item.Name) + `</strong><div class="muted"><code>` + html.EscapeString(item.ID) + `</code></div>` + func() string { if item.Commit != "" {return `<div class="muted">Git ` + html.EscapeString(item.Commit[:min(7,len(item.Commit))]) + `</div>`}; return "" }() + `</td>
             <td><code>` + html.EscapeString(item.Image) + `</code></td>
             <td><span class="status-badge ` + stateClass + `">` + html.EscapeString(item.State) + `</span></td>
+            <td class="docker-usage" data-docker-id="` + html.EscapeString(item.ID) + `"><span data-field="cpu">—</span></td>
+            <td class="docker-usage" data-docker-id="` + html.EscapeString(item.ID) + `"><span data-field="memory">—</span><small data-field="mem_pct"></small></td>
             <td><code>` + html.EscapeString(item.Ports) + `</code></td>
             <td><span class="meta-chip">` + html.EscapeString(item.RestartPolicy) + `</span></td>
-            <td><div class="actions docker-actions">` + actionButton + `
+            <td><div class="actions docker-actions">` + actionButton + rebuildForm + `
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/autostart"><input type="hidden" name="enabled" value="` + toggleValue + `"><button class="secondary compact-action">` + toggleLabel + `</button></form>
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/delete" onsubmit="return confirm('Remove this Docker container? Volumes are not removed.')"><button class="danger compact-action">Delete</button></form>
             </div></td>
         </tr>`)
     }
     if rows.Len() == 0 {
-        rows.WriteString(`<tr><td colspan="6" class="empty">No Docker containers yet.</td></tr>`)
+        rows.WriteString(`<tr><td colspan="8" class="empty">No Docker containers yet.</td></tr>`)
     }
 
     githubBuildStatus := ""
@@ -273,7 +310,9 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         ` + alert + serviceAlert + githubBuildStatus + `
         <section class="metrics-grid docker-metrics" style="margin-bottom:16px">
             <div class="metric"><span>Containers</span><strong>` + fmt.Sprintf("%d", len(containers)) + `</strong><small>all containers</small></div>
-            <div class="metric"><span>Running</span><strong>` + fmt.Sprintf("%d", runningCount) + `</strong><small>currently active</small></div>
+            <div class="metric"><span>Running</span><strong>` + fmt.Sprintf("%d", runningCount) + `</strong><small>` + fmt.Sprintf("%d",len(containers)-runningCount) + ` stopped</small></div>
+            <div class="metric"><span>CPU</span><strong id="docker-total-cpu">—</strong><small>running containers</small></div>
+            <div class="metric"><span>Memory</span><strong id="docker-total-memory">—</strong><small>running containers</small></div>
         </section>
         <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
             <div class="section-title">
