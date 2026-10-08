@@ -286,6 +286,19 @@ const baseStyles = `
 	.inline-popover{position:absolute;right:0;z-index:20;width:300px;margin-top:8px;padding:14px;border:1px solid var(--border-strong);border-radius:13px;background:#0e141e;box-shadow:0 22px 65px rgba(0,0,0,.45)}
 	.inline-popover.wide{width:460px}
 	.inline-popover .button{margin-top:9px}
+	.software-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+	.software-card{display:flex;min-height:255px;flex-direction:column}
+	.software-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+	.software-card-head .sub{max-width:520px}
+	.software-version{margin-top:20px;padding:12px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+	.software-version span{display:block;margin-bottom:5px;color:var(--muted-2);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+	.software-version strong{display:block;overflow:hidden;text-overflow:ellipsis;font:12px/1.5 "SFMono-Regular",Consolas,monospace;white-space:nowrap}
+	.software-detail{min-height:34px;margin:12px 0 16px;line-height:1.45}
+	.software-card form{margin-top:auto}
+	.software-task{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;padding:14px 16px;border:1px solid rgba(246,196,83,.2);border-radius:14px;background:var(--warning-soft)}
+	.software-task strong{display:block;font-size:13px}
+	.software-task .note{margin:4px 0 0}
+
 	@media(max-width:820px){
 		.shell{width:min(100% - 20px,1220px)}
 		.topbar{height:auto;min-height:60px;padding:10px 12px;flex-wrap:wrap}
@@ -308,6 +321,7 @@ const baseStyles = `
 		.terminal-toolbar{align-items:stretch;flex-direction:column}
 		.terminal-toolbar form{width:100%}
 		.terminal-target-meta{justify-content:space-between;width:100%}
+		.software-grid{grid-template-columns:1fr}
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid,.toolbar-4,.toolbar-3{grid-template-columns:1fr}
@@ -408,6 +422,7 @@ func appHeader(active string) string {
 		{"databases", "/databases", "Databases"},
 		{"caddy", "/caddy", "Caddy"},
 		{"security", "/security", "Security"},
+		{"software", "/software", "Software"},
 		{"terminal", "/terminal", "Terminal"},
 		{"activity", "/activity", "Activity"},
 	}
