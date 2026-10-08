@@ -72,7 +72,7 @@ func softwarePage(items []software.Item, task software.Task, message string) str
 						<h2>` + html.EscapeString(item.Name) + `</h2>
 						<p class="sub">` + html.EscapeString(item.Description) + `</p>
 					</div>
-					<span class="status-badge ` + statusClass + `">` + statusText + `</span>
+					<span class="state-text ` + statusClass + `"><i></i>` + statusText + `</span>
 				</div>
 				<div class="software-version"><span>Version</span><strong>` + html.EscapeString(version) + `</strong></div>
 				<p class="note software-detail">` + html.EscapeString(item.Detail) + `</p>
