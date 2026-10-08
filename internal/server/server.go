@@ -172,6 +172,7 @@ func New(cfg Config) http.Handler {
 		})))
 	}
 
+	registerDashboardResources(mux,store,cfg)
 	mux.Handle("GET /", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		info, err := systeminfo.Read()
 		if err != nil {
@@ -185,11 +186,9 @@ func New(cfg Config) http.Handler {
 		if cfg.Apps != nil {
 			apps, _ := cfg.Apps.List()
 			appCount = len(apps)
-			for _, app := range apps {
-				if cfg.Apps.Status(r.Context(), app.ID) == "active" {
-					activeApps++
-				}
-			}
+			// The detailed resource inventory is fetched asynchronously so the
+			// dashboard itself never waits for one systemctl subprocess per app.
+			activeApps = -1
 		}
 
 		if cfg.Users != nil {
@@ -475,8 +474,50 @@ func dashboardPage(info systeminfo.Info, appCount, userCount, activeApps int) st
 			<div class="metric"><span>CPU</span><strong>` + fmt.Sprintf("%d cores", info.CPUs) + `</strong><small>load ` + html.EscapeString(info.Load1) + ` / ` + html.EscapeString(info.Load5) + ` / ` + html.EscapeString(info.Load15) + `</small></div>
 			<div class="metric"><span>Memory</span><strong>` + formatBytes(info.MemoryUsed) + ` / ` + formatBytes(info.MemoryTotal) + `</strong><div class="meter"><i style="width:` + fmt.Sprintf("%.1f", info.MemoryPercent) + `%"></i></div></div>
 			<div class="metric"><span>Disk /</span><strong>` + formatBytes(info.DiskUsed) + ` / ` + formatBytes(info.DiskTotal) + `</strong><div class="meter"><i style="width:` + fmt.Sprintf("%.1f", info.DiskPercent) + `%"></i></div></div>
-			<div class="metric"><span>Uptime</span><strong>` + formatDuration(info.Uptime) + `</strong><small>` + fmt.Sprintf("%d apps · %d active · %d users", appCount, activeApps, userCount) + `</small></div>
+			<div class="metric"><span>Uptime</span><strong>` + formatDuration(info.Uptime) + `</strong><small>` + fmt.Sprintf("%d apps · %d users · live usage below", appCount, userCount) + `</small></div>
 		</section>
+
+		<section class="panel panel-pad" style="margin-top:18px" id="resources-overview">
+			<div class="section-title">
+				<div><h2>Runtime resources</h2><p class="note">Live on-demand snapshot from systemd and Docker. Cumulative CPU time is not CPU percentage.</p></div>
+				<a class="secondary" href="/docker">Manage containers</a>
+			</div>
+			<div class="metrics-grid" style="margin:12px 0 16px">
+				<div class="metric"><span>Apps running</span><strong id="res-apps">Loading…</strong></div>
+				<div class="metric"><span>Docker containers</span><strong id="res-containers">Loading…</strong></div>
+				<div class="metric"><span>Container resources</span><strong id="res-docker-usage">Loading…</strong><small>Per-container breakdown below</small></div>
+				<div class="metric"><span>Process memory</span><strong id="res-app-memory">Loading…</strong><small>Tracked systemd units, not all server processes</small></div>
+			</div>
+			<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px">
+				<div><h3 style="margin-bottom:10px">Applications</h3><div class="table-scroll"><table><thead><tr><th>App</th><th>State</th><th>Memory</th><th>CPU time</th></tr></thead><tbody id="res-app-table"><tr><td colspan="4">Loading…</td></tr></tbody></table></div></div>
+				<div><h3 style="margin-bottom:10px">Docker</h3><div class="table-scroll"><table><thead><tr><th>Container</th><th>State</th><th>CPU</th><th>Memory</th></tr></thead><tbody id="res-docker-table"><tr><td colspan="4">Loading…</td></tr></tbody></table></div></div>
+			</div>
+			<p class="note" id="res-status" style="margin-top:12px">Resource checks run only when the dashboard is opened.</p>
+		</section>
+		<script>
+		(function(){
+			const byId=(id)=>document.getElementById(id);
+			const renderTable=(id,items,columns)=>{
+				const body=byId(id);body.replaceChildren();
+				if(!items||!items.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=columns.length;td.textContent='No available entries';tr.append(td);body.append(tr);return}
+				for(const item of items){const tr=document.createElement('tr');for(const key of columns){const td=document.createElement('td');const value=item[key];td.textContent=value===undefined?'No data':String(value);tr.append(td)}body.append(tr)}
+			};
+			fetch('/dashboard/resources',{credentials:'same-origin',cache:'no-store'})
+				.then(r=>{if(!r.ok)throw new Error('Resource snapshot unavailable');return r.json()})
+				.then(data=>{
+					byId('res-apps').textContent=data.apps_running+' / '+data.apps_total;
+					byId('res-containers').textContent=data.containers_running+' / '+data.containers_total;
+					const used=(data.units||[]).filter(x=>x.active&&x.memory!=='No data');
+					byId('res-app-memory').textContent=used.length+' measured apps';
+					const busy=(data.containers||[]).filter(x=>x.running&&x.cpu!=='No data');
+					byId('res-docker-usage').textContent=busy.length+' measured containers';
+					renderTable('res-app-table',data.units,['name','active','memory','cpu_time']);
+					renderTable('res-docker-table',data.containers,['name','running','cpu','memory']);
+					byId('res-status').textContent=[data.apps_error,data.docker_error].filter(Boolean).join(' · ')||'Snapshot loaded. No periodic resource polling.';
+				})
+				.catch(e=>{byId('res-status').textContent=e.message;for(const id of ['res-apps','res-containers','res-app-memory','res-docker-usage'])byId(id).textContent='Unavailable';});
+		})();
+		</script>
 
 		<section class="grid cards" style="margin-top:18px">
 			<a class="card" href="/apps">
