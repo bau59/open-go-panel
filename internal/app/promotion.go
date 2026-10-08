@@ -272,6 +272,9 @@ func activateProductionBinary(root,prepared string,activate func()error,recoverO
 		if restoreErr!=nil {
 			return errors.Join(err,fmt.Errorf("critical: cannot restore previous production binary: %w",restoreErr))
 		}
+		if !hadPrevious {
+			return fmt.Errorf("first production activation failed; new executable removed, no previous binary exists: %w",err)
+		}
 		if recoverOriginal!=nil {
 			if restartErr:=recoverOriginal();restartErr!=nil {
 				return errors.Join(err,fmt.Errorf("previous executable restored but service restart failed: %w",restartErr))
