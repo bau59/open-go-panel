@@ -1,7 +1,12 @@
 package dbmanager
 
 import (
+	"compress/gzip"
 	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"errors"
 	"testing"
 )
@@ -51,5 +56,70 @@ func TestDatabaseOperationsRejectOverlap(t *testing.T) {
 				t.Fatalf("expected operation conflict, got %v", err)
 			}
 		})
+	}
+}
+
+func TestWriteGzipBackupPublishesOnlyCompletedDump(t *testing.T) {
+	dir := t.TempDir()
+	want := "CREATE TABLE items (id integer);\n"
+	path, err := writeGzipBackup(dir, "success", func(w io.Writer) error {
+		_, err := io.WriteString(w, want)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(path) != "success.sql.gz" {
+		t.Fatalf("unexpected backup path: %s", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	data, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("backup content = %q, want %q", data, want)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("backup permissions = %o", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected only final backup, found %d files", len(entries))
+	}
+}
+
+func TestWriteGzipBackupRemovesFailedDump(t *testing.T) {
+	dir := t.TempDir()
+	sentinel := errors.New("dump command failed")
+	_, err := writeGzipBackup(dir, "broken", func(w io.Writer) error {
+		_, _ = io.WriteString(w, strings.Repeat("incomplete", 100))
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected dump failure, got %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unfinished backup left %d files", len(entries))
 	}
 }
