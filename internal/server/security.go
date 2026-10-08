@@ -238,22 +238,22 @@ func securityPage(data securityPageData) string {
 		alert += `<div class="alert">` + html.EscapeString(data.DataError) + `</div>`
 	}
 
-	badge := func(ok bool) string {
+	stateText := func(ok bool) string {
 		if ok {
-			return `<span class="status-badge ok">active</span>`
+			return `<span class="state-text ok"><i></i>active</span>`
 		}
-		return `<span class="status-badge warn">inactive</span>`
+		return `<span class="state-text warn"><i></i>inactive</span>`
 	}
 
 	serviceActions := func(component string, active bool) string {
 		if active {
 			return `
-				<div class="actions" style="justify-content:flex-start;margin-top:10px">
+				<div class="actions component-actions">
 					<form method="post" action="/security/service"><input type="hidden" name="component" value="` + component + `"><input type="hidden" name="action" value="restart"><button class="secondary">Restart</button></form>
 					<form method="post" action="/security/service" onsubmit="return confirm('Stop this security component?')"><input type="hidden" name="component" value="` + component + `"><input type="hidden" name="action" value="stop"><button class="secondary">Stop</button></form>
 				</div>`
 		}
-		return `<form method="post" action="/security/service" style="margin-top:10px"><input type="hidden" name="component" value="` + component + `"><input type="hidden" name="action" value="start"><button class="secondary">Start</button></form>`
+		return `<div class="component-actions"><form method="post" action="/security/service"><input type="hidden" name="component" value="` + component + `"><input type="hidden" name="action" value="start"><button class="secondary">Start</button></form></div>`
 	}
 
 	install := ""
@@ -275,21 +275,21 @@ func securityPage(data securityPageData) string {
 	}
 
 	setupState := "Needs setup"
-	setupClass := " warn"
+	setupClass := "warn"
 	setupText := "Install or start CrowdSec, then enable web protection and the recommended firewall."
 	if data.Status.EngineActive && data.Status.BouncerActive && data.Status.WebProtection && data.Status.FirewallActive {
 		setupState = "Protected"
-		setupClass = " ok"
+		setupClass = "ok"
 		setupText = "Recommended protection is enabled: detection, dynamic blocking, Caddy log analysis and deny-by-default firewall."
 	}
 
-	webAction := `<form method="post" action="/security/web/enable" style="margin-top:10px"><button class="secondary">Enable</button></form>`
+	webAction := `<div class="component-actions"><form method="post" action="/security/web/enable"><button class="secondary">Enable</button></form></div>`
 	if data.Status.WebProtection {
-		webAction = `<form method="post" action="/security/web/disable" style="margin-top:10px" onsubmit="return confirm('Disable CrowdSec analysis of Caddy logs?')"><button class="secondary">Disable</button></form>`
+		webAction = `<div class="component-actions"><form method="post" action="/security/web/disable" onsubmit="return confirm('Disable CrowdSec analysis of Caddy logs?')"><button class="secondary">Disable</button></form></div>`
 	}
-	firewallAction := `<form method="post" action="/security/firewall/enable" style="margin-top:10px"><button class="secondary">Enable recommended</button></form>`
+	firewallAction := `<div class="component-actions"><form method="post" action="/security/firewall/enable"><button class="secondary">Enable recommended</button></form></div>`
 	if data.Status.FirewallActive {
-		firewallAction = `<form method="post" action="/security/firewall/disable" style="margin-top:10px" onsubmit="return confirm('Disable UFW firewall?')"><button class="secondary">Disable UFW</button></form>`
+		firewallAction = `<div class="component-actions"><form method="post" action="/security/firewall/disable" onsubmit="return confirm('Disable UFW firewall?')"><button class="secondary">Disable UFW</button></form></div>`
 	}
 
 	var decisions strings.Builder
@@ -344,13 +344,13 @@ func securityPage(data securityPageData) string {
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
 				<div><h2>Protection components</h2><p class="note" style="margin:6px 0 0">Each component can be managed independently.</p></div>
-				<span class="status-badge` + setupClass + `">` + setupState + `</span>
+				<span class="state-text ` + setupClass + `"><i></i>` + setupState + `</span>
 			</div>
 			<div class="metrics-grid">
-				<div class="metric"><span>CrowdSec engine</span><strong>Detection</strong><small>` + badge(data.Status.EngineActive) + `</small>` + serviceActions("engine", data.Status.EngineActive) + `</div>
-				<div class="metric"><span>Firewall bouncer</span><strong>nftables</strong><small>` + badge(data.Status.BouncerActive) + `</small>` + serviceActions("bouncer", data.Status.BouncerActive) + `</div>
-				<div class="metric"><span>Web traffic</span><strong>Caddy logs</strong><small>` + badge(data.Status.WebProtection) + `</small>` + webAction + `</div>
-				<div class="metric"><span>Perimeter</span><strong>UFW</strong><small>` + badge(data.Status.FirewallActive) + `</small>` + firewallAction + `</div>
+				<div class="metric security-component"><div class="security-component-head"><span>CrowdSec engine</span>` + stateText(data.Status.EngineActive) + `</div><strong>Detection</strong><p class="note">Behavior analysis and decisions.</p>` + serviceActions("engine", data.Status.EngineActive) + `</div>
+				<div class="metric security-component"><div class="security-component-head"><span>Firewall bouncer</span>` + stateText(data.Status.BouncerActive) + `</div><strong>nftables</strong><p class="note">Applies CrowdSec decisions.</p>` + serviceActions("bouncer", data.Status.BouncerActive) + `</div>
+				<div class="metric security-component"><div class="security-component-head"><span>Web traffic</span>` + stateText(data.Status.WebProtection) + `</div><strong>Caddy logs</strong><p class="note">Feeds HTTP events into CrowdSec.</p>` + webAction + `</div>
+				<div class="metric security-component"><div class="security-component-head"><span>Perimeter</span>` + stateText(data.Status.FirewallActive) + `</div><strong>UFW</strong><p class="note">Static inbound firewall policy.</p>` + firewallAction + `</div>
 			</div>
 			<p class="sub" style="margin:16px 0 0">` + setupText + `</p>
 		</section>
