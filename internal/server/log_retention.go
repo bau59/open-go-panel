@@ -55,11 +55,33 @@ func applyJournalPolicy(ctx context.Context,sizeMB,days int)error{
 }
 
 func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Config){
+ mux.Handle("POST /log-retention/audit",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
+  days,err:=strconv.Atoi(r.FormValue("days"))
+  if err!=nil || (days!=7 && days!=14 && days!=30 && days!=90 && days!=365){
+   http.Error(w,"invalid audit retention period",400);return
+  }
+  if err:=cfg.State.SetSetting("logs.audit_retention_days",strconv.Itoa(days));err!=nil{
+   http.Error(w,err.Error(),500);return
+  }
+  // Apply immediately, not just on the next audit write.
+  if _,err:=cfg.State.DB().ExecContext(r.Context(),
+   "DELETE FROM audit_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)",
+   fmt.Sprintf("-%d days",days));err!=nil{
+   http.Error(w,err.Error(),500);return
+  }
+  http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
+ })))
+
  mux.Handle("GET /log-retention",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   size,days,err:=readJournalPolicy()
   msg:=""
   if err!=nil{msg=err.Error()}
-  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,msg))
+  auditDays:=30
+  if raw,found,err:=cfg.State.Setting("logs.audit_retention_days");err==nil&&found{
+   if n,e:=strconv.Atoi(raw);e==nil{auditDays=n}
+  }
+  writeHTML(w,cfg.Logger,http.StatusOK,logRetentionPage(size,days,auditDays,msg))
  })))
  mux.Handle("POST /log-retention/journal",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if err:=r.ParseForm();err!=nil{http.Error(w,"invalid form",400);return}
@@ -68,13 +90,13 @@ func registerLogRetentionRoutes(mux *http.ServeMux,store *sessionStore,cfg Confi
   if err1!=nil||err2!=nil{http.Error(w,"invalid limits",400);return}
   ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
   if err:=applyJournalPolicy(ctx,size,days);err!=nil{
-   writeHTML(w,cfg.Logger,http.StatusBadRequest,logRetentionPage(size,days,err.Error()));return
+   writeHTML(w,cfg.Logger,http.StatusBadRequest,logRetentionPage(size,days,30,err.Error()));return
   }
   http.Redirect(w,r,"/log-retention",http.StatusSeeOther)
  })))
 }
 
-func logRetentionPage(sizeMB,days int,problem string)string{
+func logRetentionPage(sizeMB,days,auditDays int,problem string)string{
  option:=func(current,value int,label string)string{
   attr:="";if current==value{attr=" selected"}
   return fmt.Sprintf(`<option value="%d"%s>%s</option>`,value,attr,label)
@@ -95,6 +117,12 @@ func logRetentionPage(sizeMB,days int,problem string)string{
  option(days,1,"1 day")+option(days,3,"3 days")+option(days,7,"7 days")+option(days,14,"14 days")+option(days,30,"30 days")+`</select></div></div>
  <p class="note">Applies via /etc/systemd/journald.conf.d. Restarting journald is required; existing archived journals are not vacuumed by this action. If journald uses volatile storage, SystemMaxUse may not govern its disk allocation.</p>
  <button class="button" type="submit" onclick="return confirm('Apply shared system journal limits and restart systemd-journald?')">Apply journal limits</button></form></section>
+ <section class="panel panel-pad" style="margin-bottom:16px"><h2>Panel audit trail (SQLite)</h2>
+ <p class="note">Audit records have their own retention window, independent of systemd-journald. Expired events are deleted immediately on save and on subsequent audit writes.</p>
+ <form method="post" action="/log-retention/audit" class="compact-form" style="max-width:640px">
+ <select name="days" aria-label="Audit log retention">§+
+ option(auditDays,7,"7 days")+option(auditDays,14,"14 days")+option(auditDays,30,"30 days")+option(auditDays,90,"90 days")+option(auditDays,365,"365 days")+§</select>
+ <button class="secondary">Save audit retention</button></form></section>
  <section class="panel panel-pad"><h2>Source-specific logging and retention</h2>
  <p class="note">Separate controls are shown only where the underlying service genuinely supports an independent policy.</p>
  <div class="table-scroll"><table><thead><tr><th>Log source</th><th>Storage / retention scope</th><th>Configure</th></tr></thead><tbody>
@@ -103,7 +131,7 @@ func logRetentionPage(sizeMB,days int,problem string)string{
  <tr><td>MySQL slow queries</td><td>MySQL FILE/TABLE slow-log output, independent of journald. Rotation and table cleanup require separate server policy.</td><td><a class="secondary" href="/databases">Databases</a></td></tr>
  <tr><td>PostgreSQL slow queries</td><td>PostgreSQL file log; retention follows the host logrotate/logging configuration.</td><td><a class="secondary" href="/databases">Databases</a></td></tr>
  <tr><td>Redis slow commands</td><td>In-memory Redis SLOWLOG capped by slowlog-max-len, not by days; no extra copies made by the panel.</td><td><a class="secondary" href="/databases/redis/slow-queries">Redis SLOWLOG</a></td></tr>
- <tr><td>Panel audit log</td><td>SQLite audit_log; independent retention control is not yet implemented.</td><td><a class="secondary" href="/activity">Activity</a></td></tr>
+ <tr><td>Panel audit log</td><td>SQLite audit_log; configured above.</td><td><a class="secondary" href="/activity">Activity</a></td></tr>
  </tbody></table></div></section>
  </main></body></html>`
 }
