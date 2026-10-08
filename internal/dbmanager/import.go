@@ -275,8 +275,10 @@ func resetLocalDatabase(ctx context.Context, target Database) error {
 		if err := run(ctx, terminate, "runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres"); err != nil {
 			return err
 		}
-		dropCreate := fmt.Sprintf("DROP DATABASE IF EXISTS %s; CREATE DATABASE %s OWNER %s;", pgIdent(target.Name), pgIdent(target.Name), pgIdent(target.User))
-		return run(ctx, dropCreate, "runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres")
+		if err := run(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s;", pgIdent(target.Name)), "runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres"); err != nil {
+			return err
+		}
+		return run(ctx, fmt.Sprintf("CREATE DATABASE %s OWNER %s;", pgIdent(target.Name), pgIdent(target.User)), "runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres")
 	default:
 		return errors.New("unsupported target database engine")
 	}
