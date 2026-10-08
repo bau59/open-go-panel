@@ -141,7 +141,14 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
    fmt.Fprintf(&graphic,`<circle cx="%.1f" cy="%.1f" r="4" fill="#53c2bd"><title>%s | %d requests | P50 %.2f ms | P95 %.2f ms | P99 %.2f ms</title></circle>`,
     x,y,html.EscapeString(b.Time.Local().Format("2006-01-02 15:04")),b.Count,b.P50,b.P95,b.P99)
   }
-  graphic.WriteString(`</svg><p class="note">Purple P50 · Turquoise P95 · Orange P99. Vertical scale: 0–`+fmt.Sprintf("%.2f",maxv)+` ms.</p>`)
+  for _,start:=range extra.Restarts{
+   if f.AppID>0 && start.AppID!=f.AppID{continue}
+   if start.Time.Before(f.Since)||start.Time.After(f.Until){continue}
+   x:=math.Max(20,math.Min(960,20+940*float64(start.Time.Sub(f.Since))/float64(f.Until.Sub(f.Since))))
+   fmt.Fprintf(&graphic,`<line x1="%.1f" x2="%.1f" y1="10" y2="195" stroke="#f3c15b" stroke-dasharray="5 4" stroke-width="1.5"><title>Systemd app #%d started %s</title></line>`,
+    x,x,start.AppID,html.EscapeString(start.Time.Local().Format("2006-01-02 15:04:05")))
+  }
+  graphic.WriteString(`</svg><p class="note">Purple P50 · Turquoise P95 · Orange P99 · Yellow dashed: confirmed systemd process starts. Vertical scale: 0–`+fmt.Sprintf("%.2f",maxv)+` ms.</p>`)
  }else{graphic.WriteString(`<p class="note">Not enough time buckets for a percentile trend.</p>`)}
  var buckets strings.Builder
  for _,b:=range data.Buckets{fmt.Fprintf(&buckets,`<tr><td>%s</td><td>%d</td><td>%.2f</td><td>%.2f</td><td>%.2f</td></tr>`,
