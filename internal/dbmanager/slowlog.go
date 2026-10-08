@@ -40,6 +40,9 @@ func (m *Manager) SlowQueries(ctx context.Context, id int64) (SlowLogInfo, []Slo
 	if err != nil {
 		return SlowLogInfo{}, nil, err
 	}
+	if !databaseNameRE.MatchString(db.Name) {
+		return SlowLogInfo{}, nil, errors.New("invalid managed database name")
+	}
 	switch db.Engine {
 	case "mysql":
 		return mysqlSlowQueries(ctx, db)
@@ -56,6 +59,9 @@ func (m *Manager) ConfigureSlowQueries(ctx context.Context, id int64, thresholdM
 	db, err := m.Get(id)
 	if err != nil {
 		return err
+	}
+	if !databaseNameRE.MatchString(db.Name) {
+		return errors.New("invalid managed database name")
 	}
 	switch thresholdMS {
 	case 0, 500, 1000, 2000, 5000, 10000:
@@ -152,7 +158,7 @@ func postgresSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQ
 	info := SlowLogInfo{Engine: "postgres", Source: "PostgreSQL server log"}
 	out, err := exec.CommandContext(ctx, "runuser", "-u", "postgres", "--",
 		"psql", "-X", "-At", "-d", db.Name, "-c",
-		"SHOW log_min_duration_statement; SHOW log_line_prefix;").CombinedOutput()
+		"SHOW log_min_duration_statement", "-c", "SHOW log_line_prefix").CombinedOutput()
 	if err != nil {
 		return info, nil, fmt.Errorf("read PostgreSQL logging settings: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -169,8 +175,8 @@ func postgresSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQ
 		info.Notice = "Slow-query logging is disabled for this database. Enable it below; new connections will use the threshold."
 		return info, nil, nil
 	}
-	if !strings.Contains(prefix, "%d") {
-		info.Notice = "PostgreSQL log_line_prefix does not include %d (database name); per-database filtering cannot be verified. "+
+	if !strings.Contains(prefix, "%u@%d") {
+		info.Notice = "PostgreSQL log_line_prefix does not include %u@%d (user and database); per-database filtering cannot be verified. "+
 			"Add %u@%d to log_line_prefix in PostgreSQL configuration."
 		return info, nil, nil
 	}
