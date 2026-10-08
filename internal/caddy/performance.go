@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"sort"
 	"strings"
 	"time"
@@ -30,7 +31,14 @@ type PerformanceFilter struct {
 	Sort string
 }
 
+type ServerTimingMetric struct {
+	Name string
+	DurationMS float64
+}
+
 type PerformancePoint struct {
+	RequestID string
+	ServerTimings []ServerTimingMetric
 	Time time.Time
 	Domain string
 	Method string
@@ -63,6 +71,106 @@ type PerformanceResult struct {
 	Buckets []PerformanceBucket
 	Truncated bool
 	HasNext bool
+}
+
+var timingNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,39}package caddy
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/url"
+	"os/exec"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const performanceMaxRecords = 20000
+
+type PerformanceFilter struct {
+	Since time.Time
+	Until time.Time
+	Domain string
+	Method string
+	Route string
+	Status int
+	SlowOnly bool
+	ThresholdMS float64
+	Page int
+	PerPage int
+	Sort string
+}
+
+type ServerTimingMetric struct {
+	Name string
+	DurationMS float64
+}
+
+type PerformancePoint struct {
+	RequestID string
+	ServerTimings []ServerTimingMetric
+	Time time.Time
+	Domain string
+	Method string
+	Route string
+	Protocol string
+	Status int
+	DurationMS float64
+	Size int64
+}
+
+type PerformanceBucket struct {
+	Time time.Time
+	Count int
+	P50, P95, P99 float64
+}
+
+type PerformanceRoute struct {
+	Domain, Method, Route string
+	Count, Errors int
+	P50, P95, P99, Max float64
+}
+
+type PerformanceResult struct {
+	Total int
+	Slow int
+	Errors int
+	Average, P50, P95, P99 float64
+	Rows []PerformancePoint
+	Routes []PerformanceRoute
+	Buckets []PerformanceBucket
+	Truncated bool
+	HasNext bool
+}
+
+)
+
+// Only explicit backend-measured Server-Timing durations are accepted.
+func parseServerTiming(values []string) []ServerTimingMetric {
+	var metrics []ServerTimingMetric
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			parts := strings.Split(strings.TrimSpace(item), ";")
+			if len(parts) < 2 { continue }
+			name := strings.TrimSpace(parts[0])
+			if !timingNameRE.MatchString(name) { continue }
+			for _, param := range parts[1:] {
+				key,raw,ok := strings.Cut(strings.TrimSpace(param), "=")
+				if !ok || !strings.EqualFold(strings.TrimSpace(key), "dur") { continue }
+				raw = strings.Trim(strings.TrimSpace(raw), "\"")
+				ms,err := strconv.ParseFloat(raw,64)
+				if err != nil || ms < 0 || ms > 100000 || math.IsNaN(ms) || math.IsInf(ms,0){continue}
+				metrics=append(metrics,ServerTimingMetric{Name:name,DurationMS:ms})
+				break
+			}
+			if len(metrics)>=20{return metrics}
+		}
+	}
+	return metrics
 }
 
 var routeNumeric = regexp.MustCompile(`^[0-9]+$`)
@@ -124,6 +232,8 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 		// A missing duration must not be counted as a measured zero.
 		var timing struct {
 			Duration *float64 `json:"duration"`
+			RequestID string `json:"request_id"`
+			RespHeaders map[string][]string `json:"resp_headers"`
 		}
 		if json.Unmarshal([]byte(entry.Raw), &timing) != nil || timing.Duration == nil ||
 			*timing.Duration < 0 || math.IsNaN(*timing.Duration) || math.IsInf(*timing.Duration, 0) {
@@ -136,10 +246,19 @@ func (m *Manager) QueryPerformance(ctx context.Context, f PerformanceFilter) (Pe
 		if f.Status > 0 && entry.Status/100 != f.Status/100 { continue }
 		if f.SlowOnly && entry.DurationMS < f.ThresholdMS { continue }
 		if len(records) >= performanceMaxRecords { result.Truncated = true; break }
+		var serverTiming []string
+		for key, values := range timing.RespHeaders {
+			if strings.EqualFold(key,"Server-Timing") {
+				serverTiming=append(serverTiming,values...)
+			}
+		}
+		requestID := timing.RequestID
+		if len(requestID)>128 { requestID=requestID[:128] }
 		records = append(records, PerformancePoint{
 			Time: entry.Time, Domain: entry.Domain, Method: entry.Method,
 			Route: route, Protocol: entry.Protocol, Status: entry.Status,
 			DurationMS: entry.DurationMS, Size: entry.Size,
+			RequestID:requestID, ServerTimings:parseServerTiming(serverTiming),
 		})
 	}
 	scanErr := scanner.Err()
