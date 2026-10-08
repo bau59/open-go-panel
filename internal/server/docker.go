@@ -170,7 +170,13 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     }
 
     serviceAlert := ""
+    dockerStateClass := "ok"
+    dockerStateText := "running"
+    createDisabled := ""
     if !status.Active {
+        dockerStateClass = "warn"
+        dockerStateText = "stopped"
+        createDisabled = " disabled"
         serviceAlert = `<div class="alert">Docker is installed but the daemon is not available.` + func() string { if status.Error != "" { return ` ` + html.EscapeString(status.Error) }; return "" }() + `</div>`
     }
 
@@ -179,7 +185,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         <div class="page-head">
             <div><p class="eyebrow">Containers</p><h1>Docker</h1><p class="sub">Start, stop, restart, remove and configure container autostart.</p></div>
             <div class="page-control-cluster">
-                <div class="service-state"><span>Docker ` + html.EscapeString(status.Version) + `</span><span class="state-text ok"><i></i>running</span></div>
+                <div class="service-state"><span>Docker ` + html.EscapeString(status.Version) + `</span><span class="state-text ` + dockerStateClass + `"><i></i>` + dockerStateText + `</span></div>
                 <form method="post" action="/docker/service/restart"><button class="secondary">Restart Docker</button></form>
             </div>
         </div>
@@ -194,10 +200,10 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             </div>
             <form method="post" action="/docker/create" class="docker-create-grid">
                 <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
-                <div><label>Image / registry reference</label><input name="image" placeholder="redis:7 or ghcr.io/org/app:latest" required></div>
+                <div><label>Image / URL</label><input name="image" placeholder="redis:7, ghcr.io/org/app:latest or Docker Hub URL" required></div>
                 <div><label>Ports</label><input name="ports" placeholder="8080:80, 8443:443"></div>
                 <label class="check-row docker-autostart"><input type="checkbox" name="autostart" value="1" checked><span>Autostart</span></label>
-                <div class="docker-create-submit"><button class="button">Pull & run</button></div>
+                <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
         </section>
         <section class="panel">
