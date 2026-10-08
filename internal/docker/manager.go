@@ -6,6 +6,7 @@ import (
     "errors"
     "fmt"
     "os/exec"
+    "regexp"
     "sort"
     "strings"
     "time"
@@ -28,6 +29,12 @@ type Container struct {
     Ports         string
     Created       time.Time
 }
+
+var (
+    containerNamePattern = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    imagePattern         = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,255}$")
+    portPattern          = regexp.MustCompile("^([0-9]{1,5}:)?[0-9]{1,5}(/(tcp|udp))?$")
+)
 
 type Manager struct{}
 
@@ -119,6 +126,51 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
         return containers[i].Name < containers[j].Name
     })
     return containers, nil
+}
+
+func (m *Manager) Create(ctx context.Context, name, image, ports string, autostart bool) error {
+    name = strings.TrimSpace(name)
+    image = strings.TrimSpace(image)
+    if !containerNamePattern.MatchString(name) {
+        return errors.New("container name may contain only letters, digits, dot, underscore and hyphen")
+    }
+    if !imagePattern.MatchString(image) {
+        return errors.New("invalid Docker image or registry reference")
+    }
+
+    args := []string{"run", "-d", "--name", name}
+    if autostart {
+        args = append(args, "--restart", "unless-stopped")
+    }
+
+    if strings.TrimSpace(ports) != "" {
+        for _, raw := range strings.Split(ports, ",") {
+            mapping := strings.TrimSpace(raw)
+            if mapping == "" {
+                continue
+            }
+            if !portPattern.MatchString(mapping) {
+                return fmt.Errorf("invalid port mapping %q; use 8080:80 or 8080:80/tcp", mapping)
+            }
+            parts := strings.Split(strings.Split(mapping, "/")[0], ":")
+            for _, part := range parts {
+                n := 0
+                for _, ch := range part {
+                    n = n*10 + int(ch-'0')
+                }
+                if n < 1 || n > 65535 {
+                    return fmt.Errorf("invalid port in mapping %q", mapping)
+                }
+            }
+            args = append(args, "-p", mapping)
+        }
+    }
+
+    if err := dockerCommand(ctx, "pull", image); err != nil {
+        return err
+    }
+    args = append(args, image)
+    return dockerCommand(ctx, args...)
 }
 
 func (m *Manager) RestartService(ctx context.Context) error {
