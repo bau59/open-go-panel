@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +25,27 @@ func (m *Manager) RedisSlowQueries(ctx context.Context) ([]RedisSlowQuery, error
 		return nil, fmt.Errorf("read Redis SLOWLOG: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return parseRedisSlowQueries(out)
+}
+
+func (m *Manager) RedisSlowLogLength(ctx context.Context) (int, error) {
+	out, err := exec.CommandContext(ctx, "redis-cli", "--raw", "CONFIG", "GET", "slowlog-max-len").CombinedOutput()
+	if err != nil { return 0, fmt.Errorf("read Redis slowlog-max-len: %w: %s", err, strings.TrimSpace(string(out))) }
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 { return 0, errors.New("unexpected Redis SLOWLOG configuration") }
+	value, err := strconv.Atoi(strings.TrimSpace(lines[len(lines)-1]))
+	if err != nil { return 0, err }
+	return value, nil
+}
+
+func (m *Manager) SetRedisSlowLogLength(ctx context.Context, length int) error {
+	switch length { case 128, 256, 512, 1024: default: return errors.New("invalid Redis slowlog-max-len") }
+	out, err := exec.CommandContext(ctx, "redis-cli", "CONFIG", "SET", "slowlog-max-len", strconv.Itoa(length)).CombinedOutput()
+	if err != nil { return fmt.Errorf("configure Redis slowlog-max-len: %w: %s", err, strings.TrimSpace(string(out))) }
+	// Redis may prevent CONFIG REWRITE when started without a writable config file.
+	// In that situation surface the failure rather than claiming persistent settings.
+	out, err = exec.CommandContext(ctx, "redis-cli", "CONFIG", "REWRITE").CombinedOutput()
+	if err != nil { return fmt.Errorf("Redis limit applied for this process, but persistence failed: %w: %s", err, strings.TrimSpace(string(out))) }
+	return nil
 }
 
 func parseRedisSlowQueries(data []byte) ([]RedisSlowQuery, error) {
