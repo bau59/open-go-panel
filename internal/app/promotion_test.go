@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,7 +84,9 @@ func TestInstallProductionBinaryKeepsOtherProductionFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(prod, ".env"), []byte("PROD_SECRET=unchanged"), 0600); err != nil {t.Fatal(err)}
 	if err := os.Mkdir(filepath.Join(prod,"data"),0700); err != nil {t.Fatal(err)}
 	if err := os.WriteFile(filepath.Join(prod,"data","session"),[]byte("production state"),0600); err != nil {t.Fatal(err)}
-	if err := installProductionBinary(filepath.Join(dev, "production-bin"), prod); err != nil {t.Fatal(err)}
+	prepared, err := stageProductionBinary(filepath.Join(dev, "production-bin"), prod)
+	if err != nil {t.Fatal(err)}
+	if err := activateProductionBinary(prod, prepared, func() error {return nil}, nil); err != nil {t.Fatal(err)}
 	data, err := os.ReadFile(filepath.Join(prod, ".ogp-app"))
 	if err != nil || string(data)!="new Go executable" {t.Fatalf("unexpected prod binary %q: %v",data,err)}
 	config, err := os.ReadFile(filepath.Join(prod, ".env"))
@@ -105,4 +108,37 @@ func TestSnapshotPromotionDoesNotModifyAirSource(t *testing.T) {
 	if err:=os.WriteFile(filepath.Join(stage,"main.go"),[]byte("changed snapshot"),0640);err!=nil{t.Fatal(err)}
 	data,err:=os.ReadFile(filepath.Join(root,"main.go"))
 	if err!=nil||strings.TrimSpace(string(data))!="package main"{t.Fatalf("Air working tree mutated: %q (%v)",data,err)}
+}
+
+func TestGoProductionActivationFailureRestoresOriginalBinary(t *testing.T) {
+	root:=t.TempDir()
+	old:=filepath.Join(root,".ogp-app")
+	if err:=os.WriteFile(old,[]byte("old working executable"),0750);err!=nil{t.Fatal(err)}
+	newPath:=filepath.Join(root,".ogp-next")
+	if err:=os.WriteFile(newPath,[]byte("new broken executable"),0750);err!=nil{t.Fatal(err)}
+	restarts:=0
+	err:=activateProductionBinary(root,newPath,func()error{return errors.New("service readiness failed")},func()error{restarts++;return nil})
+	if err==nil||!strings.Contains(err.Error(),"previous executable restored"){t.Fatalf("missing recovery: %v",err)}
+	if restarts!=1{t.Fatalf("old service restart count=%d, expected 1",restarts)}
+	b,err:=os.ReadFile(old)
+	if err!=nil||string(b)!="old working executable"{t.Fatalf("previous binary not restored: %q %v",b,err)}
+}
+
+func TestGoProductionActivationLeavesPersistentFileChangesIntact(t *testing.T) {
+	root:=t.TempDir()
+	dataFile:=filepath.Join(root,"sessions.json")
+	if err:=os.WriteFile(dataFile,[]byte("first"),0600);err!=nil{t.Fatal(err)}
+	old:=filepath.Join(root,".ogp-app")
+	if err:=os.WriteFile(old,[]byte("old executable"),0750);err!=nil{t.Fatal(err)}
+	prepared:=filepath.Join(root,".ogp-next")
+	if err:=os.WriteFile(prepared,[]byte("new executable"),0750);err!=nil{t.Fatal(err)}
+	if err:=activateProductionBinary(root,prepared,func()error{
+		// Production writes to this directory while the new executable is
+		// activating; swapping the entire directory would lose this write.
+		return os.WriteFile(dataFile,[]byte("new session state"),0600)
+	},nil);err!=nil{t.Fatal(err)}
+	data,err:=os.ReadFile(dataFile)
+	if err!=nil||string(data)!="new session state"{t.Fatalf("persistent data lost: %q %v",data,err)}
+	oldBinary,err:=os.ReadFile(filepath.Join(root,".ogp-app.previous"))
+	if err!=nil||string(oldBinary)!="old executable"{t.Fatalf("old binary backup missing: %q %v",oldBinary,err)}
 }
