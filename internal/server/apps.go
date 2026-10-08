@@ -1235,7 +1235,7 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 		if state == "ok" {
 			className = "ok"
 		}
-		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong>` + html.EscapeString(state) + `</strong><small>` + html.EscapeString(detail) + ` · <span class="status-badge ` + className + `">` + html.EscapeString(state) + `</span></small></div>`
+		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong class="health-state ` + className + `">` + html.EscapeString(state) + `</strong><small>` + html.EscapeString(detail) + `</small></div>`
 	}
 	naCard := func(label, detail string) string {
 		return `<div class="metric"><span>` + html.EscapeString(label) + `</span><strong>n/a</strong><small>` + html.EscapeString(detail) + `</small></div>`
