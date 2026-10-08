@@ -68,6 +68,7 @@ const baseStyles = `
 	.nav>details>summary::-webkit-details-marker{display:none}
 	.nav>details>summary:after{content:"⌄";margin-left:7px;font-size:12px}
 	.nav>details.current>summary,.nav>details[open]>summary{color:var(--text);background:var(--primary-soft)}
+	.topbar{position:relative}
 	.nav-dropdown{position:absolute;z-index:60;left:0;top:calc(100% + 9px);min-width:195px;padding:6px;display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-strong);border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
 	.nav-dropdown a{display:block;white-space:nowrap}
 	@media(max-width:820px){.nav>details{position:static}.nav-dropdown{position:absolute;left:12px;right:12px;top:auto;min-width:0;max-width:calc(100% - 24px)}}
@@ -445,7 +446,7 @@ const baseStyles = `
 	@media(max-width:820px){
 		.shell{width:min(100% - 20px,1220px)}
 		.topbar{height:auto;min-height:60px;padding:10px 12px;flex-wrap:wrap}
-		.nav{order:3;width:100%;overflow:auto;justify-content:flex-start}
+		.nav{order:3;width:100%;overflow:visible;justify-content:flex-start;flex-wrap:wrap}
 		.toolbar-4,.toolbar-3{grid-template-columns:1fr 1fr}
 		main{padding-top:30px}
 		.page-head{align-items:flex-start;flex-direction:column}
