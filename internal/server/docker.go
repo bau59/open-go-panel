@@ -314,10 +314,17 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             <div class="metric"><span>CPU</span><strong id="docker-total-cpu">—</strong><small>running containers</small></div>
             <div class="metric"><span>Memory</span><strong id="docker-total-memory">—</strong><small>running containers</small></div>
         </section>
-        <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
-            <div class="section-title">
-                <div><h2>Run container</h2><p class="note" style="margin:6px 0 0">Paste an image reference or URL. Examples: <code>nginx:latest</code>, <code>ghcr.io/org/app:latest</code> or a Docker Hub page URL.</p></div>
-            </div>
+                <section class="panel" id="docker-containers" style="margin-bottom:16px">
+            <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">CPU and memory refresh every 10 seconds; rebuild reuses existing settings.</p></div>
+            <a href="/docker" class="secondary compact-action">Refresh</a></div>
+            <div class="table-scroll"><table><thead><tr><th>Container</th><th>Image</th><th>Status</th><th>CPU</th><th>Memory</th><th>Ports</th><th>Autostart</th><th>Actions</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
+        </section>
+        <div class="docker-add-toolbar">
+            <button type="button" class="secondary" onclick="const d=document.getElementById('docker-add-image');d.open=!d.open;if(d.open)d.scrollIntoView({behavior:'smooth',block:'start'})">+ Run container</button>
+            <button type="button" class="secondary" onclick="const d=document.getElementById('docker-add-github');d.open=!d.open;if(d.open)d.scrollIntoView({behavior:'smooth',block:'start'})">+ Build from GitHub</button>
+        </div>
+        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-image" style="margin-bottom:16px">
+            <summary><strong>Run container</strong><span>Pull an image and launch a new Docker container</span></summary>
             <form method="post" action="/docker/create" class="docker-create-grid">
                 <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
                 <div><label>Image / URL</label><input name="image" placeholder="redis:7, ghcr.io/org/app:latest or Docker Hub URL" required></div>
@@ -333,10 +340,9 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 <div class="docker-create-submit"><button class="button"` + createDisabled + `>Pull & run</button></div>
             </form>
             <p class="note" style="margin-top:12px">Ports bind to 127.0.0.1 by default. Public ports may bypass UFW rules; enable only when external access is required.</p>
-        </section>
-        <section class="panel panel-pad docker-create-card" style="margin-bottom:16px">
-            <div class="section-title"><div><h2>Build from GitHub</h2>
-                <p class="note" style="margin:6px 0 0">Clone a GitHub repository, build its Dockerfile, then create and start the container. Private repositories use a read-only SSH deploy key.</p></div></div>
+        </details>
+        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-github" style="margin-bottom:16px"` + func() string {if key.Repository!="" {return " open"};return ""}() + `>
+            <summary><strong>Build from GitHub</strong><span>Clone, build and deploy from a GitHub repository</span></summary>
             <form method="post" action="/docker/github/key" class="docker-create-grid" style="margin:12px 0">
                 <div><label>GitHub repository for deploy key</label><input name="repository" value="` + html.EscapeString(key.Repository) + `" placeholder="owner/repository" required></div>
                 <div class="docker-create-submit"><button class="secondary" type="submit">Generate SSH deploy key</button></div>
@@ -358,11 +364,8 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
                 </div>
                 <div class="docker-create-submit"><button class="button"` + createDisabled + func() string { if build.Running { return " disabled" }; return "" }() + `>Build &amp; run</button></div>
             </form>
-            <p class="note" style="margin-top:12px">For private repositories: first generate the deploy key, add it to the specific GitHub repository in Settings → Deploy keys, then Build &amp; run. Ports default to 127.0.0.1. Existing containers are not modified; rebuilding under an existing name requires deliberate migration.</p>
-        </section>
-        <section class="panel">
-            <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">Autostart maps to Docker restart policy <code>unless-stopped</code>.</p></div></div>
-            <div class="table-scroll"><table><thead><tr><th>Container</th><th>Image</th><th>Status</th><th>Ports</th><th>Autostart</th><th>Actions</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
-        </section>
+            <p class="note" style="margin-top:12px">For private repositories: add a read-only deploy key to GitHub. To update a container already running, use Rebuild GitHub in its Actions row.</p>
+        </details>
+__CONTAINER_TABLE__
     </main>` + refresh + `</body></html>`
 }
