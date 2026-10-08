@@ -217,6 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_perf_restarts_time ON http_perf_restarts(started_
 		"ALTER TABLE deployments ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE deployments ADD COLUMN auto_deploy_interval_sec INTEGER NOT NULL DEFAULT 300",
 		"ALTER TABLE deployments ADD COLUMN last_checked_at TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE http_perf_cursor ADD COLUMN backlog INTEGER NOT NULL DEFAULT 0",
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("migrate sqlite state: %w", err)
