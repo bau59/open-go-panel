@@ -558,8 +558,8 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 				<div class="actions app-quick-actions">
 					<a class="secondary compact-action" href="/apps/%d">Open</a>
 					%s
-					<a class="secondary compact-action" href="/apps/%d/logs">Logs</a>
-					<a class="secondary compact-action" href="/apps/%d/caddy-logs">Caddy</a>
+					<a class="secondary compact-action" href="/apps/%d/logs">App logs</a>
+					<a class="secondary compact-action" href="/apps/%d/caddy-logs">Caddy logs</a>
 				</div>
 			</td>
 		</tr>`,
