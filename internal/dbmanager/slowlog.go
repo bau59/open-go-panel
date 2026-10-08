@@ -170,9 +170,7 @@ func postgresSlowQueries(ctx context.Context, db Database) (SlowLogInfo, []SlowQ
 	if err != nil {
 		return info, nil, fmt.Errorf("read PostgreSQL logging settings: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	lines := strings.Split(strings.TrimRight(string(out), "
-"), "
-")
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	if len(lines) < 2 {
 		return info, nil, errors.New("unexpected PostgreSQL logging settings output")
 	}
@@ -233,8 +231,7 @@ func readLogTail(file *os.File, maxBytes int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(file, maxBytes))
 	if err != nil { return nil, err }
 	if offset > 0 {
-		if idx := strings.IndexByte(string(data), '
-'); idx >= 0 {
+		if idx := strings.IndexByte(string(data), '\n'); idx >= 0 {
 			data = data[idx+1:]
 		}
 	}
@@ -246,8 +243,7 @@ func parsePostgresSlowQueries(log, database string, limit int) []SlowQuery {
 	// PostgreSQL's Ubuntu/Debian default prefix is "%m [%p] %q%u@%d ".
 	// Reject un-attributed messages rather than showing another database's SQL.
 	databaseMarker := "@" + database + " "
-	for _, line := range strings.Split(log, "
-") {
+	for _, line := range strings.Split(log, "\n") {
 		loc := postgresDurationRE.FindStringSubmatchIndex(line)
 		if loc == nil { continue }
 		prefix := line[:loc[0]]
