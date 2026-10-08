@@ -37,6 +37,12 @@ fi
 
 systemctl enable --now ssh
 
+if ! command -v git >/dev/null 2>&1 || ! command -v ssh-keyscan >/dev/null 2>&1; then
+  echo "Installing Git and SSH client tools..."
+  apt-get update
+  apt-get install -y git openssh-client
+fi
+
 if ! command -v caddy >/dev/null 2>&1; then
   echo "Installing Caddy..."
   apt-get update
