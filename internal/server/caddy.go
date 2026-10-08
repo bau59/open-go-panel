@@ -13,6 +13,7 @@ import (
 )
 
 func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+	registerCaddyDiagnostics(mux, store, cfg)
 	mux.Handle("GET /caddy", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sites, _ := cfg.Caddy.Sites()
 		config, _ := cfg.Caddy.Config()
@@ -297,7 +298,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<p class="eyebrow" style="margin-bottom:6px">Domain</p>
 					<h2 style="font-size:20px">` + html.EscapeString(site.Domain) + `</h2>
 				</div>
-				<a class="secondary" href="/caddy">Close</a>
+				<div class="actions"><a class="secondary" href="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/diagnostics">DNS / TLS</a><a class="secondary" href="/caddy">Close</a></div>
 			</div>
 			<div class="domain-summary">
 				<div><span>Application</span><strong>` + func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }() + `</strong></div>
