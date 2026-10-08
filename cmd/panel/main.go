@@ -112,12 +112,20 @@ func main() {
 				targets,err:=apps.List()
 				if err==nil {
 					observed:=make([]panelcaddy.ServiceTarget,0,len(targets))
+					var airApps []panelcaddy.ServiceTarget
 					for _,app:=range targets {
-						observed=append(observed,panelcaddy.ServiceTarget{AppID:app.ID,Name:app.Name})
+						target:=panelcaddy.ServiceTarget{AppID:app.ID,Name:app.Name}
+						observed=append(observed,target)
+						if app.Service.RunMode=="go-air" {airApps=append(airApps,target)}
 					}
-					observeCtx,done:=context.WithTimeout(metricsCtx,5*time.Second)
+					observeCtx,done:=context.WithTimeout(metricsCtx,8*time.Second)
 					if err:=caddyManager.ObserveProcessStarts(observeCtx,observed);err!=nil && metricsCtx.Err()==nil {
 						logger.Warn("observe systemd app starts failed","err",err)
+					}
+					if len(airApps)>0 && observeCtx.Err()==nil {
+						if err:=caddyManager.ObserveAirRuns(observeCtx,airApps);err!=nil && metricsCtx.Err()==nil {
+							logger.Warn("observe Air run markers failed","err",err)
+						}
 					}
 					done()
 				}
