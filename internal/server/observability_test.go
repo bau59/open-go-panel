@@ -17,7 +17,7 @@ func TestPerformancePageDoesNotInventBackendMetrics(t *testing.T) {
 }
 
 func TestLogRetentionPageExplainsSharedJournalLimit(t *testing.T){
- page:=logRetentionPage(256,7,30,128,"")
+ page:=logRetentionPage(256,7,30,128,"","")
  for _,name:=range []string{
   "System journal (shared limit)","Panel audit trail","Redis SLOWLOG memory buffer",
   "PostgreSQL slow queries","MySQL slow queries","name=\"max_mb\"",
