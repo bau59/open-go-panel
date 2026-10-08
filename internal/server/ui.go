@@ -298,6 +298,9 @@ const baseStyles = `
 	.software-task{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;padding:14px 16px;border:1px solid rgba(246,196,83,.2);border-radius:14px;background:var(--warning-soft)}
 	.software-task strong{display:block;font-size:13px}
 	.software-task .note{margin:4px 0 0}
+	.redis-toolbar{grid-template-columns:150px minmax(260px,1fr) 140px auto}
+	.redis-preview{max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+	.redis-detail code{word-break:break-all}
 
 	@media(max-width:820px){
 		.shell{width:min(100% - 20px,1220px)}
@@ -322,6 +325,7 @@ const baseStyles = `
 		.terminal-toolbar form{width:100%}
 		.terminal-target-meta{justify-content:space-between;width:100%}
 		.software-grid{grid-template-columns:1fr}
+		.redis-toolbar{grid-template-columns:140px minmax(220px,1fr)}
 	}
 	@media(max-width:520px){
 		.metrics-grid,.service-grid-3,.service-grid-4,.security-grid,.compact-form,.compact-form-3,.domain-summary,.app-overview-grid,.health-grid,.app-form-row-deploy,.app-form-row-db,.service-summary,.service-form-grid,.toolbar-4,.toolbar-3{grid-template-columns:1fr}
@@ -343,6 +347,7 @@ const baseStyles = `
 		.terminal-toolbar form{grid-template-columns:1fr}
 		.terminal-screen{min-height:420px;height:68vh}
 		.deploy-key-head{align-items:flex-start;flex-direction:column}
+		.redis-toolbar{grid-template-columns:1fr}
 	}
 `
 
