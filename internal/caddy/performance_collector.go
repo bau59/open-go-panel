@@ -99,7 +99,7 @@ func (m *Manager) CollectPerformanceJournal(ctx context.Context) error {
     if strings.EqualFold(key,"Server-Timing"){headerValues=append(headerValues,values...)}
    }
    domain:=strings.ToLower(strings.TrimSpace(p.Domain))
-   if strings.Contains(domain,":"){domain,_=strings.Cut(domain,":")}
+   if strings.Contains(domain,":"){domain,_,_=strings.Cut(domain,":")}
    if len(domain)>253 || !domainRE.MatchString(domain){continue}
    route:=cleanPerformanceRoute(p.URI)
    batch=append(batch,pending{key:line.Cursor,appID:appByDomain[domain],p:PerformancePoint{
