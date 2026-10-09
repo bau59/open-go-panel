@@ -197,7 +197,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
 		app, err := cfg.Apps.Get(id)
 		if err != nil { http.Error(w, "application not found", http.StatusNotFound); return }
-		if err := cfg.Caddy.SetProxyStatic(r.Context(), id, app.Root, r.FormValue("paths"), r.FormValue("replace_override") == "yes"); err != nil {
+		if err := cfg.Caddy.SetProxyStatic(r.Context(), id, app.Root, r.FormValue("paths"), r.FormValue("replace_override") == "yes", func() int { n, _ := strconv.Atoi(r.FormValue("cache_seconds")); if r.FormValue("cache_seconds") == "" { return 3600 }; return n }()); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest); return
 		}
 		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
@@ -357,6 +357,10 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 						if paths := panelcaddy.ManagedProxyStaticPaths(site.Template); paths != "" { return paths }
 						return "/assets/*\n/img/*\n/uploads/*\n/favicon.ico\n/favicon-16x16.png\n/favicon-32x32.png\n/site.webmanifest\n/robots.txt"
 					}()) + `</textarea>
+					<label style="margin-top:12px">Browser cache policy</label>
+					<select name="cache_seconds" style="max-width:300px">
+						` + func() string { var b strings.Builder; for _, x := range []struct{n int; label string}{{0,"Revalidate every time"},{3600,"1 hour (recommended)"},{86400,"24 hours"}} { selected := ""; if panelcaddy.ManagedProxyStaticCache(override) == x.n { selected=" selected" }; fmt.Fprintf(&b, `<option value="%d"%s>%s</option>`,x.n,selected,html.EscapeString(x.label)) }; return b.String() }() + `
+					</select>
 					` + func() string { if override == "" || panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<label><input type="checkbox" name="replace_override" value="yes" required> Replace existing custom Caddy config</label>` }() + `
 					<p class="note">Root: application public/ directory. Cache-Control: one hour. Validate and reload automatically. Changes are validated and Caddy is reloaded.</p>
 					<button class="button">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Save static routes" }; return "Enable static serving" }() + `</button>
