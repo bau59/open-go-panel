@@ -191,6 +191,18 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /caddy/site/{id}/static", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 { http.Error(w, "invalid app id", http.StatusBadRequest); return }
+		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
+		app, err := cfg.Apps.Get(id)
+		if err != nil { http.Error(w, "application not found", http.StatusNotFound); return }
+		if err := cfg.Caddy.SetProxyStatic(r.Context(), id, app.Root, r.FormValue("paths"), r.FormValue("replace_override") == "yes"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest); return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /caddy/site/{id}/template", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -334,6 +346,25 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
 				<div><span>Configuration</span><strong>` + func() string { if override != "" { return "Custom override" }; if site.AppID < 0 { if site.Kind == "redirect" { return "Managed redirect" }; return "Parked" }; return "Global defaults" }() + `</strong></div>
 			</div>
+			` + func() string { if site.AppID <= 0 || site.Kind == "static" { return "" }; return `
+			<details class="advanced-block" style="margin-top:16px">
+				<summary class="secondary">Static files from public/</summary>
+				<p class="note">Serve selected URLs directly with Caddy and proxy all other requests to the application. The panel sets directory ACL automatically.</p>
+				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/static">
+					<label>URL patterns (one per line)</label>
+					<textarea class="codearea" name="paths" spellcheck="false" style="min-height:145px">/assets/*
+/img/*
+/uploads/*
+/favicon.ico
+/favicon-16x16.png
+/favicon-32x32.png
+/site.webmanifest
+/robots.txt</textarea>
+					` + func() string { if override == "" { return "" }; return `<label><input type="checkbox" name="replace_override" value="yes" required> Replace existing custom Caddy config</label>` }() + `
+					<p class="note">Root: application public/ directory. Cache-Control: one hour. Validate and reload automatically. To disable, clear the custom config in Advanced below.</p>
+					<button class="button">Enable static serving</button>
+				</form>
+			</details>` }() + `
 			<div style="margin-top:16px">
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/rename" class="compact-form">
 					<input name="domain" value="` + html.EscapeString(site.Domain) + `" required aria-label="Domain name">
