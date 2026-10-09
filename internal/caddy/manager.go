@@ -844,9 +844,15 @@ func prepareStaticRoot(ctx context.Context, root string) error {
 	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", "u:caddy:rX", root).CombinedOutput(); err != nil {
 		return fmt.Errorf("grant Caddy read access on %s: %w: %s", root, err, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", "d:u:caddy:rX", root).CombinedOutput(); err != nil {
-		return fmt.Errorf("set default Caddy ACL on %s: %w: %s", root, err, strings.TrimSpace(string(out)))
-	}
+	// Default ACL entries are valid on directories only; recursive setfacl
+	// over files would fail and leave configuration only partly prepared.
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil { return walkErr }
+		if !entry.IsDir() { return nil }
+		out, err := exec.CommandContext(ctx, "setfacl", "-m", "d:u:caddy:rX", path).CombinedOutput()
+		if err != nil { return fmt.Errorf("set default Caddy ACL on %s: %w: %s", path, err, strings.TrimSpace(string(out))) }
+		return nil
+	}); err != nil { return err }
 	return nil
 }
 
