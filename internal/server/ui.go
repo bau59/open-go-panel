@@ -539,6 +539,7 @@ const baseStyles = `
 	.shell.terminal-shell{width:min(1480px,calc(100% - 322px))}
 	.terminal-toolbar{background:rgba(10,29,54,.64)}
 	@media(max-width:1050px){
+		body{background-attachment:scroll}
 		.topbar-wrap{position:sticky;inset:auto;top:0;width:100%;height:auto;padding:10px 12px 0;background:linear-gradient(180deg,#081326 50%,rgba(8,19,38,0))}
 		.topbar-wrap .shell{width:100%;height:auto;margin:0}
 		.topbar{height:auto;min-height:64px;display:flex;flex-direction:row;align-items:center;flex-wrap:wrap;gap:10px;padding:11px 14px;overflow:visible;border-radius:18px}
