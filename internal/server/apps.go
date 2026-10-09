@@ -1121,6 +1121,10 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 		fmt.Fprintf(&options, `<option value="%d">%s — %s · port %d</option>`,
 			target.ID, html.EscapeString(target.Name), html.EscapeString(target.User), target.Port)
 	}
+	goPackage, err := cfg.Apps.PromotionGoPackage(app.ID)
+	if err != nil {
+		return `<div class="alert">` + html.EscapeString(err.Error()) + `</div>`
+	}
 	status := cfg.Apps.PromotionStatus()
 	var state string
 	if status.SourceID == app.ID && !status.StartedAt.IsZero() {
@@ -1143,7 +1147,7 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 			onsubmit="return confirm('Compile development source and replace the selected production binary? Its previous release will be restored if startup fails.')">
 			<div class="app-promotion-grid">
 				<div><label>Production application</label><select name="target_id" required>` + options.String() + `</select></div>
-				<div><label>Go package (main)</label><input name="go_package" value="." placeholder="./cmd/server" required></div>
+				<div><label>Go package (main)</label><input name="go_package" value="` + html.EscapeString(goPackage) + `" placeholder="./cmd/server" required></div>
 				<div><button class="button" type="submit"` + disabled + `>Build → Production</button></div>
 			</div>
 		</form>`
