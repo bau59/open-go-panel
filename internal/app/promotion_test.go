@@ -193,3 +193,39 @@ func TestAirGitDeployDoesNotBuildOrDownloadGoModules(t *testing.T) {
 		t.Fatalf("production must execute prebuilt binary, got %q",got)
 	}
 }
+
+func TestNormalizePromotionDirectories(t *testing.T) {
+	got, err := normalizePromotionDirectories("resources\npublic\n")
+	if err != nil || len(got) != 2 || got[0] != "resources" || got[1] != "public" {
+		t.Fatalf("unexpected directories: %v %v", got, err)
+	}
+	for _, invalid := range []string{"../secrets", "/etc", "resources/../data", "resources\nresources/views", ".env", "public\npublic", "uploads"} {
+		if _, err := normalizePromotionDirectories(invalid); err == nil { t.Errorf("accepted %q", invalid) }
+	}
+}
+
+func TestProductionReleaseAssetsAndRollback(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	source := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source,"resources"),0750);err!=nil{t.Fatal(err)}
+	if err := os.WriteFile(filepath.Join(source,"resources","view.jet"),[]byte("new"),0640);err!=nil{t.Fatal(err)}
+	if err := os.Mkdir(filepath.Join(root,"resources"),0750);err!=nil{t.Fatal(err)}
+	if err := os.WriteFile(filepath.Join(root,"resources","view.jet"),[]byte("old"),0640);err!=nil{t.Fatal(err)}
+	if err := os.WriteFile(filepath.Join(root,".env"),[]byte("secret"),0600);err!=nil{t.Fatal(err)}
+	binSource:=filepath.Join(source,"built")
+	if err:=os.WriteFile(binSource,[]byte("new executable"),0750);err!=nil{t.Fatal(err)}
+	prepared,err:=stageProductionBinary(binSource,root)
+	if err!=nil{t.Fatal(err)}
+	if err:=activateProductionRelease(ctx,source,root,prepared,[]string{"resources"},func()error{return errors.New("startup failed")},nil);err==nil{t.Fatal("expected failed activation")}
+	data,err:=os.ReadFile(filepath.Join(root,"resources","view.jet"))
+	if err!=nil||string(data)!="old"{t.Fatalf("assets not restored: %q %v",data,err)}
+	if _,err:=os.Stat(filepath.Join(root,".ogp-app"));!errors.Is(err,os.ErrNotExist){t.Fatalf("binary not removed: %v",err)}
+	prepared,err=stageProductionBinary(binSource,root)
+	if err!=nil{t.Fatal(err)}
+	if err:=activateProductionRelease(ctx,source,root,prepared,[]string{"resources"},func()error{return nil},nil);err!=nil{t.Fatal(err)}
+	data,err=os.ReadFile(filepath.Join(root,"resources","view.jet"))
+	if err!=nil||string(data)!="new"{t.Fatalf("assets not deployed: %q %v",data,err)}
+	env,err:=os.ReadFile(filepath.Join(root,".env"))
+	if err!=nil||string(env)!="secret"{t.Fatal("environment changed")}
+}
