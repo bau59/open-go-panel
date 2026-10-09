@@ -263,7 +263,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, "invalid production app id", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Apps.StartPromotion(id, targetID, r.FormValue("go_package")); err != nil {
+		if err := cfg.Apps.StartPromotion(id, targetID, r.FormValue("go_package"), r.FormValue("copy_directories")); err != nil {
 			app, _ := cfg.Apps.Get(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest,
 				appPage(app, cfg.Apps.Status(r.Context(), id), currentUnit(cfg, id), err.Error(), promotionBlock(cfg, app)))
@@ -1125,6 +1125,8 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 	if err != nil {
 		return `<div class="alert">` + html.EscapeString(err.Error()) + `</div>`
 	}
+	copyDirectories, err := cfg.Apps.PromotionDirectories(app.ID)
+	if err != nil { return `<div class="alert">` + html.EscapeString(err.Error()) + `</div>` }
 	status := cfg.Apps.PromotionStatus()
 	var state string
 	if status.SourceID == app.ID && !status.StartedAt.IsZero() {
@@ -1148,13 +1150,14 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 			<div class="app-promotion-grid">
 				<div><label>Production application</label><select name="target_id" required>` + options.String() + `</select></div>
 				<div><label>Go package (main)</label><input name="go_package" value="` + html.EscapeString(goPackage) + `" placeholder="./cmd/server" required></div>
+				<div><label>Copy directories (one per line)</label><textarea name="copy_directories" rows="2" placeholder="resources&#10;public">` + html.EscapeString(copyDirectories) + `</textarea></div>
 				<div><button class="button" type="submit"` + disabled + `>Build → Production</button></div>
 			</div>
 		</form>`
 	}
 	return `<section class="panel panel-pad app-card app-card-wide">
 		<div class="section-title"><div><h2>Dev → Production</h2>
-			<p class="note" style="margin:6px 0 0">Air keeps running in development. Compile a snapshot and replace only the executable in a separate production application.</p>
+			<p class="note" style="margin:6px 0 0">Air keeps running in development. Compile a snapshot and deploy the executable plus selected runtime directories to a separate production application.</p>
 		</div><span class="meta-chip">Go · Air</span></div>` +
 		state + selector +
 		`<p class="note" style="margin:12px 0 0">Production keeps its own PORT, environment variables, domains and persistent files. A failed startup triggers a rollback. The previous binary is not a database rollback.</p>
