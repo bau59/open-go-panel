@@ -828,7 +828,11 @@ func prepareStaticRoot(ctx context.Context, root string) error {
 		return errors.New("Caddy system user is not available")
 	}
 
-	parents := []string{filepath.Dir(root), filepath.Dir(filepath.Dir(root))}
+	// Traverse every ancestor up to /, including protected /home/<app-user>.
+	var parents []string
+	for path := filepath.Dir(root); path != "/" && path != "."; path = filepath.Dir(path) {
+		parents = append(parents, path)
+	}
 	for _, path := range parents {
 		if path == "." || path == "/" {
 			continue
@@ -840,10 +844,75 @@ func prepareStaticRoot(ctx context.Context, root string) error {
 	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", "u:caddy:rX", root).CombinedOutput(); err != nil {
 		return fmt.Errorf("grant Caddy read access on %s: %w: %s", root, err, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.CommandContext(ctx, "setfacl", "-m", "d:u:caddy:rX", root).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "setfacl", "-R", "-m", "d:u:caddy:rX", root).CombinedOutput(); err != nil {
 		return fmt.Errorf("set default Caddy ACL on %s: %w: %s", root, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// SetProxyStatic configures public/ assets for a Go application's proxy domain.
+// An explicit opt-in replaces a custom domain template.
+func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawPaths string, replace bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sites, err := m.load()
+	if err != nil { return err }
+	var index = -1
+	for i := range sites { if sites[i].AppID == appID { index = i; break } }
+	if index < 0 || sites[index].Kind != "proxy" || sites[index].Port <= 0 { return errors.New("application proxy domain not found") }
+	if strings.TrimSpace(sites[index].Template) != "" && !replace { return errors.New("confirm replacement of custom Caddy configuration") }
+	root := filepath.Join(appRoot, "public")
+	if !filepath.IsAbs(appRoot) || filepath.Clean(appRoot) == "/" || strings.ContainsAny(appRoot, "\r\n") { return errors.New("invalid application root") }
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil { return fmt.Errorf("resolve public folder: %w", err) }
+	if resolved != root { return errors.New("public folder must not be a symlink") }
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() { return fmt.Errorf("public directory missing: %s", root) }
+	settings, err := m.GlobalSettings()
+	if err != nil { return err }
+	value, err := ProxyStaticTemplate(root, rawPaths, settings)
+	if err != nil { return err }
+	// Grant only traversal to parents; public itself and its children receive read access.
+	if err := prepareStaticRoot(ctx, root); err != nil { return err }
+	sites[index].Template = value
+	global, err := m.Template()
+	if err != nil { return err }
+	return m.applyLocked(ctx, sites, global)
+}
+
+// ProxyStaticTemplate creates mutually exclusive static and application handlers.
+func ProxyStaticTemplate(root, raw string, settings GlobalSettings) (string, error) {
+	if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n\"") { return "", errors.New("invalid public path") }
+	var paths []string
+	seen := map[string]bool{}
+	for _, entry := range strings.Split(raw, "\n") {
+		p := strings.TrimSpace(entry)
+		if p == "" { continue }
+		if len(p) > 180 || p == "/" || p == "/*" || !strings.HasPrefix(p, "/") ||
+			strings.ContainsAny(p, " \t\r\"\\{}#") || strings.Contains(p, "..") || strings.Contains(p, "//") ||
+			strings.Contains(p, "/.") || (strings.Contains(p, "*") && (strings.Count(p, "*") != 1 || !strings.HasSuffix(p, "/*"))) {
+			return "", fmt.Errorf("invalid static path: %q", p)
+		}
+		if !seen[p] { seen[p] = true; paths = append(paths, p) }
+	}
+	if len(paths) == 0 || len(paths) > 32 { return "", errors.New("specify 1-32 static URL paths") }
+	base := managedProxyTemplate(settings)
+	start := strings.Index(base, "\treverse_proxy 127.0.0.1:{port}")
+	if start < 0 { return "", errors.New("proxy configuration not found") }
+	end := strings.Index(base[start:], "\n\tlog")
+	if end < 0 { end = strings.LastIndex(base[start:], "\n}") }
+	if end < 0 { return "", errors.New("invalid proxy configuration") }
+	end += start
+	proxy := base[start:end]
+	var b strings.Builder
+	b.WriteString("\t# Open Go Panel managed proxy static\n\troot * ")
+	b.WriteString(strconv.Quote(root))
+	b.WriteString("\n\t@ogp_static path ")
+	b.WriteString(strings.Join(paths, " "))
+	b.WriteString("\n\thandle @ogp_static {\n\t\tfile_server\n\t\theader Cache-Control \"public, max-age=3600\"\n\t}\n\thandle {\n")
+	for _, line := range strings.Split(proxy, "\n") { b.WriteString("\t"); b.WriteString(line); b.WriteString("\n") }
+	b.WriteString("\t}")
+	return base[:start] + b.String() + base[end:], nil
 }
 
 func renderSite(template string, site Site) string {
