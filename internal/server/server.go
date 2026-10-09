@@ -436,7 +436,7 @@ func loginPage(message string) string {
 	<title>Login · Open Go Panel</title>
 	<style>` + baseStyles + `
 		.login-screen{min-height:100vh;display:grid;place-items:center;padding:24px}
-		.login-card{width:min(430px,100%);padding:30px;border:1px solid var(--border);border-radius:24px;background:linear-gradient(180deg,rgba(21,27,39,.96),rgba(14,19,28,.98));box-shadow:0 30px 80px rgba(0,0,0,.34)}
+		.login-card{width:min(430px,100%);padding:32px;border:1px solid rgba(172,211,255,.3);border-radius:24px;background:linear-gradient(145deg,rgba(34,64,104,.92),rgba(15,31,57,.96));box-shadow:0 30px 80px rgba(2,10,28,.4),inset 0 1px 0 rgba(221,240,255,.1);backdrop-filter:blur(18px)}
 		.login-brand{display:flex;align-items:center;gap:11px;margin-bottom:26px;font-weight:780}
 		.login-card h1{font-size:29px}
 		.login-card .sub{margin-bottom:24px}

@@ -17,7 +17,7 @@ func TestNavigationGroupsKeepEveryPage(t *testing.T){
  for _,label:=range []string{"Infrastructure","Observability"}{
   if !strings.Contains(page,`<summary>`+label+`</summary>`){t.Errorf("missing menu %s",label)}
  }
- if !strings.Contains(page,`<details class="current"><summary>Observability`){
+ if !strings.Contains(page,`<details class="current" open><summary>Observability`){
   t.Fatal("current nested navigation is not highlighted")
  }
 }
@@ -45,4 +45,38 @@ func TestDashboardLoadsResourcesAfterInitialPage(t *testing.T){
  }{
   if !strings.Contains(page,value){t.Errorf("missing dashboard element %s",value)}
  }
+}
+
+func TestGlassNavigationMarkup(t *testing.T) {
+	page := appHeader("caddy")
+	for _, part := range []string{
+		`<nav class="nav" aria-label="Main navigation">`,
+		`<details class="current" open><summary>Infrastructure</summary>`,
+		`aria-current="page" href="/caddy"`,
+		`<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">`,
+		`<span class="brand-copy">`,
+		`action="/logout"`,
+		`action="/panel/close"`,
+	} {
+		if !strings.Contains(page, part) {
+			t.Errorf("navigation missing %q", part)
+		}
+	}
+	if strings.Contains(page, `<details class="current" open><summary>Observability`) {
+		t.Fatal("unrelated navigation group must remain collapsed")
+	}
+}
+
+func TestGlassThemeIncludesMobileLayout(t *testing.T) {
+	for _, part := range []string{
+		"color-scheme:dark",
+		".topbar-wrap{position:fixed",
+		"@media(max-width:1050px)",
+		".shell.terminal-shell",
+		"@media(prefers-reduced-motion:reduce)",
+	} {
+		if !strings.Contains(baseStyles, part) {
+			t.Errorf("theme missing %q", part)
+		}
+	}
 }
