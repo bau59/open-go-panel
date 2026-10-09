@@ -81,7 +81,11 @@ if ! command -v caddy >/dev/null 2>&1; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' -o /etc/apt/sources.list.d/caddy-stable.list
   chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update
+  if ! apt-get update; then
+    echo "Caddy upstream APT repository unavailable; falling back to Ubuntu packages."
+    rm -f /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update
+  fi
   apt-get install -y caddy
 fi
 
