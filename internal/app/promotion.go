@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -99,6 +100,33 @@ func normalizeGoPackage(pkg string) (string, error) {
 	return "./" + strings.TrimPrefix(clean, "./"), nil
 }
 
+// PromotionGoPackage returns the saved build package for a development app.
+func (m *Manager) PromotionGoPackage(sourceID int64) (string, error) {
+	if _, err := m.Get(sourceID); err != nil {
+		return "", err
+	}
+	var pkg string
+	err := m.store.DB().QueryRow("SELECT value FROM settings WHERE key = ?", fmt.Sprintf("promotion.go_package.%d", sourceID)).Scan(&pkg)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ".", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read Go build package: %w", err)
+	}
+	return normalizeGoPackage(pkg)
+}
+
+func (m *Manager) savePromotionGoPackage(sourceID int64, pkg string) error {
+	_, err := m.store.DB().Exec(
+		"INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+		fmt.Sprintf("promotion.go_package.%d", sourceID), pkg,
+	)
+	if err != nil {
+		return fmt.Errorf("save Go build package: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) StartPromotion(sourceID, targetID int64, pkg string) error {
 	source, err := m.Get(sourceID)
 	if err != nil { return err }
@@ -111,6 +139,9 @@ func (m *Manager) StartPromotion(sourceID, targetID int64, pkg string) error {
 	defer m.promotionMu.Unlock()
 	if m.promotionTask.Running {
 		return errors.New("another Dev → Production build is already in progress")
+	}
+	if err := m.savePromotionGoPackage(sourceID, pkg); err != nil {
+		return err
 	}
 	m.promotionTask = PromotionTask{Running:true,SourceID:sourceID,TargetID:targetID,
 		Step:"Preparing development snapshot",StartedAt:time.Now().UTC()}
