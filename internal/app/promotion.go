@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/user"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -127,7 +128,52 @@ func (m *Manager) savePromotionGoPackage(sourceID int64, pkg string) error {
 	return nil
 }
 
-func (m *Manager) StartPromotion(sourceID, targetID int64, pkg string) error {
+// PromotionDirectories stores relative runtime directories to copy with a compiled release.
+func (m *Manager) PromotionDirectories(sourceID int64) (string, error) {
+	if _, err := m.Get(sourceID); err != nil { return "", err }
+	var value string
+	err := m.store.DB().QueryRow("SELECT value FROM settings WHERE key = ?", fmt.Sprintf("promotion.directories.%d", sourceID)).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) { return "", nil }
+	return value, err
+}
+
+func normalizePromotionDirectories(raw string) ([]string, error) {
+	var dirs []string
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		dir := strings.TrimSpace(line)
+		if dir == "" { continue }
+		if filepath.IsAbs(dir) || dir == "." || strings.ContainsAny(dir, "\\:*?[]\x00") {
+			return nil, fmt.Errorf("invalid copy directory %q", dir)
+		}
+		clean := filepath.Clean(dir)
+		if clean == ".." || strings.HasPrefix(clean, "../") || clean != dir || strings.HasPrefix(dir, ".") {
+			return nil, fmt.Errorf("unsafe copy directory %q", dir)
+		}
+		for _, part := range strings.Split(dir, "/") {
+			if part == "." || part == ".." || part == "" { return nil, fmt.Errorf("invalid copy directory %q", dir) }
+		}
+		if dir == "data" || dir == "uploads" || dir == "storage" || dir == "vendor" || dir == "node_modules" || strings.HasPrefix(dir, ".ogp") {
+			return nil, fmt.Errorf("runtime data directory %q is not a release asset", dir)
+		}
+		for _, existing := range dirs {
+			if dir == existing { return nil, fmt.Errorf("duplicate copy directory %q", dir) }
+			if strings.HasPrefix(dir, existing+"/") || strings.HasPrefix(existing, dir+"/") {
+				return nil, fmt.Errorf("overlapping copy directories %q and %q", dir, existing)
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	if len(dirs) > 16 { return nil, errors.New("too many copy directories") }
+	return dirs, nil
+}
+
+func (m *Manager) savePromotionDirectories(sourceID int64, dirs []string) error {
+	_, err := m.store.DB().Exec("INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+		fmt.Sprintf("promotion.directories.%d", sourceID), strings.Join(dirs, "\n"))
+	return err
+}
+
+func (m *Manager) StartPromotion(sourceID, targetID int64, pkg string, directories ...string) error {
 	source, err := m.Get(sourceID)
 	if err != nil { return err }
 	target, err := m.Get(targetID)
@@ -135,17 +181,20 @@ func (m *Manager) StartPromotion(sourceID, targetID int64, pkg string) error {
 	if err := validatePromotion(source, target, pkg); err != nil { return err }
 	pkg, err = normalizeGoPackage(pkg)
 	if err != nil { return err }
+	raw := ""
+	if len(directories) > 0 { raw = directories[0] }
+	dirs, err := normalizePromotionDirectories(raw)
+	if err != nil { return err }
 	m.promotionMu.Lock()
 	defer m.promotionMu.Unlock()
 	if m.promotionTask.Running {
 		return errors.New("another Dev → Production build is already in progress")
 	}
-	if err := m.savePromotionGoPackage(sourceID, pkg); err != nil {
-		return err
-	}
+	if err := m.savePromotionGoPackage(sourceID, pkg); err != nil { return err }
+	if err := m.savePromotionDirectories(sourceID, dirs); err != nil { return err }
 	m.promotionTask = PromotionTask{Running:true,SourceID:sourceID,TargetID:targetID,
 		Step:"Preparing development snapshot",StartedAt:time.Now().UTC()}
-	go m.promoteAsync(sourceID, targetID, pkg)
+	go m.promoteAsync(sourceID, targetID, pkg, dirs)
 	return nil
 }
 
@@ -155,13 +204,13 @@ func (m *Manager) setPromotionStep(step string) {
 	m.promotionMu.Unlock()
 }
 
-func (m *Manager) promoteAsync(sourceID, targetID int64, pkg string) {
+func (m *Manager) promoteAsync(sourceID, targetID int64, pkg string, dirs []string) {
 	ctx,cancel:=context.WithTimeout(context.Background(),30*time.Minute)
 	defer cancel()
 	// Serialize with Git deployments/rollbacks because both exchange the
 	// production app directory. Do not lock the dev service or its files.
 	m.deployMu.Lock()
-	err:=m.promoteGo(ctx,sourceID,targetID,pkg)
+	err:=m.promoteGoWithDirectories(ctx,sourceID,targetID,pkg,dirs)
 	m.deployMu.Unlock()
 	m.promotionMu.Lock()
 	defer m.promotionMu.Unlock()
@@ -176,6 +225,10 @@ func (m *Manager) promoteAsync(sourceID, targetID int64, pkg string) {
 }
 
 func (m *Manager) promoteGo(ctx context.Context,sourceID,targetID int64,pkg string) error {
+	return m.promoteGoWithDirectories(ctx,sourceID,targetID,pkg,nil)
+}
+
+func (m *Manager) promoteGoWithDirectories(ctx context.Context,sourceID,targetID int64,pkg string,dirs []string) error {
 	source,err:=m.Get(sourceID)
 	if err!=nil{return err}
 	target,err:=m.Get(targetID)
@@ -223,7 +276,7 @@ func (m *Manager) promoteGo(ctx context.Context,sourceID,targetID int64,pkg stri
 		return fmt.Errorf("build production binary: %w",err)
 	}
 
-	m.setPromotionStep("Preparing production binary")
+	m.setPromotionStep("Preparing production binary and runtime directories")
 	prepared,err:=stageProductionBinary(outputBinary,target.Root)
 	if err!=nil{return fmt.Errorf("prepare production binary: %w",err)}
 	defer os.Remove(prepared)
@@ -240,7 +293,96 @@ func (m *Manager) promoteGo(ctx context.Context,sourceID,targetID int64,pkg stri
 		defer cancel()
 		return m.Restart(recoveryCtx,target.ID)
 	}
-	return activateProductionBinary(target.Root,prepared,activate,recoverOriginal)
+	if len(dirs) == 0 { return activateProductionBinary(target.Root,prepared,activate,recoverOriginal) }
+	return activateProductionRelease(ctx,sourceStage,target.Root,prepared,dirs,activate,recoverOriginal)
+}
+
+// activateProductionRelease stages selected directories and switches them with
+// the binary. Backups remain available for the next manual binary rollback.
+func activateProductionRelease(ctx context.Context, sourceStage, root, prepared string, dirs []string, activate, recover func() error) error {
+	type asset struct { path, staged, backup string; existed, switched bool }
+	items := make([]*asset, 0, len(dirs))
+	releaseID := fmt.Sprintf("%d", time.Now().UnixNano())
+	cleanup := func() { for _, a := range items { if !a.switched { _ = os.RemoveAll(a.staged) } } }
+	defer cleanup()
+	for _, dir := range dirs {
+		src := filepath.Join(sourceStage, dir)
+		info, err := os.Lstat(src)
+		if err != nil { return fmt.Errorf("copy %s: %w", dir, err) }
+		if !info.IsDir() { return fmt.Errorf("copy %s: source must be a real directory", dir) }
+		dst := filepath.Join(root, dir)
+		// Deny symlinked parents and destination to keep copied assets inside root.
+		for parent := filepath.Dir(dst); parent != root; parent = filepath.Dir(parent) {
+			st, err := os.Lstat(parent)
+			if err == nil && !st.IsDir() { return fmt.Errorf("copy %s: destination parent is not a directory", dir) }
+			if err != nil && !errors.Is(err, os.ErrNotExist) { return err }
+		}
+		old, err := os.Lstat(dst)
+		if err != nil && !errors.Is(err, os.ErrNotExist) { return err }
+		if err == nil && !old.IsDir() { return fmt.Errorf("copy %s: destination is not a real directory", dir) }
+		stage := filepath.Join(root, ".ogp-asset-"+releaseID+"-"+strconv.Itoa(len(items)))
+		cmd := exec.CommandContext(ctx, "cp", "-a", "--", src, stage)
+		if output, err := cmd.CombinedOutput(); err != nil { return fmt.Errorf("stage asset %s: %w: %s",dir,err,strings.TrimSpace(string(output))) }
+		if stat,ok := oldOwner(root); ok {
+			if err := exec.CommandContext(ctx,"chown","-R",fmt.Sprintf("%d:%d",stat.Uid,stat.Gid),stage).Run(); err != nil { _ = os.RemoveAll(stage);return fmt.Errorf("set asset owner: %w",err) }
+		}
+		items = append(items,&asset{path:dst,staged:stage,backup:filepath.Join(root,".ogp-asset-backup-"+releaseID+"-"+strconv.Itoa(len(items))),existed:err==nil})
+	}
+	restore := func() error {
+		var failures []error
+		for i:=len(items)-1;i>=0;i-- {
+			a:=items[i]
+			if !a.switched { continue }
+			if err:=os.RemoveAll(a.path);err!=nil {failures=append(failures,err);continue}
+			if a.existed {if err:=os.Rename(a.backup,a.path);err!=nil { failures=append(failures,err) }}
+			a.switched=false
+		}
+		return errors.Join(failures...)
+	}
+	for _, a := range items {
+		if err:=os.MkdirAll(filepath.Dir(a.path),0750);err!=nil {_=restore();return err}
+		if a.existed {if err:=os.Rename(a.path,a.backup);err!=nil {_=restore();return err}}
+		if err:=os.Rename(a.staged,a.path);err!=nil {
+			if a.existed {_=os.Rename(a.backup,a.path)}
+			_ = restore();return err
+		}
+		a.switched=true
+	}
+	// Copy backups to a stable path only after successful activation; on
+	// failure the former directories must be restored before restarting.
+	err := activateProductionBinary(root,prepared,activate,func()error {
+		restoreErr:=restore()
+		if restoreErr!=nil { return restoreErr }
+		if recover!=nil { return recover() }
+		return nil
+	})
+	if err!=nil {
+		if restoreErr:=restore();restoreErr!=nil {return errors.Join(err,restoreErr)}
+		return err
+	}
+	// Persist asset rollback metadata; preserve backups until manual rollback.
+	manifest:=filepath.Join(root,".ogp-assets-previous")
+	previousDir:=manifest+".old"
+	_ = os.RemoveAll(previousDir)
+	if _,err:=os.Lstat(manifest);err==nil { if err:=os.Rename(manifest,previousDir);err!=nil{return err} }
+	if err:=os.Mkdir(manifest,0750);err!=nil{return err}
+	for i,a:=range items {
+		if a.existed {
+			if err:=os.Rename(a.backup,filepath.Join(manifest,strconv.Itoa(i)));err!=nil{return err}
+		}
+	}
+	lines:=[]string{}
+	for _,a:=range items {lines=append(lines,strings.TrimPrefix(a.path,root+string(os.PathSeparator)))}
+	if err:=os.WriteFile(filepath.Join(manifest,"paths"),[]byte(strings.Join(lines,"\n")),0600);err!=nil{return err}
+	_ = os.RemoveAll(previousDir)
+	return nil
+}
+
+func oldOwner(root string) (*syscall.Stat_t,bool) {
+	info,err:=os.Lstat(root)
+	if err!=nil{return nil,false}
+	owner,ok:=info.Sys().(*syscall.Stat_t)
+	return owner,ok
 }
 
 // stageProductionBinary creates a complete executable next to production's
