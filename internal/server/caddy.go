@@ -313,10 +313,11 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			override := strings.TrimSpace(site.Template)
 			modeText := "This domain inherits the global defaults."
 			buttonText := "Save custom config"
+			if panelcaddy.IsManagedProxyStatic(override) { modeText = "Static routes are managed by the panel. The generated config is shown below as read-only." }
 			if site.AppID < 0 {
 				modeText = "This domain is independent from applications."
 			}
-			if override != "" {
+			if override != "" && !panelcaddy.IsManagedProxyStatic(override) {
 				modeText = "This domain has a custom Caddy override."
 				buttonText = "Update custom config"
 			}
@@ -344,7 +345,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<div><span>Application</span><strong>` + func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }() + `</strong></div>
 				<div><span>Type</span><strong>` + html.EscapeString(defaultString(site.Kind, "proxy")) + `</strong></div>
 				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
-				<div><span>Configuration</span><strong>` + func() string { if override != "" { return "Custom override" }; if site.AppID < 0 { if site.Kind == "redirect" { return "Managed redirect" }; return "Parked" }; return "Global defaults" }() + `</strong></div>
+				<div><span>Configuration</span><strong>` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Managed static" }; if override != "" { return "Custom override" }; if site.AppID < 0 { if site.Kind == "redirect" { return "Managed redirect" }; return "Parked" }; return "Global defaults" }() + `</strong></div>
 			</div>
 			` + func() string { if site.AppID <= 0 || site.Kind == "static" { return "" }; return `
 			<details class="advanced-block" style="margin-top:16px">
@@ -352,17 +353,13 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<p class="note">Serve selected URLs directly with Caddy and proxy all other requests to the application. The panel sets directory ACL automatically.</p>
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/static">
 					<label>URL patterns (one per line)</label>
-					<textarea class="codearea" name="paths" spellcheck="false" style="min-height:145px">/assets/*
-/img/*
-/uploads/*
-/favicon.ico
-/favicon-16x16.png
-/favicon-32x32.png
-/site.webmanifest
-/robots.txt</textarea>
-					` + func() string { if override == "" { return "" }; return `<label><input type="checkbox" name="replace_override" value="yes" required> Replace existing custom Caddy config</label>` }() + `
-					<p class="note">Root: application public/ directory. Cache-Control: one hour. Validate and reload automatically. To disable, clear the custom config in Advanced below.</p>
-					<button class="button">Enable static serving</button>
+					<textarea class="codearea" name="paths" spellcheck="false" style="min-height:145px">` + html.EscapeString(func() string {
+						if paths := panelcaddy.ManagedProxyStaticPaths(site.Template); paths != "" { return paths }
+						return "/assets/*\n/img/*\n/uploads/*\n/favicon.ico\n/favicon-16x16.png\n/favicon-32x32.png\n/site.webmanifest\n/robots.txt"
+					}()) + `</textarea>
+					` + func() string { if override == "" || panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<label><input type="checkbox" name="replace_override" value="yes" required> Replace existing custom Caddy config</label>` }() + `
+					<p class="note">Root: application public/ directory. Cache-Control: one hour. Validate and reload automatically. Changes are validated and Caddy is reloaded.</p>
+					<button class="button">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Save static routes" }; return "Enable static serving" }() + `</button>
 				</form>
 			</details>` }() + `
 			<div style="margin-top:16px">
@@ -387,15 +384,17 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				}() + `
 			</div>
 			<p class="sub" style="margin:14px 0 0">` + modeText + ` Common settings such as HTTPS, compression and access logging belong to the global Caddy configuration.</p>
-			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" { return " open" }; return "" }() + `>
-				<summary class="secondary">Advanced: custom config for this domain</summary>
+			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" && !panelcaddy.IsManagedProxyStatic(override) { return " open" }; return "" }() + `>
+				<summary class="secondary">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Generated Caddy config (read-only)" }; return "Advanced: custom config for this domain" }() + `</summary>
+				` + func() string { if !panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<pre class="security-output" style="margin-top:12px;white-space:pre-wrap">` + html.EscapeString(editorValue) + `</pre>` }() + `
+				` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "" }; return `
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/template" style="margin-top:14px">
 					<textarea class="codearea" name="template" spellcheck="false" style="min-height:240px">` + html.EscapeString(editorValue) + `</textarea>
 					<p class="note" style="margin:8px 0 0">Required placeholders: ` + placeholderNote + `. Empty the field and save to return to global defaults.</p>
 					<div class="actions" style="justify-content:flex-start;margin-top:12px">
 						<button class="button">` + buttonText + `</button>
 					</div>
-				</form>
+				</form>` }() + `
 			</details>
 		</section>`
 			break
