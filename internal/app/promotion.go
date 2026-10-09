@@ -517,7 +517,10 @@ func rollbackProductionAssets(root, current, previous string, activate, recover 
 	defer os.RemoveAll(temporary)
 	type moved struct {current, saved, previous string; hadCurrent, hadPrevious bool}
 	var movedAssets []moved
+	restored:=false
 	restore:=func() error {
+		if restored { return nil }
+		restored=true
 		var errs []error
 		for i:=len(movedAssets)-1;i>=0;i-- {
 			a:=movedAssets[i]
