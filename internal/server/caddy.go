@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"html"
 	"net/http"
 	"net/url"
@@ -191,6 +193,27 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /caddy/site/{id}/static", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 { http.Error(w, "invalid application", http.StatusBadRequest); return }
+		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
+		app, err := cfg.Apps.Get(id)
+		if err != nil { http.Error(w, "application not found", http.StatusNotFound); return }
+		site, found, err := cfg.Caddy.SiteForApp(id)
+		if err != nil || !found || site.Kind == "static" { http.Error(w, "proxy domain required", http.StatusBadRequest); return }
+		if strings.TrimSpace(site.Template) != "" && r.FormValue("replace_override") != "yes" {
+			http.Error(w, "existing custom config: confirm replacement first", http.StatusConflict); return
+		}
+		settings, err := cfg.Caddy.GlobalSettings()
+		if err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
+		value, err := proxyStaticTemplate(app.Root, r.FormValue("paths"), settings)
+		if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
+		if err := cfg.Caddy.SetSiteTemplate(r.Context(), id, value); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest); return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /caddy/site/{id}/template", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -334,6 +357,22 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
 				<div><span>Configuration</span><strong>` + func() string { if override != "" { return "Custom override" }; if site.AppID < 0 { if site.Kind == "redirect" { return "Managed redirect" }; return "Parked" }; return "Global defaults" }() + `</strong></div>
 			</div>
+			` + func() string { if site.AppID <= 0 || site.Kind == "static" { return "" }; return `
+			<details class="advanced-block" style="margin-top:16px">
+				<summary class="secondary">Serve static files from application /public</summary>
+				<p class="note">Caddy serves only listed URLs directly. All other requests use the Go app. Requires Caddy read access to the public directory. Saving replaces a custom domain override and applies a Caddy reload.</p>
+				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/static">
+					<label>Static URL patterns (one per line)</label>
+					<textarea class="codearea" name="paths" spellcheck="false" style="min-height:130px">/assets/*
+/img/*
+/uploads/*
+/favicon.ico
+/robots.txt</textarea>
+					` + func() string { if override == "" { return "" }; return `<label><input type="checkbox" name="replace_override" value="yes" required> Replace existing custom Caddy config</label>` }() + `
+					<p class="note">Uploaded files: choose caching carefully. Default is one hour, not immutable. Never serve secrets under public/.</p>
+					<button class="button">Apply static routes</button>
+				</form>
+			</details>` }() + `
 			<div style="margin-top:16px">
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/rename" class="compact-form">
 					<input name="domain" value="` + html.EscapeString(site.Domain) + `" required aria-label="Domain name">
@@ -512,6 +551,48 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		</details>
 	</main>
 </body></html>`
+}
+
+// proxyStaticTemplate adds a selective file_server to the managed proxy defaults.
+// Only explicit URL paths are served from <app root>/public; all other requests
+// continue to the application's port.
+func proxyStaticTemplate(appRoot, rawPaths string, settings panelcaddy.GlobalSettings) (string, error) {
+	root := filepath.Join(appRoot, "public")
+	if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n") {
+		return "", fmt.Errorf("invalid application root")
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() { return "", fmt.Errorf("public directory does not exist: %s", root) }
+	var paths []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(rawPaths, "\n") {
+		p := strings.TrimSpace(line)
+		if p == "" { continue }
+		if len(p) > 180 || !strings.HasPrefix(p, "/") || strings.ContainsAny(p, " \t\r\"\\{}#") ||
+			strings.Contains(p, "..") || strings.Contains(p, "//") || strings.Contains(p, "/.") ||
+			strings.Count(p, "*") > 1 || (strings.Contains(p, "*") && !strings.HasSuffix(p, "/*")) {
+			return "", fmt.Errorf("invalid static URL path: %q", p)
+		}
+		if !seen[p] { paths = append(paths, p); seen[p] = true }
+	}
+	if len(paths) == 0 || len(paths) > 30 { return "", fmt.Errorf("provide 1-30 static URL paths") }
+	base := panelcaddy.ManagedSiteTemplate(panelcaddy.Site{Kind: "proxy", Port: 1}, settings)
+	begin := strings.Index(base, "\treverse_proxy 127.0.0.1:{port}")
+	if begin < 0 { return "", fmt.Errorf("proxy template is unavailable") }
+	end := strings.Index(base[begin:], "\n\tlog")
+	if end < 0 { end = strings.LastIndex(base[begin:], "\n}") }
+	if end < 0 { return "", fmt.Errorf("proxy template is malformed") }
+	end += begin
+	proxy := base[begin:end]
+	var b strings.Builder
+	b.WriteString("\troot * ")
+	b.WriteString(strconv.Quote(root))
+	b.WriteString("\n\t@ogp_static path ")
+	b.WriteString(strings.Join(paths, " "))
+	b.WriteString("\n\thandle @ogp_static {\n\t\tfile_server\n\t\theader Cache-Control \"public, max-age=3600\"\n\t}\n\thandle {\n")
+	for _, line := range strings.Split(proxy, "\n") { b.WriteString("\t"); b.WriteString(line); b.WriteString("\n") }
+	b.WriteString("\t}")
+	return base[:begin] + b.String() + base[end:], nil
 }
 
 func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panelcaddy.GlobalSettings) string {
