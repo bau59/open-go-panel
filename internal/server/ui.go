@@ -138,7 +138,7 @@ const baseStyles = `
 	tbody tr:hover{background:rgba(130,189,249,.055)}
 	.muted,.note{color:var(--muted-2);font-size:12px}
 	.muted{margin-top:4px}
-	.badge,.status-badge,.meta-chip{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:26px;padding:0 10px;border-radius:999px;border:1px solid var(--border);background:#111824;color:#bac3d1;font-size:11px;font-weight:750;line-height:1;vertical-align:middle;white-space:nowrap;flex:0 0 auto}
+	.badge,.status-badge,.meta-chip{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:26px;padding:0 10px;border-radius:999px;border:1px solid var(--border);background:rgba(13,32,57,.67);color:#d1e2f7;font-size:11px;font-weight:750;line-height:1;vertical-align:middle;white-space:nowrap;flex:0 0 auto}
 	.status-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:#778196}
 	.status-badge.ok{border-color:rgba(56,217,150,.2);background:var(--success-soft);color:#8ceabc}
 	.status-badge.ok::before{background:var(--success)}
@@ -533,7 +533,6 @@ const baseStyles = `
 	:where(.domain-summary>div,.app-overview-grid>div,.service-summary>div,.runtime-facts>div,.attachment-row){background:rgba(8,25,50,.36)}
 	:where(.tab,.pager-button,.inline-popover){border-color:var(--border)}
 	:where(.inline-popover,.docker-rebuild-dialog){background:linear-gradient(145deg,#203b60,#11233d);box-shadow:0 26px 70px rgba(1,8,25,.5)}
-	:where(.badge,.status-badge,.meta-chip){background:rgba(13,32,57,.67);border-color:var(--border);color:#d1e2f7}
 	:where(.page-head,.app-page-head,.section-title){min-width:0;flex-wrap:wrap}
 	:where(.page-head>div,.app-page-head>div,.section-title>div,.table-scroll,.panel,.app-card,.grid>*,.metrics-grid>*){min-width:0}
 	.table-scroll{max-width:100%;overflow-x:auto}
