@@ -858,7 +858,7 @@ func prepareStaticRoot(ctx context.Context, root string) error {
 
 // SetProxyStatic configures public/ assets for a Go application's proxy domain.
 // An explicit opt-in replaces a custom domain template.
-func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawPaths string, replace bool) error {
+func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawPaths string, replace bool, cacheSeconds ...int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sites, err := m.load()
@@ -876,7 +876,7 @@ func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawP
 	if err != nil || !info.IsDir() { return fmt.Errorf("public directory missing: %s", root) }
 	settings, err := m.GlobalSettings()
 	if err != nil { return err }
-	value, err := ProxyStaticTemplate(root, rawPaths, settings)
+	value, err := ProxyStaticTemplateCache(root, rawPaths, settings, cacheSeconds...)
 	if err != nil { return err }
 	// Grant only traversal to parents; public itself and its children receive read access.
 	if err := prepareStaticRoot(ctx, root); err != nil { return err }
@@ -891,6 +891,14 @@ func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawP
 func IsManagedProxyStatic(value string) bool {
 	return strings.Contains(value, "# Open Go Panel managed proxy static") &&
 		strings.Contains(value, "@ogp_static path ") && strings.Contains(value, "handle @ogp_static")
+}
+
+// ManagedProxyStaticCache returns the selected cache policy for the UI.
+func ManagedProxyStaticCache(value string) int {
+	if !IsManagedProxyStatic(value) { return 3600 }
+	if strings.Contains(value, "Cache-Control \\"no-cache\\"") { return 0 }
+	if strings.Contains(value, "Cache-Control \\"public, max-age=86400\\"") { return 86400 }
+	return 3600
 }
 
 // ManagedProxyStaticPaths recovers the saved routes for editing instead of
@@ -908,6 +916,13 @@ func ManagedProxyStaticPaths(value string) string {
 
 // ProxyStaticTemplate creates mutually exclusive static and application handlers.
 func ProxyStaticTemplate(root, raw string, settings GlobalSettings) (string, error) {
+	return ProxyStaticTemplateCache(root, raw, settings)
+}
+
+func ProxyStaticTemplateCache(root, raw string, settings GlobalSettings, selected ...int) (string, error) {
+	cache := 3600
+	if len(selected) > 0 { cache = selected[0] }
+	if cache != 0 && cache != 3600 && cache != 86400 { return "", errors.New("invalid static cache duration") }
 	if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n\"") { return "", errors.New("invalid public path") }
 	var paths []string
 	seen := map[string]bool{}
@@ -935,7 +950,9 @@ func ProxyStaticTemplate(root, raw string, settings GlobalSettings) (string, err
 	b.WriteString(strconv.Quote(root))
 	b.WriteString("\n\t@ogp_static path ")
 	b.WriteString(strings.Join(paths, " "))
-	b.WriteString("\n\thandle @ogp_static {\n\t\tfile_server\n\t\theader Cache-Control \"public, max-age=3600\"\n\t}\n\thandle {\n")
+	b.WriteString("\n\thandle @ogp_static {\n\t\tfile_server\n")
+	if cache == 0 { b.WriteString("\t\theader Cache-Control \"no-cache\"\n") } else { b.WriteString(fmt.Sprintf("\t\theader Cache-Control \"public, max-age=%d\"\n", cache)) }
+	b.WriteString("\t}\n\thandle {\n")
 	for _, line := range strings.Split(proxy, "\n") { b.WriteString("\t"); b.WriteString(line); b.WriteString("\n") }
 	b.WriteString("\t}")
 	return base[:start] + b.String() + base[end:], nil
