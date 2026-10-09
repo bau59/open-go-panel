@@ -568,7 +568,7 @@ func proxyStaticTemplate(appRoot, rawPaths string, settings panelcaddy.GlobalSet
 	for _, line := range strings.Split(rawPaths, "\n") {
 		p := strings.TrimSpace(line)
 		if p == "" { continue }
-		if len(p) > 180 || !strings.HasPrefix(p, "/") || strings.ContainsAny(p, " \t\r\"\\{}#") ||
+		if len(p) > 180 || p == "/" || p == "/*" || !strings.HasPrefix(p, "/") || strings.ContainsAny(p, " \t\r\"\\{}#") ||
 			strings.Contains(p, "..") || strings.Contains(p, "//") || strings.Contains(p, "/.") ||
 			strings.Count(p, "*") > 1 || (strings.Contains(p, "*") && !strings.HasSuffix(p, "/*")) {
 			return "", fmt.Errorf("invalid static URL path: %q", p)
