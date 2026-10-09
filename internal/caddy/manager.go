@@ -896,8 +896,8 @@ func IsManagedProxyStatic(value string) bool {
 // ManagedProxyStaticCache returns the selected cache policy for the UI.
 func ManagedProxyStaticCache(value string) int {
 	if !IsManagedProxyStatic(value) { return 3600 }
-	if strings.Contains(value, "Cache-Control \\"no-cache\\"") { return 0 }
-	if strings.Contains(value, "Cache-Control \\"public, max-age=86400\\"") { return 86400 }
+	if strings.Contains(value, "Cache-Control \"no-cache\"") { return 0 }
+	if strings.Contains(value, "Cache-Control \"public, max-age=86400\"") { return 86400 }
 	return 3600
 }
 
