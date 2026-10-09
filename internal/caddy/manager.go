@@ -866,7 +866,7 @@ func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawP
 	var index = -1
 	for i := range sites { if sites[i].AppID == appID { index = i; break } }
 	if index < 0 || sites[index].Kind != "proxy" || sites[index].Port <= 0 { return errors.New("application proxy domain not found") }
-	if strings.TrimSpace(sites[index].Template) != "" && !replace { return errors.New("confirm replacement of custom Caddy configuration") }
+	if strings.TrimSpace(sites[index].Template) != "" && !IsManagedProxyStatic(sites[index].Template) && !replace { return errors.New("confirm replacement of custom Caddy configuration") }
 	root := filepath.Join(appRoot, "public")
 	if !filepath.IsAbs(appRoot) || filepath.Clean(appRoot) == "/" || strings.ContainsAny(appRoot, "\r\n") { return errors.New("invalid application root") }
 	resolved, err := filepath.EvalSymlinks(root)
@@ -884,6 +884,26 @@ func (m *Manager) SetProxyStatic(ctx context.Context, appID int64, appRoot, rawP
 	global, err := m.Template()
 	if err != nil { return err }
 	return m.applyLocked(ctx, sites, global)
+}
+
+// IsManagedProxyStatic distinguishes panel-owned generated configuration from
+// user-authored Caddy overrides, including configurations saved by v0.1.17.
+func IsManagedProxyStatic(value string) bool {
+	return strings.Contains(value, "# Open Go Panel managed proxy static") &&
+		strings.Contains(value, "@ogp_static path ") && strings.Contains(value, "handle @ogp_static")
+}
+
+// ManagedProxyStaticPaths recovers the saved routes for editing instead of
+// replacing them with hard-coded defaults.
+func ManagedProxyStaticPaths(value string) string {
+	if !IsManagedProxyStatic(value) { return "" }
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "@ogp_static path ") {
+			return strings.Join(strings.Fields(strings.TrimPrefix(line, "@ogp_static path ")), "\n")
+		}
+	}
+	return ""
 }
 
 // ProxyStaticTemplate creates mutually exclusive static and application handlers.
