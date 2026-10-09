@@ -498,5 +498,61 @@ func (m *Manager) RollbackProductionBinary(ctx context.Context,id int64)error{
 		defer cancel()
 		return m.Restart(recoveryCtx,id)
 	}
-	return activateStagedRelease(current,previous,activate,recoverOriginal)
+	if _, err := os.Lstat(filepath.Join(app.Root, ".ogp-assets-previous")); errors.Is(err, os.ErrNotExist) {
+		return activateStagedRelease(current,previous,activate,recoverOriginal)
+	} else if err != nil { return err }
+	return rollbackProductionAssets(app.Root, current, previous, activate, recoverOriginal)
+}
+
+func rollbackProductionAssets(root, current, previous string, activate, recover func()error) error {
+	manifest := filepath.Join(root, ".ogp-assets-previous")
+	content,err:=os.ReadFile(filepath.Join(manifest,"paths"))
+	if err!=nil{return fmt.Errorf("read previous assets: %w",err)}
+	dirs,err:=normalizePromotionDirectories(string(content))
+	if err!=nil{return err}
+	// Move current assets into a temporary holder, restore previous assets,
+	// then switch the binaries. A failed activation restores both sides.
+	temporary,err:=os.MkdirTemp(root,".ogp-assets-rollback-")
+	if err!=nil{return err}
+	defer os.RemoveAll(temporary)
+	type moved struct {current, saved, previous string; hadCurrent, hadPrevious bool}
+	var movedAssets []moved
+	restore:=func() error {
+		var errs []error
+		for i:=len(movedAssets)-1;i>=0;i-- {
+			a:=movedAssets[i]
+			if a.hadPrevious {if err:=os.Rename(a.current,a.previous);err!=nil{errs=append(errs,err)}}
+			if a.hadCurrent {if err:=os.Rename(a.saved,a.current);err!=nil{errs=append(errs,err)}}
+		}
+		return errors.Join(errs...)
+	}
+	for i,dir:=range dirs {
+		dst:=filepath.Join(root,dir)
+		old:=filepath.Join(manifest,strconv.Itoa(i))
+		stash:=filepath.Join(temporary,strconv.Itoa(i))
+		_,err:=os.Lstat(dst);hasCurrent:=err==nil
+		if err!=nil&&!errors.Is(err,os.ErrNotExist){_ = restore();return err}
+		_,err=os.Lstat(old);hasPrevious:=err==nil
+		if err!=nil&&!errors.Is(err,os.ErrNotExist){_ = restore();return err}
+		if hasCurrent {if err:=os.Rename(dst,stash);err!=nil{_ = restore();return err}}
+		if hasPrevious {if err:=os.MkdirAll(filepath.Dir(dst),0750);err!=nil{_ = restore();return err}
+			if err:=os.Rename(old,dst);err!=nil{if hasCurrent{_ = os.Rename(stash,dst)};_ = restore();return err}}
+		movedAssets=append(movedAssets,moved{dst,stash,old,hasCurrent,hasPrevious})
+	}
+	if err:=activateStagedRelease(current,previous,activate,func()error{
+		if e:=restore();e!=nil{return e}
+		if recover!=nil{return recover()}
+		return nil
+	});err!=nil {
+		if e:=restore();e!=nil{return errors.Join(err,e)}
+		return err
+	}
+	// The rollback itself is reversible: keep the displaced directories in
+	// the same manifest for the next binary rollback.
+	for i,a:=range movedAssets {
+		if a.hadCurrent {
+			if err:=os.Rename(a.saved,filepath.Join(manifest,strconv.Itoa(i)));err!=nil{return err}
+		}
+	}
+	return nil
 }
