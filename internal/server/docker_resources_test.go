@@ -16,7 +16,7 @@ func TestDockerResourcesVisibleInContainerTable(t *testing.T) {
         {ID:"abc123", Name:"container<sample>", Image:"sample", Running:true, State:"running",
             NanoCPUs:1500000000, MemoryLimit:512*1048576},
     }
-    page := dockerPage(paneldocker.Status{Installed:true, Active:true},
+    page := dockerPage(paneldocker.Status{Installed:true, Active:true, CPUCount:2},
         containers, false, paneldocker.BuildTask{}, paneldocker.GitHubKeyInfo{}, "")
     for _, fragment := range []string{
         `data-container-id="abc123"`,
@@ -25,7 +25,9 @@ func TestDockerResourcesVisibleInContainerTable(t *testing.T) {
         `id="docker-log-tail"`,
         `/docker/abc123/limits`,
         `id="docker-limits-abc123"`,
-        `name="cpu" type="number"`,
+        `name="cpu" type="number" min="0" max="2"`,
+        `Docker reports 2 available CPU cores.`,
+        `0.5 = 50% of one core.`,
         `value="1.5"`,
         `name="memory_mib" type="number"`,
         `value="512"`,
