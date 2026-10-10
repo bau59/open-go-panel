@@ -334,6 +334,11 @@ const baseStyles = `
 	.docker-rebuild-form input{display:block;width:100%;min-width:0;margin-top:6px}
 	.docker-dialog-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:0}
 	.docker-dialog-grid label{min-width:0}
+	.docker-logs-dialog{width:min(900px,calc(100vw - 32px));max-height:min(90vh,900px)}
+	.docker-log-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+	.docker-log-toolbar label{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+	.docker-log-toolbar select{min-height:36px}
+	.docker-log-output{margin:0;min-height:200px;max-height:60vh;overflow:auto;padding:15px;border:1px solid var(--border);border-radius:12px;background:#09172a;color:#e0ecff;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;tab-size:4}
 	.docker-port{display:flex;flex-direction:column;gap:3px;margin-bottom:5px;white-space:nowrap}
 	.docker-port strong{font-size:12px;font-weight:600}
 	.docker-port small{font-size:10px;color:var(--muted);line-height:1.35}
