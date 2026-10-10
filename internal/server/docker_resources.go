@@ -45,7 +45,7 @@ func dockerResourceDialog(item paneldocker.Container, availableCores int) string
                 <label>CPU cores (0 = unlimited) <input name="cpu" type="number" min="0" max="%d" step="any" required value="%s"></label>
                 <label>Memory (MiB) <input name="memory_mib" type="number" min="0" max="1048576" step="1" required value="%s"></label>
             </div>
-            <p class="note">%s Minimum positive values: 0.01 CPU, 6 MiB memory. Reducing RAM below current usage can terminate processes. Swap limits are not changed. Docker Compose may overwrite these settings when recreating a container.</p>
+            <p class="note">%s Minimum positive values: 0.01 CPU, 6 MiB memory. Reducing RAM below current usage can terminate processes. When RAM changes, Docker's combined RAM+swap limit is updated automatically while preserving the existing swap allowance. Setting RAM to 0 removes both limits. Docker Compose may overwrite these settings when recreating a container.</p>
             <button type="submit" class="button">Save limits</button>
         </form>
     </dialog>`, id, name, id, maxCores, html.EscapeString(cpu), html.EscapeString(memory), html.EscapeString(cpuHint))

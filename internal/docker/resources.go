@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -139,6 +140,64 @@ func validateAvailableCPUs(cpuRaw string, available int) error {
 	return nil
 }
 
+// containerMemoryLimits reads the daemon's current settings immediately before
+// an update; form data is never treated as the source of truth.
+type containerMemoryLimits struct {
+	Memory     int64 `json:"Memory"`
+	MemorySwap int64 `json:"MemorySwap"`
+}
+
+func inspectContainerMemoryLimits(ctx context.Context, id string) (containerMemoryLimits, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .HostConfig}}", id).CombinedOutput()
+	if err != nil {
+		return containerMemoryLimits{}, fmt.Errorf("inspect Docker memory limits: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var limits containerMemoryLimits
+	if err := json.Unmarshal(out, &limits); err != nil {
+		return containerMemoryLimits{}, fmt.Errorf("decode Docker memory limits: %w", err)
+	}
+	if limits.Memory < 0 || limits.MemorySwap < -1 {
+		return containerMemoryLimits{}, errors.New("Docker returned invalid memory limits")
+	}
+	return limits, nil
+}
+
+// memoryUpdateArgs preserves the container's existing swap allowance, not the
+// old combined RAM+swap ceiling. A finite swap allowance is (MemorySwap-Memory).
+// Updating --memory and --memory-swap together avoids Docker rejecting a new
+// RAM limit greater than its old combined ceiling.
+func memoryUpdateArgs(current containerMemoryLimits, desiredMemory int64) ([]string, error) {
+	if desiredMemory < 0 {
+		return nil, errors.New("RAM limit must not be negative")
+	}
+	if current.Memory == desiredMemory {
+		return nil, nil // CPU-only edit: never touch memory or swap settings.
+	}
+	if desiredMemory == 0 {
+		return []string{"--memory", "0", "--memory-swap", "0"}, nil
+	}
+	var newSwap int64
+	switch {
+	case current.MemorySwap == -1:
+		newSwap = -1 // Existing unlimited swap remains unlimited.
+	case current.MemorySwap == 0:
+		// Mirror Docker's default when RAM is limited and swap was not set.
+		newSwap = desiredMemory * 2
+	case current.MemorySwap > 0 && current.Memory > 0 && current.MemorySwap >= current.Memory:
+		swapAllowance := current.MemorySwap - current.Memory
+		if swapAllowance > math.MaxInt64-desiredMemory {
+			return nil, errors.New("RAM and swap limit exceeds int64 capacity")
+		}
+		newSwap = desiredMemory + swapAllowance
+	default:
+		return nil, fmt.Errorf("cannot safely preserve Docker swap configuration (memory=%d, memoryswap=%d)", current.Memory, current.MemorySwap)
+	}
+	return []string{"--memory", strconv.FormatInt(desiredMemory, 10), "--memory-swap", strconv.FormatInt(newSwap, 10)}, nil
+}
+
 // UpdateLimits changes resource limits without recreating or restarting a
 // container. Docker remains the source of truth; no local shadow state.
 func (m *Manager) UpdateLimits(ctx context.Context, id, cpu, memoryMiB string) error {
@@ -156,7 +215,22 @@ func (m *Manager) UpdateLimits(ctx context.Context, id, cpu, memoryMiB string) e
 	if err := validateAvailableCPUs(cpu, available); err != nil {
 		return err
 	}
+	newMemory, err := strconv.ParseInt(args[3], 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid validated RAM limit: %w", err)
+	}
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
-	return dockerCommand(ctx, append(append([]string{"update"}, args...), id)...)
+
+	current, err := inspectContainerMemoryLimits(ctx, id)
+	if err != nil {
+		return err
+	}
+	memoryArgs, err := memoryUpdateArgs(current, newMemory)
+	if err != nil {
+		return err
+	}
+	updateArgs := append([]string{"update"}, args[:2]...)
+	updateArgs = append(updateArgs, memoryArgs...)
+	return dockerCommand(ctx, append(updateArgs, id)...)
 }

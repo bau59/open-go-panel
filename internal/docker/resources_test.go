@@ -124,6 +124,7 @@ func TestUpdateLimitsRejectsTooManyCPUsBeforeDockerUpdate(t *testing.T) {
 	dockerPath := filepath.Join(dir, "docker")
 	script := "#!/bin/sh\ncase \"$1\" in\n" +
 		"  info) echo 2 ;;\n" +
+		"  inspect) echo '{\"Memory\":0,\"MemorySwap\":0}' ;;\n" +
 		"  update) printf '%s\\n' \"$*\" >> " + marker + " ;;\n" +
 		"  *) exit 2 ;;\nesac\n"
 	if err := os.WriteFile(dockerPath, []byte(script), 0700); err != nil {
@@ -145,7 +146,119 @@ func TestUpdateLimitsRejectsTooManyCPUsBeforeDockerUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(out); !strings.Contains(got, "update --cpus 0.5 --memory 524288000 abc123") {
+	if got := string(out); !strings.Contains(got, "update --cpus 0.5 --memory 524288000 --memory-swap 1048576000 abc123") {
 		t.Fatalf("unexpected docker update args: %q", got)
+	}
+}
+
+
+func TestMemoryUpdateArgs(t *testing.T) {
+	mib := int64(1048576)
+	tests := []struct {
+		name string
+		current containerMemoryLimits
+		newMemory int64
+		want []string
+		fail bool
+	}{
+		{
+			name: "no swap remains disabled",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 500*mib},
+			newMemory: 700*mib,
+			want: []string{"--memory", "734003200", "--memory-swap", "734003200"},
+		},
+		{
+			name: "preserve fixed swap allowance",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 1000*mib},
+			newMemory: 700*mib,
+			want: []string{"--memory", "734003200", "--memory-swap", "1258291200"},
+		},
+		{
+			name: "preserve unlimited swap",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: -1},
+			newMemory: 700*mib,
+			want: []string{"--memory", "734003200", "--memory-swap", "-1"},
+		},
+		{
+			name: "unset swap follows Docker default",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 0},
+			newMemory: 700*mib,
+			want: []string{"--memory", "734003200", "--memory-swap", "1468006400"},
+		},
+		{
+			name: "initially unlimited memory",
+			current: containerMemoryLimits{Memory: 0, MemorySwap: 0},
+			newMemory: 700*mib,
+			want: []string{"--memory", "734003200", "--memory-swap", "1468006400"},
+		},
+		{
+			name: "cpu only does not touch memory or swap",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 500*mib},
+			newMemory: 500*mib,
+		},
+		{
+			name: "remove both memory and swap caps",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 1000*mib},
+			newMemory: 0,
+			want: []string{"--memory", "0", "--memory-swap", "0"},
+		},
+		{
+			name: "refuse invalid positive swap without RAM",
+			current: containerMemoryLimits{Memory: 0, MemorySwap: 500*mib},
+			newMemory: 700*mib, fail: true,
+		},
+		{
+			name: "refuse invalid negative memory",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 500*mib},
+			newMemory: -1, fail: true,
+		},
+		{
+			name: "refuse swap smaller than existing memory",
+			current: containerMemoryLimits{Memory: 500*mib, MemorySwap: 400*mib},
+			newMemory: 700*mib, fail: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := memoryUpdateArgs(tc.current, tc.newMemory)
+			if (err != nil) != tc.fail {
+				t.Fatalf("memoryUpdateArgs(): err=%v, want error=%v", err, tc.fail)
+			}
+			if !tc.fail && strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Fatalf("memoryUpdateArgs() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpdateLimitsPairsMemoryAndSwap(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "update-args")
+	dockerPath := filepath.Join(dir, "docker")
+	script := "#!/bin/sh\ncase \"$1\" in\n" +
+		"  info) echo 2 ;;\n" +
+		"  inspect) echo '{\"Memory\":524288000,\"MemorySwap\":524288000}' ;;\n" +
+		"  update) printf '%s\\n' \"$*\" >> \"" + marker + "\" ;;\n" +
+		"  *) exit 2 ;;\nesac\n"
+	if err := os.WriteFile(dockerPath, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	manager := New()
+	if err := manager.UpdateLimits(context.Background(), "196e167fa24d", "1", "700"); err != nil {
+		t.Fatalf("increasing RAM to 700 MiB must update swap in the same call: %v", err)
+	}
+	if err := manager.UpdateLimits(context.Background(), "196e167fa24d", "1", "500"); err != nil {
+		t.Fatalf("CPU-only update must not edit memory or swap: %v", err)
+	}
+	out, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(string(out))
+	expected := "update --cpus 1 --memory 734003200 --memory-swap 734003200 196e167fa24d\n" +
+		"update --cpus 1 196e167fa24d"
+	if got != expected {
+		t.Fatalf("wrong Docker update arguments:\n%s\nexpected:\n%s", got, expected)
 	}
 }
