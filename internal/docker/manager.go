@@ -18,6 +18,7 @@ type Status struct {
     Installed bool
     Active    bool
     Version   string
+    CPUCount  int
     Error     string
 }
 
