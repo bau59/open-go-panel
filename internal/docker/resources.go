@@ -96,6 +96,49 @@ func parseLimitArgs(cpuRaw, memoryRaw string) ([]string, error) {
 	return []string{"--cpus", cpuRaw, "--memory", strconv.FormatInt(mib*1048576, 10)}, nil
 }
 
+// CPUCount returns the number of logical CPUs reported by the Docker daemon,
+// which is the authority enforcing the --cpus upper bound.
+func (m *Manager) CPUCount(ctx context.Context) (int, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return 0, errors.New("Docker is not installed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.NCPU}}").CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("read Docker CPU count: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	count, err := parseCPUCount(string(out))
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func parseCPUCount(raw string) (int, error) {
+	count, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || count <= 0 {
+		return 0, fmt.Errorf("invalid CPU count returned by Docker: %q", strings.TrimSpace(raw))
+	}
+	return count, nil
+}
+
+// validateAvailableCPUs runs before docker update. Invalid limits never reach
+// the daemon; zero retains Docker's unlimited-CPU behavior.
+func validateAvailableCPUs(cpuRaw string, available int) error {
+	if available <= 0 {
+		return errors.New("Docker CPU count is unavailable")
+	}
+	cpu, err := strconv.ParseFloat(strings.TrimSpace(cpuRaw), 64)
+	if err != nil {
+		return fmt.Errorf("invalid CPU limit %q: %w", cpuRaw, err)
+	}
+	if cpu > float64(available) {
+		return fmt.Errorf("CPU limit %s exceeds Docker's %d available cores; use 0.5 for 50%% of one core (0 = unlimited)", cpuRaw, available)
+	}
+	return nil
+}
+
 // UpdateLimits changes resource limits without recreating or restarting a
 // container. Docker remains the source of truth; no local shadow state.
 func (m *Manager) UpdateLimits(ctx context.Context, id, cpu, memoryMiB string) error {
@@ -104,6 +147,13 @@ func (m *Manager) UpdateLimits(ctx context.Context, id, cpu, memoryMiB string) e
 	}
 	args, err := parseLimitArgs(cpu, memoryMiB)
 	if err != nil {
+		return err
+	}
+	available, err := m.CPUCount(ctx)
+	if err != nil {
+		return fmt.Errorf("check Docker CPU availability: %w", err)
+	}
+	if err := validateAvailableCPUs(cpu, available); err != nil {
 		return err
 	}
 	m.lifecycleMu.Lock()
