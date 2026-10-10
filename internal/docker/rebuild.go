@@ -39,6 +39,9 @@ type replacementSpec struct {
 	MaxRetry int
 	Init bool
 	ShmSize int64
+	NanoCPUs int64
+	Memory int64
+	MemorySwap int64
 	NetworkMode string
 	User string
 	WorkDir string
@@ -69,6 +72,9 @@ func inspectReplacement(ctx context.Context, id string) (replacementSpec,error) 
 			RestartPolicy struct {Name string `json:"Name"`; MaximumRetryCount int `json:"MaximumRetryCount"`} `json:"RestartPolicy"`
 			Init *bool `json:"Init"`
 			ShmSize int64 `json:"ShmSize"`
+			NanoCPUs int64 `json:"NanoCpus"`
+			Memory int64 `json:"Memory"`
+			MemorySwap int64 `json:"MemorySwap"`
 			NetworkMode string `json:"NetworkMode"`
 			Privileged bool `json:"Privileged"`
 			AutoRemove bool `json:"AutoRemove"`
@@ -108,7 +114,8 @@ func inspectReplacement(ctx context.Context, id string) (replacementSpec,error) 
 	p:=replacementSpec{ID:i.ID,Name:strings.TrimPrefix(i.Name,"/"),Image:i.Config.Image,
 		Running:i.State.Running,Labels:i.Config.Labels,Env:i.Config.Env,Ports:h.PortBindings,
 		Restart:h.RestartPolicy.Name,MaxRetry:h.RestartPolicy.MaximumRetryCount,
-		ShmSize:h.ShmSize,NetworkMode:h.NetworkMode,User:i.Config.User,WorkDir:i.Config.WorkingDir,
+		ShmSize:h.ShmSize,NanoCPUs:h.NanoCPUs,Memory:h.Memory,MemorySwap:h.MemorySwap,
+		NetworkMode:h.NetworkMode,User:i.Config.User,WorkDir:i.Config.WorkingDir,
 		HasHealthcheck:len(i.Config.Healthcheck)>0 && string(i.Config.Healthcheck)!="null"}
 	if h.Init!=nil {p.Init=*h.Init}
 	for _,m:=range i.Mounts {
@@ -139,6 +146,9 @@ func (p replacementSpec) launchArgs(image string) ([]string,func(),error) {
 	}
 	if p.Init {args=append(args,"--init")}
 	if p.ShmSize>0 {args=append(args,"--shm-size",strconv.FormatInt(p.ShmSize,10))}
+	if p.NanoCPUs>0 {args=append(args,"--cpus",strconv.FormatFloat(float64(p.NanoCPUs)/1e9,'f',-1,64))}
+	if p.Memory>0 {args=append(args,"--memory",strconv.FormatInt(p.Memory,10))}
+	if p.MemorySwap!=0 && p.Memory>0 {args=append(args,"--memory-swap",strconv.FormatInt(p.MemorySwap,10))}
 	if p.User!="" {args=append(args,"--user",p.User)}
 	if p.WorkDir!="" {args=append(args,"--workdir",p.WorkDir)}
 	for port,bindings:=range p.Ports {

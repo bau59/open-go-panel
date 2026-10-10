@@ -6,6 +6,7 @@ import (
     "html"
     "net/http"
     "net/url"
+    "strconv"
     "strings"
 
     paneldocker "github.com/bau59/open-go-panel/internal/docker"
@@ -25,6 +26,39 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
         w.Header().Set("Content-Type", "application/json; charset=utf-8")
         w.Header().Set("Cache-Control", "no-store")
         _ = json.NewEncoder(w).Encode(stats)
+    })))
+
+    mux.Handle("GET /docker/{id}/logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        lines := 300
+        if raw := r.URL.Query().Get("tail"); raw != "" {
+            n, err := strconv.Atoi(raw)
+            if err != nil || n < 1 || n > 1000 {
+                http.Error(w, "tail must be between 1 and 1000", http.StatusBadRequest)
+                return
+            }
+            lines = n
+        }
+        w.Header().Set("Cache-Control", "no-store")
+        logs, err := cfg.Docker.Logs(r.Context(), r.PathValue("id"), lines)
+        if err != nil {
+            http.Error(w, err.Error(), http.StatusBadGateway)
+            return
+        }
+        w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+        _, _ = w.Write([]byte(logs))
+    })))
+
+    mux.Handle("POST /docker/{id}/limits", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid form", http.StatusBadRequest)
+            return
+        }
+        if err := cfg.Docker.UpdateLimits(r.Context(), r.PathValue("id"),
+            r.FormValue("cpu"), r.FormValue("memory_mib")); err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
 
     mux.Handle("POST /docker/{id}/rebuild", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +283,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     var rows strings.Builder
     var backupRows strings.Builder
     var rebuildDialogs strings.Builder
+    var resourceDialogs strings.Builder
     runningCount := 0
     backupCount := 0
     activeCount := 0
@@ -277,6 +312,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         if item.Running {
             actionButton = `<form method="post" action="/docker/` + html.EscapeString(item.ID) + `/restart"><button class="secondary compact-action">Restart</button></form><form method="post" action="/docker/` + html.EscapeString(item.ID) + `/stop"><button class="secondary compact-action">Stop</button></form>`
         }
+        resourceDialogs.WriteString(dockerResourceDialog(item))
         dialogID := "docker-rebuild-" + item.ID
         rebuildButton := `<button class="secondary compact-action" type="button" onclick="document.getElementById('`+dialogID+`').showModal()">Rebuild</button>`
         rebuildDialogs.WriteString(`<dialog id="`+dialogID+`" class="docker-rebuild-dialog">
@@ -300,7 +336,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             <td class="docker-usage" data-docker-id="` + html.EscapeString(item.ID) + `"><span data-field="memory">—</span><small data-field="mem_pct"></small></td>
             <td>` + dockerPortDisplay(item.Ports) + `</td>
             <td><span class="meta-chip">` + html.EscapeString(item.RestartPolicy) + `</span></td>
-            <td><div class="actions docker-actions">` + actionButton + rebuildButton + `
+            <td><div class="actions docker-actions">` + actionButton + dockerResourceButtons(item) + rebuildButton + `
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/autostart"><input type="hidden" name="enabled" value="` + toggleValue + `"><button class="secondary compact-action">` + toggleLabel + `</button></form>
                 <form method="post" action="/docker/` + html.EscapeString(item.ID) + `/delete" onsubmit="return confirm('Remove this Docker container? Volumes are not removed.')"><button class="danger compact-action">Delete</button></form>
             </div></td>
@@ -362,7 +398,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             <a href="/docker" class="secondary compact-action">Refresh</a></div>
             <div class="table-scroll"><table><thead><tr><th>Container</th><th>Image</th><th>Status</th><th>CPU</th><th>Memory</th><th>Ports</th><th>Autostart</th><th>Actions</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
         </section>
-        ` + rebuildDialogs.String() + `
+        ` + rebuildDialogs.String() + resourceDialogs.String() + dockerLogsDialog() + `
         ` + func() string {if backupCount==0{return ""};return `<details class="panel docker-backups">
             <summary>Previous versions (`+fmt.Sprintf("%d",backupCount)+`) <span class="note">Kept for rollback; not active deployments</span></summary>
             <div class="table-scroll"><table><thead><tr><th>Backup container</th><th>Image</th><th>Purpose</th><th>Actions</th></tr></thead><tbody>`+backupRows.String()+`</tbody></table></div>
@@ -421,6 +457,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             <p class="note" style="margin-top:12px">For private repositories: add a read-only deploy key to GitHub. To update a container already running, use Rebuild GitHub in its Actions row.</p>
         </details>
     </main>
+    ` + dockerLogsScript() + `
     <script>
     (function(){
       function asBytes(s){

@@ -34,6 +34,8 @@ type Container struct {
     Branch        string
     Dockerfile    string
     Commit        string
+    NanoCPUs      int64
+    MemoryLimit   int64
 }
 
 var (
@@ -98,6 +100,8 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
             Running bool   `json:"Running"`
         } `json:"State"`
         HostConfig struct {
+            NanoCPUs int64 `json:"NanoCpus"`
+            Memory int64 `json:"Memory"`
             RestartPolicy struct {
                 Name string `json:"Name"`
             } `json:"RestartPolicy"`
@@ -133,6 +137,8 @@ func (m *Manager) Containers(ctx context.Context) ([]Container, error) {
             Branch: item.Config.Labels["org.open-go-panel.github.branch"],
             Dockerfile: item.Config.Labels["org.open-go-panel.github.dockerfile"],
             Commit: item.Config.Labels["org.open-go-panel.github.commit"],
+            NanoCPUs: item.HostConfig.NanoCPUs,
+            MemoryLimit: item.HostConfig.Memory,
         })
     }
     sort.Slice(containers, func(i, j int) bool {
