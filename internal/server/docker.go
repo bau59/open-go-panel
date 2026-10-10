@@ -203,6 +203,11 @@ func dockerRuntimeForm(r *http.Request) paneldocker.RuntimeConfig {
 
 func writeDockerPage(w http.ResponseWriter, r *http.Request, cfg Config, statusCode int, message string) {
     status := cfg.Docker.Status(r.Context())
+    if status.Active {
+        if count, err := cfg.Docker.CPUCount(r.Context()); err == nil {
+            status.CPUCount = count
+        }
+    }
     var containers []paneldocker.Container
     if status.Installed && status.Active {
         items, err := cfg.Docker.Containers(r.Context())
@@ -312,7 +317,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         if item.Running {
             actionButton = `<form method="post" action="/docker/` + html.EscapeString(item.ID) + `/restart"><button class="secondary compact-action">Restart</button></form><form method="post" action="/docker/` + html.EscapeString(item.ID) + `/stop"><button class="secondary compact-action">Stop</button></form>`
         }
-        resourceDialogs.WriteString(dockerResourceDialog(item))
+        resourceDialogs.WriteString(dockerResourceDialog(item, status.CPUCount))
         dialogID := "docker-rebuild-" + item.ID
         rebuildButton := `<button class="secondary compact-action" type="button" onclick="document.getElementById('`+dialogID+`').showModal()">Rebuild</button>`
         rebuildDialogs.WriteString(`<dialog id="`+dialogID+`" class="docker-rebuild-dialog">
