@@ -6,6 +6,7 @@ import (
     "html"
     "net/http"
     "net/url"
+    "strconv"
     "strings"
 
     paneldocker "github.com/bau59/open-go-panel/internal/docker"
@@ -25,6 +26,39 @@ func registerDockerRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
         w.Header().Set("Content-Type", "application/json; charset=utf-8")
         w.Header().Set("Cache-Control", "no-store")
         _ = json.NewEncoder(w).Encode(stats)
+    })))
+
+    mux.Handle("GET /docker/{id}/logs", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        lines := 300
+        if raw := r.URL.Query().Get("tail"); raw != "" {
+            n, err := strconv.Atoi(raw)
+            if err != nil || n < 1 || n > 1000 {
+                http.Error(w, "tail must be between 1 and 1000", http.StatusBadRequest)
+                return
+            }
+            lines = n
+        }
+        w.Header().Set("Cache-Control", "no-store")
+        logs, err := cfg.Docker.Logs(r.Context(), r.PathValue("id"), lines)
+        if err != nil {
+            http.Error(w, err.Error(), http.StatusBadGateway)
+            return
+        }
+        w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+        _, _ = w.Write([]byte(logs))
+    })))
+
+    mux.Handle("POST /docker/{id}/limits", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "invalid form", http.StatusBadRequest)
+            return
+        }
+        if err := cfg.Docker.UpdateLimits(r.Context(), r.PathValue("id"),
+            r.FormValue("cpu"), r.FormValue("memory_mib")); err != nil {
+            writeDockerPage(w, r, cfg, http.StatusBadRequest, err.Error())
+            return
+        }
+        http.Redirect(w, r, "/docker", http.StatusSeeOther)
     })))
 
     mux.Handle("POST /docker/{id}/rebuild", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
