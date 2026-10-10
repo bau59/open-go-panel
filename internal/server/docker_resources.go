@@ -15,12 +15,22 @@ func dockerResourceButtons(item paneldocker.Container) string {
         <button type="button" class="secondary compact-action" onclick="document.getElementById('docker-limits-%s').showModal()">Limits</button>`, id, name, id)
 }
 
-func dockerResourceDialog(item paneldocker.Container) string {
+func dockerResourceDialog(item paneldocker.Container, availableCores int) string {
     id := html.EscapeString(item.ID)
     name := html.EscapeString(item.Name)
     cpu := "0"
     if item.NanoCPUs > 0 {
         cpu = strconv.FormatFloat(float64(item.NanoCPUs)/1e9, 'f', -1, 64)
+    }
+    maxCores := 256
+    cpuHint := "0 = unlimited; 1 = one full CPU core; 0.5 = 50% of one core."
+    if availableCores > 0 {
+        if availableCores < maxCores {
+            maxCores = availableCores
+        }
+        cpuHint += fmt.Sprintf(" Docker reports %d available CPU cores.", availableCores)
+    } else {
+        cpuHint += " Docker CPU count is unavailable; the limit will be checked on save."
     }
     memory := "0"
     if item.MemoryLimit > 0 {
@@ -32,13 +42,13 @@ func dockerResourceDialog(item paneldocker.Container) string {
             <button type="button" class="secondary compact-action" onclick="this.closest('dialog').close()">Close</button></div>
         <form method="post" action="/docker/%s/limits" class="docker-rebuild-form">
             <div class="docker-dialog-grid">
-                <label>CPU cores <input name="cpu" type="number" min="0" max="256" step="any" required value="%s"></label>
+                <label>CPU cores (0 = unlimited) <input name="cpu" type="number" min="0" max="%d" step="any" required value="%s"></label>
                 <label>Memory (MiB) <input name="memory_mib" type="number" min="0" max="1048576" step="1" required value="%s"></label>
             </div>
-            <p class="note">0 = unlimited; minimum positive values: 0.01 CPU, 6 MiB memory. Reducing RAM below current usage can terminate processes. Swap limits are not changed. Docker Compose may overwrite these settings when recreating a container.</p>
+            <p class="note">%s Minimum positive values: 0.01 CPU, 6 MiB memory. Reducing RAM below current usage can terminate processes. Swap limits are not changed. Docker Compose may overwrite these settings when recreating a container.</p>
             <button type="submit" class="button">Save limits</button>
         </form>
-    </dialog>`, id, name, id, html.EscapeString(cpu), html.EscapeString(memory))
+    </dialog>`, id, name, id, maxCores, html.EscapeString(cpu), html.EscapeString(memory), html.EscapeString(cpuHint))
 }
 
 func dockerLogsDialog() string {
