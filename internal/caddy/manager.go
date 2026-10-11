@@ -43,6 +43,8 @@ type Site struct {
 	Root     string `json:"root,omitempty"`
 	Kind     string `json:"kind,omitempty"`
 	Template string `json:"template,omitempty"`
+	WWWRedirect bool `json:"www_redirect,omitempty"`
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 type GlobalSettings struct {
@@ -735,6 +737,9 @@ func (m *Manager) apply(ctx context.Context, sites []Site) error {
 }
 
 func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string) error {
+	if err := validateSiteHosts(sites); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("caddy"); err != nil {
 		return errors.New("Caddy is not installed")
 	}
@@ -743,16 +748,16 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	}
 
 	sort.Slice(sites, func(i, j int) bool { return sites[i].Domain < sites[j].Domain })
+	settings, err := m.GlobalSettings()
+	if err != nil {
+		return err
+	}
 
 	var b strings.Builder
 	b.WriteString("# Managed by Open Go Panel\n\n")
 	for _, site := range sites {
 		siteTemplate := template
 		if site.Kind == "static" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
-			settings, err := m.GlobalSettings()
-			if err != nil {
-				settings = defaultGlobalSettings()
-			}
 			siteTemplate = ManagedSiteTemplate(site, settings)
 		}
 		if strings.TrimSpace(site.Template) != "" {
@@ -760,6 +765,10 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 		}
 		b.WriteString(renderSite(siteTemplate, site))
 		b.WriteString("\n\n")
+		if aliases := renderSiteAliases(site, settings.HTTPS); aliases != "" {
+			b.WriteString(aliases)
+			b.WriteString("\n\n")
+		}
 	}
 	managedContent := b.String()
 	if err := m.validateRendered(ctx, managedContent); err != nil {
@@ -1081,6 +1090,9 @@ func (m *Manager) load() ([]Site, error) {
 			}
 		}
 	}
+	if err := m.loadSiteAliases(sites); err != nil {
+		return nil, err
+	}
 	return sites, nil
 }
 
@@ -1103,6 +1115,10 @@ func (m *Manager) loadLegacy() ([]Site, error) {
 }
 
 func (m *Manager) save(sites []Site) error {
+	aliasesJSON, err := marshalSiteAliases(sites)
+	if err != nil {
+		return fmt.Errorf("encode Caddy aliases: %w", err)
+	}
 	tx, err := m.store.DB().Begin()
 	if err != nil {
 		return fmt.Errorf("begin domains state transaction: %w", err)
@@ -1184,6 +1200,10 @@ func (m *Manager) save(sites []Site) error {
 		if _, err := tx.Exec("DELETE FROM standalone_domains WHERE id = ?", id); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, siteAliasesSettingKey, aliasesJSON); err != nil {
+		return fmt.Errorf("save Caddy aliases: %w", err)
 	}
 	return tx.Commit()
 }

@@ -35,6 +35,23 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		http.Redirect(w, r, "/caddy", http.StatusSeeOther)
 	})))
 
+	mux.Handle("POST /caddy/site/{id}/aliases", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id == 0 {
+			http.Error(w, "invalid site id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if err := cfg.Caddy.SetSiteAliases(r.Context(), id, r.FormValue("www_redirect") == "1", r.FormValue("mirrors")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/caddy?app="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /caddy/site/{id}/rename", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -286,7 +303,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		}
 		fmt.Fprintf(&rows, `
 			<tr>
-				<td><a href="/caddy?app=%d"><strong>%s</strong></a></td>
+				<td><a href="/caddy?app=%d"><strong>%s</strong></a>%s</td>
 				<td>%s</td>
 				<td><code>%s</code></td>
 				<td><span class="meta-chip">%s</span></td>
@@ -294,6 +311,12 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</tr>`,
 			site.AppID,
 			html.EscapeString(site.Domain),
+			func() string {
+				n := len(site.Aliases)
+				if site.WWWRedirect { n++ }
+				if n == 0 { return "" }
+				return fmt.Sprintf(`<small class="muted" style="display:block;margin-top:4px">%d redirect alias(es)</small>`, n)
+			}(),
 			func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }(),
 			html.EscapeString(site.Target()),
 			html.EscapeString(mode),
@@ -368,8 +391,8 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</details>` }() + `
 			<div style="margin-top:16px">
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/rename" class="compact-form">
-					<input name="domain" value="` + html.EscapeString(site.Domain) + `" required aria-label="Domain name">
-					<button class="secondary">Change domain</button>
+					<input name="domain" value="` + html.EscapeString(site.Domain) + `" required aria-label="Primary domain">
+					<button class="secondary">Change primary domain</button>
 				</form>
 				` + func() string {
 					if site.AppID >= 0 { return "" }
@@ -387,6 +410,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					</form>`
 				}() + `
 			</div>
+			` + caddyAliasEditor(site) + `
 			<p class="sub" style="margin:14px 0 0">` + modeText + ` Common settings such as HTTPS, compression and access logging belong to the global Caddy configuration.</p>
 			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" && !panelcaddy.IsManagedProxyStatic(override) { return " open" }; return "" }() + `>
 				<summary class="secondary">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Generated Caddy config (read-only)" }; return "Advanced: custom config for this domain" }() + `</summary>
