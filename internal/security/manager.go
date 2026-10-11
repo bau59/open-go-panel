@@ -26,6 +26,7 @@ type Status struct {
 	FirewallActive  bool
 	FirewallStatus  string
 	WebProtection   bool
+	WebSources      WebSources
 }
 
 type Decision struct {
@@ -88,8 +89,12 @@ func (m *Manager) Status(ctx context.Context) Status {
 	s.BouncerActive = serviceActive(ctx, "crowdsec-firewall-bouncer.service")
 	s.FirewallStatus = firewallStatus(ctx)
 	s.FirewallActive = strings.Contains(strings.ToLower(s.FirewallStatus), "status: active")
-	_, acquisErr := os.Stat("/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml")
-	s.WebProtection = s.EngineActive && acquisErr == nil
+	if sources, err := inspectWebSources(systemWebPaths()); err == nil {
+		s.WebSources = sources
+		s.WebProtection = s.EngineActive && sources.HasCaddy()
+	} else {
+		s.WebSources.Error = err.Error()
+	}
 
 	m.mu.Lock()
 	s.Installing = m.installing
@@ -194,22 +199,16 @@ func enableWebProtection(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := os.MkdirAll("/etc/crowdsec/acquis.d", 0755); err != nil {
-		return fmt.Errorf("create CrowdSec acquisition directory: %w", err)
+	return repairCaddyAcquisition(ctx, systemWebPaths())
+}
+
+// RepairWebProtection reconciles existing CrowdSec Caddy acquisitions and
+// prevents duplicated HTTP events in rsyslog without changing firewall rules.
+func (m *Manager) RepairWebProtection(ctx context.Context) error {
+	if _, err := exec.LookPath("cscli"); err != nil {
+		return errors.New("CrowdSec is not installed")
 	}
-	caddyAcquisition := `source: journalctl
-journalctl_filter:
-  - "_SYSTEMD_UNIT=caddy.service"
-labels:
-  type: caddy
-`
-	if err := os.WriteFile("/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml", []byte(caddyAcquisition), 0644); err != nil {
-		return fmt.Errorf("write Caddy CrowdSec acquisition: %w", err)
-	}
-	if err := run(ctx, "crowdsec", "-t"); err != nil {
-		return err
-	}
-	return run(ctx, "systemctl", "restart", "crowdsec.service")
+	return repairCaddyAcquisition(ctx, systemWebPaths())
 }
 
 func (m *Manager) StartProtection(ctx context.Context) error {
@@ -251,15 +250,39 @@ func (m *Manager) ControlService(ctx context.Context, component, action string) 
 }
 
 func (m *Manager) DisableWebProtection(ctx context.Context) error {
-	path := "/etc/crowdsec/acquis.d/open-go-panel-caddy.yaml"
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("disable Caddy acquisition: %w", err)
+	webSourceLock.Lock()
+	defer webSourceLock.Unlock()
+	sources, err := inspectWebSources(systemWebPaths())
+	if err != nil {
+		return err
+	}
+	if len(sources.External) > 0 {
+		return errors.New("Caddy acquisition is managed by CrowdSec or another administrator; Open Go Panel cannot safely disable it")
+	}
+	path := systemWebPaths().panelSource()
+	old, err := saveOriginal(path)
+	if err != nil {
+		return err
+	}
+	if !old.present {
+		return nil
+	}
+	if strings.TrimSpace(string(old.data)) != strings.TrimSpace(panelCaddyAcquisition) {
+		return errors.New("Caddy acquisition has custom changes; refusing to remove it")
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("disable panel-owned Caddy acquisition: %w", err)
 	}
 	if serviceActive(ctx, "crowdsec.service") {
 		if err := run(ctx, "crowdsec", "-t"); err != nil {
+			_ = restoreOriginal(path, old)
 			return err
 		}
-		return run(ctx, "systemctl", "restart", "crowdsec.service")
+		if err := run(ctx, "systemctl", "restart", "crowdsec.service"); err != nil {
+			_ = restoreOriginal(path, old)
+			_ = run(context.Background(), "systemctl", "restart", "crowdsec.service")
+			return err
+		}
 	}
 	return nil
 }

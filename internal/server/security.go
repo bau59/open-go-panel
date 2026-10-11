@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"context"
+	"time"
 
 	"github.com/bau59/open-go-panel/internal/security"
 )
@@ -26,6 +28,8 @@ type securityPageData struct {
 	Query         url.Values
 	DataError     string
 	Message       string
+	CaddyLoggingKnown bool
+	CaddyLoggingEnabled bool
 }
 
 func registerSecurityRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
@@ -60,6 +64,16 @@ func registerSecurityRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			return
 		}
 		http.Redirect(w, r, "/security", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /security/web/repair", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err := cfg.Security.RepairWebProtection(ctx); err != nil {
+			writeSecurityPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/security?web_repaired=1", http.StatusSeeOther)
 	})))
 
 	mux.Handle("POST /security/web/disable", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +156,15 @@ func writeSecurityPage(w http.ResponseWriter, r *http.Request, cfg Config, statu
 		AlertQuery:    strings.TrimSpace(values.Get("alert_q")),
 		TrustQuery:    strings.TrimSpace(values.Get("trust_q")),
 		AlertSince:    strings.TrimSpace(values.Get("alerts_since")),
+	}
+	if cfg.Caddy != nil {
+		if settings, err := cfg.Caddy.GlobalSettings(); err == nil {
+			data.CaddyLoggingKnown = true
+			data.CaddyLoggingEnabled = settings.AccessLog
+		}
+	}
+	if r.URL.Query().Get("web_repaired") == "1" && message == "" {
+		data.Message = "CrowdSec Caddy sources normalized; rsyslog HTTP duplicate filter applied where available."
 	}
 	if data.AlertSince != "7d" && data.AlertSince != "30d" {
 		data.AlertSince = "24h"
@@ -278,15 +301,34 @@ func securityPage(data securityPageData) string {
 	setupState := "Needs setup"
 	setupClass := "warn"
 	setupText := "Install or start CrowdSec, then enable web protection and the recommended firewall."
-	if data.Status.EngineActive && data.Status.BouncerActive && data.Status.WebProtection && data.Status.FirewallActive {
+	if data.Status.EngineActive && data.Status.BouncerActive && data.Status.WebProtection && data.Status.FirewallActive && !data.Status.WebSources.NeedsRepair {
 		setupState = "Protected"
 		setupClass = "ok"
 		setupText = "Recommended protection is enabled: detection, dynamic blocking, Caddy log analysis and deny-by-default firewall."
 	}
 
+	webSources := data.Status.WebSources
 	webAction := `<div class="component-actions"><form method="post" action="/security/web/enable"><button class="secondary">Enable</button></form></div>`
 	if data.Status.WebProtection {
-		webAction = `<div class="component-actions"><form method="post" action="/security/web/disable" onsubmit="return confirm('Disable CrowdSec analysis of Caddy logs?')"><button class="secondary">Disable</button></form></div>`
+		if webSources.ExternallyManaged() {
+			webAction = `<p class="note">Acquisition managed by CrowdSec. Open Go Panel will not remove external configuration.</p>`
+		} else {
+			webAction = `<div class="component-actions"><form method="post" action="/security/web/disable" onsubmit="return confirm('Disable panel-managed Caddy acquisition?')"><button class="secondary">Disable</button></form></div>`
+		}
+	}
+	if data.Status.Installed && webSources.NeedsRepair {
+		webAction += `<form method="post" action="/security/web/repair" onsubmit="return confirm('Normalize Caddy CrowdSec sources and reload rsyslog/CrowdSec? No firewall rules will be changed.');"><button class="secondary">Repair duplicate logs</button></form>`
+	}
+	webNotice := ""
+	if webSources.Error != "" {
+		webNotice = `<div class="alert">Cannot inspect CrowdSec acquisitions: ` + html.EscapeString(webSources.Error) + `</div>`
+	} else if webSources.NeedsRepair {
+		webNotice = `<div class="alert">Caddy HTTP events may be acquired more than once: competing CrowdSec journald sources or syslog ingestion. Use Repair duplicate logs; it keeps SSH, firewall and Caddy journals intact.</div>`
+	} else if webSources.HasCaddy() {
+		webNotice = `<p class="note">Caddy acquisition configured. This is a configuration check, not proof of live parsing or firewall enforcement.</p>`
+	}
+	if data.CaddyLoggingKnown && !data.CaddyLoggingEnabled {
+		webNotice += `<div class="alert">Managed Caddy access logging is disabled in Log retention. Custom site templates may still log HTTP traffic; CrowdSec cannot analyze requests that are not recorded.</div>`
 	}
 	firewallAction := `<div class="component-actions"><form method="post" action="/security/firewall/enable"><button class="secondary">Enable recommended</button></form></div>`
 	if data.Status.FirewallActive {
@@ -352,7 +394,7 @@ func securityPage(data securityPageData) string {
 		<div class="page-head">
 			<div><p class="eyebrow">Ubuntu security</p><h1>Security</h1><p class="sub">CrowdSec handles detection and dynamic bans. UFW controls the static inbound perimeter.</p></div>
 		</div>
-		` + alert + install + `
+		` + alert + install + webNotice + `
 
 		<section class="panel panel-pad" style="margin-bottom:16px">
 			<div class="section-title">
