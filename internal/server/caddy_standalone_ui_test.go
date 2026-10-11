@@ -41,3 +41,33 @@ func TestCaddyPageAppDomainKeepsExistingControls(t *testing.T) {
 		t.Error("app domain unexpectedly exposes standalone deletion")
 	}
 }
+
+func TestCaddyCanonicalAndMirrorUI(t *testing.T) {
+	site := panelcaddy.Site{
+		AppID: 3, Domain: "www.example.com", Kind: "proxy", Port: 8080,
+		WWWRedirect: true, Aliases: []string{"longer-example-domain.com", "mirror.example.org"},
+	}
+	page := caddyPage("active", []panelcaddy.Site{site}, "", "", panelcaddy.GlobalSettings{HTTPS: true}, 3, "")
+	for _, required := range []string{
+		`action="/caddy/site/3/aliases"`,
+		`name="www_redirect" value="1" checked`,
+		`name="mirrors"`,
+		`longer-example-domain.com`,
+		`mirror.example.org`,
+		`Primary domain &amp; mirrors`,
+		`Change primary domain`,
+		`3 redirect alias(es)`,
+	} {
+		if !strings.Contains(page, required) {
+			t.Errorf("canonical domain UI missing %q", required)
+		}
+	}
+}
+
+func TestCaddyParkedDomainHasNoAliasForm(t *testing.T) {
+	site := panelcaddy.Site{AppID: -1, Domain: "parked.example.com", Kind: "parked"}
+	page := caddyPage("active", []panelcaddy.Site{site}, "", "", panelcaddy.GlobalSettings{HTTPS: true}, -1, "")
+	if strings.Contains(page, `action="/caddy/site/-1/aliases"`) {
+		t.Fatal("parked domain must not have mirror redirect controls")
+	}
+}
