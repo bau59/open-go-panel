@@ -129,6 +129,7 @@ func registerSecurityRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		http.Redirect(w, r, "/security", http.StatusSeeOther)
 	})))
+	registerSecurityDetailRoutes(mux, store, cfg)
 }
 
 func writeSecurityPage(w http.ResponseWriter, r *http.Request, cfg Config, statusCode int, message string) {
@@ -297,12 +298,16 @@ func securityPage(data securityPageData) string {
 		if item.Value == "" {
 			continue
 		}
+		ipCell := "<code>" + html.EscapeString(item.Value) + "</code>"
+		if net.ParseIP(item.Value) != nil {
+			ipCell = "<a href=\"/security/ip?ip=" + url.QueryEscape(item.Value) + "\">" + ipCell + "</a>"
+		}
 		fmt.Fprintf(&decisions, `
 			<tr>
-				<td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>
+				<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>
 				<td><form method="post" action="/security/unban"><input type="hidden" name="ip" value="%s"><button class="secondary">Unban</button></form></td>
 			</tr>`,
-			html.EscapeString(item.Value), html.EscapeString(item.Reason), html.EscapeString(item.Country),
+			ipCell, html.EscapeString(item.Reason), html.EscapeString(item.Country),
 			html.EscapeString(item.AS), html.EscapeString(item.Expiration), html.EscapeString(item.Value),
 		)
 	}
@@ -312,10 +317,14 @@ func securityPage(data securityPageData) string {
 
 	var allowRows strings.Builder
 	for _, item := range data.Allowlist.Entries {
+		expiration := item.Expiration
+		if strings.HasPrefix(expiration, "0001-01-01") || expiration == "" {
+			expiration = "Permanent"
+		}
 		fmt.Fprintf(&allowRows, `
 			<tr><td><code>%s</code></td><td>%s</td><td>%s</td>
 			<td><form method="post" action="/security/untrust"><input type="hidden" name="value" value="%s"><button class="secondary">Remove</button></form></td></tr>`,
-			html.EscapeString(item.Value), html.EscapeString(item.Comment), html.EscapeString(item.Expiration), html.EscapeString(item.Value),
+			html.EscapeString(item.Value), html.EscapeString(item.Comment), html.EscapeString(expiration), html.EscapeString(item.Value),
 		)
 	}
 	if allowRows.Len() == 0 {
@@ -324,9 +333,13 @@ func securityPage(data securityPageData) string {
 
 	var alertRows strings.Builder
 	for _, item := range data.Alerts {
+		ipCell := "<code>" + html.EscapeString(item.Value) + "</code>"
+		if net.ParseIP(item.Value) != nil {
+			ipCell = "<a href=\"/security/ip?ip=" + url.QueryEscape(item.Value) + "\">" + ipCell + "</a>"
+		}
 		fmt.Fprintf(&alertRows, `
-			<tr><td>%s</td><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			html.EscapeString(item.ID), html.EscapeString(item.Value), html.EscapeString(item.Reason),
+			<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			html.EscapeString(item.ID), ipCell, html.EscapeString(item.Reason),
 			html.EscapeString(item.Country), html.EscapeString(item.Decisions), html.EscapeString(item.CreatedAt),
 		)
 	}
@@ -353,6 +366,10 @@ func securityPage(data securityPageData) string {
 				<div class="metric security-component"><div class="security-component-head"><span>Perimeter</span>` + stateText(data.Status.FirewallActive) + `</div><strong>UFW</strong><p class="note">Static inbound firewall policy.</p>` + firewallAction + `</div>
 			</div>
 			<p class="sub" style="margin:16px 0 0">` + setupText + `</p>
+		</section>
+
+		<section class="panel panel-pad" style="margin-bottom:16px">
+			<div class="section-title"><div><h2>CrowdSec decision profiles</h2><p class="note" style="margin:6px 0 0">Review or edit ban durations, matching filters and remediation actions. Changes are validated before being applied.</p></div><a href="/security/profiles" class="secondary">Manage profiles</a></div>
 		</section>
 
 		<details class="panel panel-pad advanced-block" style="margin-bottom:16px">
