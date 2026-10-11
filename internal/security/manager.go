@@ -71,6 +71,7 @@ type Manager struct {
 	mu           sync.Mutex
 	installing   bool
 	installError string
+	profilesDir string
 }
 
 func New() *Manager { return &Manager{} }
