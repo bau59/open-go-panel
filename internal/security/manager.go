@@ -364,35 +364,82 @@ func (m *Manager) DecisionsData(ctx context.Context) ([]Decision, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseDecisionRecords(raw), nil
+}
+
+// cscli decisions list --output json returns alerts containing decisions[].
+// Older/alternate CLI responses may contain flat decision objects; support
+// both so an active ban is never silently hidden by the Security page.
+func parseDecisionRecords(raw any) []Decision {
 	var list []any
 	switch v := raw.(type) {
 	case []any:
 		list = v
 	case map[string]any:
-		if items, ok := firstArray(v, "decisions", "items"); ok {
+		if items, ok := firstArray(v, "decisions", "items", "alerts"); ok {
 			list = items
 		}
 	}
-	var out []Decision
-	for _, item := range list {
-		m, ok := item.(map[string]any)
+
+	out := make([]Decision, 0)
+	for _, record := range list {
+		item, ok := record.(map[string]any)
 		if !ok {
 			continue
 		}
-		out = append(out, Decision{
-			ID:         valueString(m, "id"),
-			Source:     valueString(m, "origin", "source"),
-			Scope:      valueString(m, "scope"),
-			Value:      valueString(m, "value"),
-			Reason:     valueString(m, "scenario", "reason"),
-			Action:     valueString(m, "type", "action"),
-			Country:    valueString(m, "country"),
-			AS:         valueString(m, "as", "as_name", "asname"),
-			Expiration: firstNonEmpty(valueString(m, "duration"), valueString(m, "expiration"), valueString(m, "until")),
-			AlertID:    valueString(m, "alert_id", "alertid"),
-		})
+
+		if nested, ok := firstArray(item, "decisions"); ok {
+			source, _ := mapValue(item, "source")
+			for _, rawDecision := range nested {
+				decision, ok := rawDecision.(map[string]any)
+				if !ok {
+					continue
+				}
+				if row, valid := decodeDecision(decision, item, source); valid {
+					out = append(out, row)
+				}
+			}
+			continue
+		}
+		if row, valid := decodeDecision(item, nil, nil); valid {
+			out = append(out, row)
+		}
 	}
-	return out, nil
+	return out
+}
+
+func decodeDecision(item, alert, source map[string]any) (Decision, bool) {
+	value := valueString(item, "value")
+	if value == "" {
+		return Decision{}, false
+	}
+
+	reason := valueString(item, "scenario", "reason")
+	country := valueString(item, "country", "cn")
+	asName := valueString(item, "as", "as_name", "asname")
+	alertID := valueString(item, "alert_id", "alertid")
+	if alert != nil {
+		reason = firstNonEmpty(reason, valueString(alert, "scenario", "reason"))
+		alertID = firstNonEmpty(alertID, valueString(alert, "id"))
+		country = firstNonEmpty(country, valueString(alert, "country", "cn"))
+		asName = firstNonEmpty(asName, valueString(alert, "as", "as_name", "asname"))
+	}
+	if source != nil {
+		country = firstNonEmpty(country, valueString(source, "country", "cn"))
+		asName = firstNonEmpty(asName, valueString(source, "as_name", "asname", "as"))
+	}
+	return Decision{
+		ID:         valueString(item, "id"),
+		Source:     valueString(item, "origin"),
+		Scope:      valueString(item, "scope"),
+		Value:      value,
+		Reason:     reason,
+		Action:     valueString(item, "type", "action"),
+		Country:    country,
+		AS:         asName,
+		Expiration: firstNonEmpty(valueString(item, "duration"), valueString(item, "expiration"), valueString(item, "until")),
+		AlertID:    alertID,
+	}, true
 }
 
 func (m *Manager) AlertsData(ctx context.Context) ([]Alert, error) {
@@ -432,7 +479,7 @@ func (m *Manager) AlertsDataSince(ctx context.Context, since string) ([]Alert, e
 		if source != nil {
 			if value == "" { value = valueString(source, "value") }
 			if scope == "" { scope = valueString(source, "scope") }
-			if country == "" { country = valueString(source, "country") }
+			if country == "" { country = valueString(source, "country", "cn") }
 			if asName == "" { asName = firstNonEmpty(valueString(source, "as_name", "asname"), valueString(source, "as_number")) }
 		}
 		decisionText := ""
