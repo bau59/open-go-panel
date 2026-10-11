@@ -338,7 +338,7 @@ func securityPage(data securityPageData) string {
 			ipCell = "<a href=\"/security/ip?ip=" + url.QueryEscape(item.Value) + "\">" + ipCell + "</a>"
 		}
 		fmt.Fprintf(&alertRows, `
-			<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 			html.EscapeString(item.ID), ipCell, html.EscapeString(item.Reason),
 			html.EscapeString(item.Country), html.EscapeString(item.Decisions), html.EscapeString(item.CreatedAt),
 		)
