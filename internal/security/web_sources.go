@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -261,6 +262,10 @@ func repairCaddyAcquisition(ctx context.Context, paths webPaths) error {
 
 	var modifiedPanel, modifiedSyslog bool
 	restore := func(cause error) error {
+		// Rollback must still run if the originating request was cancelled, but
+		// service restarts are bounded to avoid hanging a privileged HTTP handler.
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
 		var rollback []string
 		if modifiedPanel {
 			if err := restoreOriginal(panel, panelOld); err != nil {
@@ -271,14 +276,14 @@ func repairCaddyAcquisition(ctx context.Context, paths webPaths) error {
 			if err := restoreOriginal(syslog, syslogOld); err != nil {
 				rollback = append(rollback, "rsyslog config: "+err.Error())
 			}
-			if serviceActive(context.Background(), "rsyslog.service") {
-				if err := run(context.Background(), "systemctl", "restart", "rsyslog.service"); err != nil {
+			if serviceActive(rollbackCtx, "rsyslog.service") {
+				if err := run(rollbackCtx, "systemctl", "restart", "rsyslog.service"); err != nil {
 					rollback = append(rollback, "rsyslog restart: "+err.Error())
 				}
 			}
 		}
-		if modifiedPanel && serviceActive(context.Background(), "crowdsec.service") {
-			if err := run(context.Background(), "systemctl", "restart", "crowdsec.service"); err != nil {
+		if modifiedPanel && serviceActive(rollbackCtx, "crowdsec.service") {
+			if err := run(rollbackCtx, "systemctl", "restart", "crowdsec.service"); err != nil {
 				rollback = append(rollback, "CrowdSec restart: "+err.Error())
 			}
 		}
