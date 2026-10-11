@@ -190,3 +190,37 @@ func TestRepairWebSourcesPreservesCustomFilesAndNoExternalFallback(t *testing.T)
 		t.Fatal("panel acquisition changed despite failed preflight")
 	}
 }
+
+func TestRepairWebSourcesRollsBackAfterCrowdSecValidationFails(t *testing.T) {
+	fakeWebExecutables(t)
+	p := testWebPaths(t)
+	putTestConfig(t, filepath.Join(p.acquisDir, "setup.caddy.yaml"), autoCaddy)
+	putTestConfig(t, filepath.Join(p.acquisDir, "setup.linux.yaml"), autoLinux)
+	putTestConfig(t, p.panelSource(), panelCaddyAcquisition)
+	t.Setenv("FAIL_CROWDSEC_VALIDATE", "1")
+	if err := repairCaddyAcquisition(context.Background(), p); err == nil {
+		t.Fatal("expected CrowdSec validation to fail")
+	}
+	if readTestConfig(t, p.panelSource()) != panelCaddyAcquisition {
+		t.Fatal("original panel source not restored")
+	}
+	if _, err := os.Stat(p.syslogFilter()); !os.IsNotExist(err) {
+		t.Fatal("rsyslog filter not removed after failed CrowdSec validation")
+	}
+	log := readTestConfig(t, os.Getenv("WEB_COMMAND_LOG"))
+	if !strings.Contains(log, "systemctl restart rsyslog.service") {
+		t.Fatal("rsyslog not restarted after rollback")
+	}
+}
+
+func TestInspectWebSourcesRejectsUnsafeSymlinks(t *testing.T) {
+	p := testWebPaths(t)
+	target := filepath.Join(t.TempDir(), "outside.yaml")
+	putTestConfig(t, target, autoCaddy)
+	if err := os.Symlink(target, filepath.Join(p.acquisDir, "setup.caddy.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectWebSources(p); err == nil {
+		t.Fatal("symlink in acquisition directory unexpectedly trusted")
+	}
+}
