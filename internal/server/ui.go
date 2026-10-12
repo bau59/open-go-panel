@@ -459,6 +459,7 @@ const baseStyles = `
 
 	@media(max-width:1250px){
 		.db-managed-table,.db-managed-table tbody,.db-managed-table tr,.db-managed-table td{display:block;width:100%}
+		.db-managed-table{overflow:visible}
 		.db-managed-table thead{display:none}
 		.db-managed-table tr{padding:15px 16px;border-bottom:1px solid var(--border)}
 		.db-managed-table tr:last-child{border-bottom:0}
