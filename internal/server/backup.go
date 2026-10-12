@@ -49,7 +49,11 @@ func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
    for _,a:=range apps {b,e:=cfg.Databases.AttachmentsForApp(a.ID);if e!=nil {http.Error(w,e.Error(),500);return};bindings[a.ID]=b}
    manifest["database_bindings"]=bindings
   }
-  // Domain/proxy settings and other panel state are saved in the panel's persistent files.
+  if cfg.Caddy!=nil {
+   sites,e:=cfg.Caddy.Sites();if e!=nil {http.Error(w,e.Error(),500);return};manifest["caddy_sites"]=sites
+   settings,e:=cfg.Caddy.GlobalSettings();if e!=nil {http.Error(w,e.Error(),500);return};manifest["caddy_global_settings"]=settings
+   config,e:=cfg.Caddy.Config();if e!=nil {http.Error(w,e.Error(),500);return};manifest["caddy_config"]=config
+  }
   w.Header().Set("Content-Type","application/json")
   w.Header().Set("Content-Disposition", "attachment; filename=\"panel-config.json\"")
   _=json.NewEncoder(w).Encode(manifest)
@@ -179,7 +183,9 @@ func writeTarTree(ctx context.Context,tw *tar.Writer,root,prefix string)error{
   if info.IsDir(){hdr.Name+="/"}
   if err:=tw.WriteHeader(hdr);err!=nil{return err}
   if !info.Mode().IsRegular(){return nil}
-  f,err:=os.Open(path);if err!=nil{return err};defer f.Close()
-  _,err=io.Copy(tw,f);return err
+  f,err:=os.Open(path);if err!=nil{return err}
+  _,err=io.Copy(tw,f)
+  closeErr:=f.Close()
+  if err!=nil{return err};return closeErr
  })
 }
