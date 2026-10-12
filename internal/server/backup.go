@@ -28,13 +28,53 @@ func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
   var rows strings.Builder
   for _, u := range users {
    name := html.EscapeString(u.Username)
-   fmt.Fprintf(&rows, "<tr><td><strong>%s</strong></td><td><code>%s</code></td><td><a class=\"secondary\" href=\"/backup/users/%s/config\">Config JSON</a> <a class=\"button\" href=\"/backup/users/%s/archive\">Download archive</a></td></tr>",name,html.EscapeString(u.Home),name,name)
+   fmt.Fprintf(&rows, `<tr>
+    <td><strong>%s</strong></td>
+    <td><code>%s</code></td>
+    <td><div class="backup-actions">
+     <a class="secondary" href="/backup/users/%s/config">Config JSON</a>
+     <a class="button" href="/backup/users/%s/archive">Download archive</a>
+    </div></td>
+   </tr>`, name, html.EscapeString(u.Home), name, name)
   }
-  body := "<section class=\"page-head\"><div><h1>Backup &amp; export</h1><p class=\"muted\">On-demand downloads. No scheduled jobs or server-side archives.</p></div></section>" +
-   "<div class=\"grid cards\" style=\"margin-bottom:20px\"><div class=\"panel\"><h2>Panel configuration</h2><p class=\"muted\">Managed users, apps, database bindings and domain configuration.</p><a class=\"button\" href=\"/backup/panel.json\">Download JSON</a></div>" +
-   "<div class=\"panel\"><h2>Installed software</h2><p class=\"muted\">Ubuntu APT package installation commands.</p><a class=\"button\" href=\"/backup/software.sh\">Download shell script</a></div>" +
-   "<div class=\"panel\"><h2>Docker configurations</h2><p class=\"muted\">Container inspect metadata and image references (not volumes).</p><a class=\"button\" href=\"/backup/docker.json\">Download JSON</a></div></div>" +
-   "<section class=\"panel\"><h2>User backups</h2><p class=\"muted\">One tar.gz per user: home directory, app settings and attached database dumps. Downloads can include credentials.</p><div class=\"table-scroll\"><table><thead><tr><th>User</th><th>Home</th><th>Export</th></tr></thead><tbody>"+rows.String()+"</tbody></table></div></section>"
+  if len(users) == 0 {
+   rows.WriteString(`<tr><td colspan="3" class="backup-empty">No managed users found.</td></tr>`)
+  }
+  body := `<style>
+   .backup-page{display:grid;gap:20px;padding-bottom:28px}
+   .backup-page .page-head{margin-bottom:0}
+   .backup-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+   .backup-tile{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:22px;min-width:0}
+   .backup-tile h2{font-size:16px;line-height:1.3}
+   .backup-tile .sub{margin:7px 0 0}
+   .backup-tile .backup-action{margin-top:auto}
+   .backup-page a.button,.backup-page a.secondary{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;white-space:nowrap}
+   .backup-users{overflow:hidden}
+   .backup-users-head{padding:22px 22px 18px}
+   .backup-users-head h2{font-size:18px}
+   .backup-users-head .sub{margin-top:7px}
+   .backup-users td:first-child{font-weight:700}
+   .backup-users td:nth-child(2){color:var(--muted-2)}
+   .backup-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+   .backup-users .table-scroll{width:100%}
+   .backup-users table{min-width:580px}
+   .backup-users td:last-child{width:340px}
+   .backup-empty{color:var(--muted-2);text-align:center;padding:28px}
+   @media(max-width:1050px){.backup-overview{grid-template-columns:repeat(2,minmax(0,1fr))}}
+   @media(max-width:680px){.backup-overview{grid-template-columns:1fr}.backup-tile{padding:18px}.backup-users-head{padding:18px}.backup-actions{gap:6px}}
+  </style>
+  <div class="backup-page">
+   <section class="page-head"><div><h1>Backup &amp; export</h1><p class="sub">Export configuration, installed software and user data on demand.</p></div></section>
+   <section class="backup-overview" aria-label="Server exports">
+    <article class="panel backup-tile"><div><h2>Panel configuration</h2><p class="sub">Users, applications, database bindings and domain settings.</p></div><a class="secondary backup-action" href="/backup/panel.json">Download JSON</a></article>
+    <article class="panel backup-tile"><div><h2>Installed software</h2><p class="sub">APT package installation script for Ubuntu.</p></div><a class="secondary backup-action" href="/backup/software.sh">Download script</a></article>
+    <article class="panel backup-tile"><div><h2>Docker configurations</h2><p class="sub">Container inspect data and image references. Volumes are not included.</p></div><a class="secondary backup-action" href="/backup/docker.json">Download JSON</a></article>
+   </section>
+   <section class="panel backup-users">
+    <div class="backup-users-head"><h2>User backups</h2><p class="sub">Each archive contains the user's home directory, app configuration and attached database dumps. Exports may contain credentials.</p></div>
+    <div class="table-scroll"><table><thead><tr><th>User</th><th>Home directory</th><th>Download</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
+   </section>
+  </div>`
   writeHTML(w,cfg.Logger,200,pageHead("Backup & export")+"<body>"+appHeader("backup")+"<main class=\"shell\">"+body+"</main></body></html>")
  })))
 
