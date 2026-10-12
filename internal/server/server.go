@@ -202,6 +202,9 @@ func New(cfg Config) http.Handler {
 	if cfg.Users != nil {
 		registerUserRoutes(mux, store, cfg)
 	}
+	if cfg.Users != nil && cfg.Apps != nil {
+		registerBackupRoutes(mux, store, cfg)
+	}
 	if cfg.Apps != nil && cfg.Users != nil {
 		registerAppRoutes(mux, store, cfg)
 		registerTerminalRoutes(mux, store, cfg)
