@@ -439,12 +439,12 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			` + caddyAliasEditor(site) + `
 			<p class="sub" style="margin:14px 0 0">` + modeText + ` Common settings such as HTTPS, compression and access logging belong to the global Caddy configuration.</p>
 			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" && !panelcaddy.IsManagedProxyStatic(override) { return " open" }; return "" }() + `>
-				<summary class="secondary">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Generated Caddy config / custom editor" }; return "Advanced: custom config for this domain" }() + `</summary>
-				` + func() string { if !panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<pre class="security-output" style="margin-top:12px;white-space:pre-wrap">` + html.EscapeString(editorValue) + `</pre>` }() + `
+				<summary class="secondary">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Domain configuration" }; return "Advanced: custom config for this domain" }() + `</summary>
+				
 				` + func() string { return `
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/template" style="margin-top:14px">
-					` + func() string { if !panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<label style="display:flex;align-items:center;gap:8px;margin:10px 0"><input type="checkbox" name="confirm_replace_managed" value="yes" required> Replace managed static with custom configuration (existing managed routes will be replaced)</label>` }() + `
-					<textarea class="codearea" name="template" spellcheck="false" style="min-height:240px">` + html.EscapeString(editorValue) + `</textarea>
+					` + func() string { if !panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<div class="note" style="padding:12px;margin:10px 0;border:1px solid #355275;border-radius:10px"><label style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="confirm_replace_managed" value="yes" required style="appearance:auto;width:16px;height:16px;min-width:16px;max-width:16px;flex:0 0 16px;padding:0;margin:0"> <span>Replace managed static rules with custom configuration</span></label></div>` }() + `
+					<label>Custom Caddyfile</label><textarea class="codearea" name="template" spellcheck="false" style="min-height:240px">` + html.EscapeString(editorValue) + `</textarea>
 					<p class="note" style="margin:8px 0 0">Required placeholders: ` + placeholderNote + `. Empty the field and save to return to global defaults.</p>
 					<div class="actions" style="justify-content:flex-start;margin-top:12px">
 						<button class="button">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Save as custom config" }; return buttonText }() + `</button>
