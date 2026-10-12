@@ -1469,7 +1469,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 			<div class="attachment-row">
 				<div class="section-title" style="margin:0">
 					<div>
-						<strong>%s</strong>
+						<a href="/databases"><strong>%s</strong></a>
 						<div class="note" style="margin-top:4px"><code>%s</code> · %s</div>
 					</div>
 					<form method="post" action="/apps/%d/database/detach">
