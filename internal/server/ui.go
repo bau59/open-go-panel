@@ -438,6 +438,35 @@ const baseStyles = `
 	.inline-popover{position:absolute;right:0;z-index:20;width:300px;margin-top:8px;padding:14px;border:1px solid var(--border-strong);border-radius:13px;background:#0e141e;box-shadow:0 22px 65px rgba(0,0,0,.45)}
 	.inline-popover.wide{width:460px}
 	.inline-popover .button{margin-top:9px}
+	/* Database page: consistent action sizing and predictable popover placement. */
+	.db-table-scroll{width:100%;overflow-x:auto;overflow-y:visible}
+	.db-managed-table{min-width:1000px;table-layout:auto}
+	.db-managed-table th:last-child{min-width:310px;text-align:right}
+	.db-managed-table td:last-child{min-width:310px}
+	.db-managed-table td{vertical-align:middle}
+	.db-managed-table .db-cell-text{display:inline-block;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+	.db-row-actions{gap:7px;justify-content:flex-end}
+	.db-row-actions>a,.db-row-actions>form>button,.db-row-actions>details>summary{min-height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;white-space:nowrap;font-size:12px}
+	.db-row-actions>details{position:relative}
+	.db-row-actions .inline-popover{box-sizing:border-box;max-width:min(460px,calc(100vw - 36px));white-space:normal;text-align:left}
+	.db-row-actions .inline-popover code{overflow-wrap:anywhere}
+	.db-backup-file{flex:1;min-width:0;overflow-wrap:anywhere}
+	.db-backup-file strong{font-size:12px}
+	.db-backup-actions{flex-shrink:0;justify-content:flex-end}
+	.db-backup-actions>a,.db-backup-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 10px;font-size:12px;white-space:nowrap}
+	.db-row-actions .backup-row{align-items:flex-start}
+	.db-row-actions .backup-row+.backup-row{margin-top:2px}
+	@media(max-width:1100px){
+		.db-managed-table{min-width:940px}
+		.db-row-actions{justify-content:flex-start}
+		.db-managed-table th:last-child{text-align:left}
+	}
+	@media(max-width:600px){
+		.db-backup-actions{flex-wrap:wrap;justify-content:flex-start}
+		.db-row-actions .backup-row{flex-direction:column;align-items:stretch}
+		.db-row-actions .inline-popover{max-width:min(370px,calc(100vw - 32px))}
+	}
+
 	.software-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 	.software-card{display:flex;min-height:255px;flex-direction:column}
 	.software-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
