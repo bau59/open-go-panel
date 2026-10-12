@@ -451,8 +451,8 @@ func databasesPage(data databasePageData) string {
 		for _, backup := range data.Backups[item.ID] {
 			fmt.Fprintf(&backupRows, `
 				<div class="backup-row">
-					<div><strong>%s</strong><div class="note">%s</div></div>
-					<div class="actions">
+					<div class="db-backup-file"><strong>%s</strong><div class="note">%s</div></div>
+					<div class="actions db-backup-actions">
 						<a class="secondary" href="/databases/%d/backup/download?path=%s">Download</a>
 						<form method="post" action="/databases/%d/restore" onsubmit="return confirm('Restore this backup over the current database?')">
 							<input type="hidden" name="path" value="%s">
@@ -482,22 +482,22 @@ func databasesPage(data databasePageData) string {
 		<tr>
 			<td><strong>%s</strong><div class="muted">#%d · %s</div></td>
 			<td><span class="meta-chip">%s</span></td>
-			<td><code>%s</code></td>
-			<td><code>%s</code></td>
+			<td><code class="db-cell-text">%s</code></td>
+			<td><code class="db-cell-text">%s</code></td>
 			<td>
-				<div class="actions">
+				<div class="actions db-row-actions">
 					%s
 					<a class="secondary" href="/databases/%d/slow-queries">Slow queries</a>
 					<form method="post" action="/databases/%d/backup"><button class="secondary">Backup now</button></form>
-					<details>
+					<details class="db-action-menu">
 						<summary class="secondary">Backups</summary>
 						<div class="inline-popover wide">%s</div>
 					</details>
-					<details>
+					<details class="db-action-menu">
 						<summary class="secondary">Connection</summary>
 						<div class="inline-popover wide"><code style="word-break:break-all">%s</code></div>
 					</details>
-					<details>
+					<details class="db-action-menu">
 						<summary class="secondary">Import remote</summary>
 						<div class="inline-popover wide">
 							<form method="post" action="/databases/%d/import" onsubmit="return confirm('Replace the local database with a snapshot from the remote database? A safety backup will be created first.')">
@@ -609,10 +609,12 @@ func databasesPage(data databasePageData) string {
 				<input name="user" placeholder="User (optional)">
 				<button class="button">Create database</button>
 			</form>
-			<table>
-				<thead><tr><th>Database</th><th>Engine</th><th>User</th><th>Password</th><th></th></tr></thead>
+			<div class="db-table-scroll">
+			<table class="db-managed-table">
+				<thead><tr><th>Database</th><th>Engine</th><th>User</th><th>Password</th><th>Actions</th></tr></thead>
 				<tbody>` + rows.String() + `</tbody>
 			</table>
+			</div>
 		</section>
 
 		<section class="panel panel-pad" style="margin-bottom:16px">
