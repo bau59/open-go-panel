@@ -410,7 +410,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<select name="cache_seconds" style="max-width:300px">
 						` + func() string { var b strings.Builder; for _, x := range []struct{n int; label string}{{0,"Revalidate every time"},{3600,"1 hour (recommended)"},{86400,"24 hours"}} { selected := ""; if panelcaddy.ManagedProxyStaticCache(override) == x.n { selected=" selected" }; fmt.Fprintf(&b, `<option value="%d"%s>%s</option>`,x.n,selected,html.EscapeString(x.label)) }; return b.String() }() + `
 					</select>
-					` + func() string { if override == "" || panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<label><input type="checkbox" name="replace_override" value="yes" required> Replace existing custom Caddy config</label>` }() + `
+					` + func() string { if override == "" || panelcaddy.IsManagedProxyStatic(override) { return "" }; return `<div class="note" style="margin:14px 0;padding:12px;border:1px solid #355275;border-radius:10px"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" name="replace_override" value="yes" required style="appearance:auto;width:16px;height:16px;min-width:16px;max-width:16px;flex:0 0 16px;padding:0;margin:0"><span>Replace existing custom Caddy config with panel-managed static routes</span></label></div>` }() + `
 					<p class="note">Root: application public/ directory. Cache-Control: one hour. Validate and reload automatically. Changes are validated and Caddy is reloaded.</p>
 					<button class="button">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Save static routes" }; return "Enable static serving" }() + `</button>
 				</form>
