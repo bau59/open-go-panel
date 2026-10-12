@@ -438,8 +438,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</div>
 			` + caddyAliasEditor(site) + `
 			<p class="sub" style="margin:14px 0 0">` + modeText + ` Common settings such as HTTPS, compression and access logging belong to the global Caddy configuration.</p>
-			<details class="advanced-block" style="margin-top:16px"` + func() string { if override != "" && !panelcaddy.IsManagedProxyStatic(override) { return " open" }; return "" }() + `>
-				<summary class="secondary">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Domain configuration" }; return "Advanced: custom config for this domain" }() + `</summary>
+			<div data-caddy-editor style="margin-top:20px"><div class="section-title"><div><strong>Domain configuration</strong><p class="note">Choose a view; changes apply only after saving.</p></div></div><div class="actions" style="justify-content:flex-start;margin:12px 0"><button type="button" class="secondary" data-caddy-tab="managed">Managed static</button><button type="button" class="secondary" data-caddy-tab="custom">Custom Caddyfile</button></div><div data-caddy-view="managed"><p class="note">Static routes are controlled by the Static files from public/ settings above.</p><details class="advanced-block"><summary class="secondary">View generated configuration</summary><pre class="security-output" style="white-space:pre-wrap;margin-top:10px">` + html.EscapeString(editorValue) + `</pre></details></div><div data-caddy-view="custom" hidden>
 				
 				` + func() string { return `
 				<form method="post" action="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/template" style="margin-top:14px">
@@ -449,8 +448,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<div class="actions" style="justify-content:flex-start;margin-top:12px">
 						<button class="button">` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Save as custom config" }; return buttonText }() + `</button>
 					</div>
-				</form>` }() + `
-			</details>
+				</form>` }() + `</div><script>(function(){var root=document.currentScript.closest("[data-caddy-editor]");if(!root)return;var managed=root.querySelector("[data-caddy-view=managed]"),custom=root.querySelector("[data-caddy-view=custom]");function show(mode){managed.hidden=mode!=="managed";custom.hidden=mode!=="custom";root.querySelectorAll("[data-caddy-tab]").forEach(function(b){var on=b.getAttribute("data-caddy-tab")===mode;b.setAttribute("aria-pressed",String(on));b.classList.toggle("button",on);b.classList.toggle("secondary",!on);});}root.querySelectorAll("[data-caddy-tab]").forEach(function(b){b.addEventListener("click",function(){show(b.getAttribute("data-caddy-tab"));});});show(` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return `"managed"` }; return `"custom"` }() + `);})();</script></div>
 		</section>`
 			break
 		}
