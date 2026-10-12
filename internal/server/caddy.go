@@ -14,6 +14,23 @@ import (
 
 func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	registerCaddyDiagnostics(mux, store, cfg)
+	mux.Handle("GET /caddy/site/{id}/analytics", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id == 0 { http.Error(w, "invalid domain id", http.StatusBadRequest); return }
+		sites, err := cfg.Caddy.Sites()
+		if err != nil { http.Error(w, "domain list unavailable", http.StatusInternalServerError); return }
+		var site panelcaddy.Site
+		found := false
+		for _, entry := range sites { if entry.AppID == id { site=entry;found=true;break } }
+		if !found { http.NotFound(w,r);return }
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		if days!=1 && days!=7 && days!=30 {days=7}
+		report, err := cfg.Caddy.Traffic(r.Context(),site.Domain,days)
+		message := ""
+		if err!=nil {message=err.Error()}
+		writeHTML(w,cfg.Logger,http.StatusOK,caddyTrafficPage(site,report,days,message))
+	})))
+
 	mux.Handle("GET /caddy", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sites, _ := cfg.Caddy.Sites()
 		config, _ := cfg.Caddy.Config()
@@ -307,7 +324,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<td>%s</td>
 				<td><code>%s</code></td>
 				<td><span class="meta-chip">%s</span></td>
-				<td><div class="actions table-actions"><a class="secondary" href="/caddy?app=%d">Settings</a></div></td>
+				<td><div class="actions table-actions"><a class="secondary" href="/caddy?app=%d">Settings</a><a class="secondary" href="/caddy/site/%d/analytics">Analytics</a></div></td>
 			</tr>`,
 			site.AppID,
 			html.EscapeString(site.Domain),
@@ -317,9 +334,10 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				if n == 0 { return "" }
 				return fmt.Sprintf(`<small class="muted" style="display:block;margin-top:4px">%d redirect alias(es)</small>`, n)
 			}(),
-			func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }(),
+			func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf(`<a href="/apps/%d">#%d</a>`, site.AppID,site.AppID) }(),
 			html.EscapeString(site.Target()),
 			html.EscapeString(mode),
+			site.AppID,
 			site.AppID,
 		)
 	}
@@ -362,7 +380,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 					<p class="eyebrow" style="margin-bottom:6px">Domain</p>
 					<h2 style="font-size:20px">` + html.EscapeString(site.Domain) + `</h2>
 				</div>
-				<div class="actions"><a class="secondary" href="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/diagnostics">DNS / TLS</a><a class="secondary" href="/caddy">Close</a></div>
+				<div class="actions"><a class="secondary" href="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/diagnostics">DNS / TLS</a><a class="secondary" href="/caddy/site/` + fmt.Sprintf("%d", site.AppID) + `/analytics">Analytics</a><a class="secondary" href="/caddy">Close</a></div>
 			</div>
 			<div class="domain-summary">
 				<div><span>Application</span><strong>` + func() string { if site.AppID < 0 { return "Unassigned" }; return fmt.Sprintf("#%d", site.AppID) }() + `</strong></div>
