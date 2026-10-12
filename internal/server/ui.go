@@ -439,10 +439,10 @@ const baseStyles = `
 	.inline-popover.wide{width:460px}
 	.inline-popover .button{margin-top:9px}
 	/* Database page: consistent action sizing and predictable popover placement. */
-	.db-table-scroll{width:100%;overflow-x:auto;overflow-y:visible}
-	.db-managed-table{min-width:1000px;table-layout:auto}
-	.db-managed-table th:last-child{min-width:310px;text-align:right}
-	.db-managed-table td:last-child{min-width:310px}
+	.db-table-scroll{width:100%;overflow:visible}
+	.db-managed-table{width:100%;table-layout:auto}
+	.db-managed-table th:last-child{text-align:right}
+	.db-managed-table td:last-child{width:48%}
 	.db-managed-table td{vertical-align:middle}
 	.db-managed-table .db-cell-text{display:inline-block;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
 	.db-row-actions{gap:7px;justify-content:flex-end}
@@ -456,14 +456,22 @@ const baseStyles = `
 	.db-backup-actions>a,.db-backup-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 10px;font-size:12px;white-space:nowrap}
 	.db-row-actions .backup-row{align-items:flex-start}
 	.db-row-actions .backup-row+.backup-row{margin-top:2px}
-	@media(max-width:1100px){
-		.db-managed-table{min-width:940px}
+
+	@media(max-width:1250px){
+		.db-managed-table,.db-managed-table tbody,.db-managed-table tr,.db-managed-table td{display:block;width:100%}
+		.db-managed-table thead{display:none}
+		.db-managed-table tr{padding:15px 16px;border-bottom:1px solid var(--border)}
+		.db-managed-table tr:last-child{border-bottom:0}
+		.db-managed-table td{padding:3px 0;border:0;overflow-wrap:anywhere}
+		.db-managed-table td:last-child{width:100%;padding-top:12px}
+		.db-managed-table td:nth-child(1){font-size:14px}
+		.db-managed-table td:nth-child(2),.db-managed-table td:nth-child(3),.db-managed-table td:nth-child(4){display:inline-block;width:auto;max-width:100%;margin-right:14px}
+		.db-managed-table td:nth-child(4) .db-cell-text{max-width:210px}
 		.db-row-actions{justify-content:flex-start}
-		.db-managed-table th:last-child{text-align:left}
 	}
 	@media(max-width:600px){
-		.db-backup-actions{flex-wrap:wrap;justify-content:flex-start}
 		.db-row-actions .backup-row{flex-direction:column;align-items:stretch}
+		.db-backup-actions{flex-wrap:wrap;justify-content:flex-start}
 		.db-row-actions .inline-popover{max-width:min(370px,calc(100vw - 32px))}
 	}
 
