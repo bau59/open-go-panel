@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -354,7 +355,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			LimitNOFILE:      limitNOFILE,
 			TasksMax:         tasksMax,
 			LogRetentionDays: logRetentionDays,
-			AutoStart:        r.FormValue("auto_start") == "1",
+			AutoStart:        slices.Contains(r.PostForm["auto_start"], "1"),
 			Environment: r.FormValue("environment"),
 			RawUnit:     r.FormValue("raw_unit"),
 		}
