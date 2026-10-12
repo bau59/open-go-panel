@@ -905,6 +905,19 @@ func (m *Manager) Backups(id int64) ([]Backup, error) {
 	return backups, nil
 }
 
+// DeleteBackup removes only a validated, managed backup file. It never touches the database.
+func (m *Manager) DeleteBackup(id int64, path string) error {
+	if !m.operationMu.TryLock() {
+		return errOperationInProgress
+	}
+	defer m.operationMu.Unlock()
+	clean, err := m.BackupFile(id, path)
+	if err != nil {
+		return err
+	}
+	return os.Remove(clean)
+}
+
 func (m *Manager) PruneBackups(id int64, keep int) error {
 	if keep < 1 {
 		return errors.New("backup retention must keep at least one backup")
