@@ -672,6 +672,8 @@ func appHeader(active string) string {
 			shape = `<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c-5 5-5 13 0 18M12 3c5 5 5 13 0 18"/>`
 		case "users":
 			shape = `<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5v1"/>`
+		case "backup":
+			shape = `<path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/>`
 		case "software":
 			shape = `<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>`
 		case "terminal":
@@ -715,6 +717,7 @@ func appHeader(active string) string {
 		menuItem{"caddy", "/caddy", "Caddy & domains"},
 		menuItem{"users", "/users", "Users"},
 		menuItem{"software", "/software", "Software"},
+		menuItem{"backup", "/backup", "Backup"},
 		menuItem{"terminal", "/terminal", "Terminal"},
 	))
 	nav.WriteString(group("Observability",
