@@ -275,7 +275,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 <form method="post" action="%s" enctype="multipart/form-data" class="fileman-tool">
                     %s<label class="fileman-tool-label" for="fileman-upload-file">Upload file <span>Max 1 GiB</span></label>
                     <div class="fileman-control-row">
-                        <input id="fileman-upload-file" class="fileman-file-input" type="file" name="file" required>
+                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required>
                         <button class="button" type="submit">Upload</button>
                     </div>
                 </form>
@@ -305,9 +305,6 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         .fileman-control-row{display:flex;align-items:center;gap:8px;min-width:0}
         .fileman-control-row input{flex:1 1 auto;min-width:0;width:100%;height:42px}
         .fileman-control-row button,.fileman-tool-new>a{flex:0 0 auto;height:42px;white-space:nowrap}
-        .fileman-file-input{display:block;padding:0;overflow:hidden;color:var(--text);font-size:12px;line-height:40px}
-        .fileman-file-input::file-selector-button{height:40px;margin:0 12px 0 0;padding:0 13px;border:0;border-right:1px solid var(--border-strong);border-radius:10px 0 0 10px;background:rgba(68,103,151,.38);color:#d9e9fa;font:inherit;font-weight:700;cursor:pointer}
-        .fileman-file-input:hover::file-selector-button{background:rgba(85,128,183,.53)}
         .fileman-tool-new>a{align-self:flex-start}
         .fileman-table{overflow-x:auto}
         .fileman-table td:first-child{overflow-wrap:anywhere}
