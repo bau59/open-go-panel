@@ -73,10 +73,12 @@ func switchPHPAppVersion(ctx context.Context, cfg Config, app panelapp.App, vers
 
     // On failure, do not remove a runtime still serving the previous version.
     cleanupCandidate := func() {
+        cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+        defer cancel()
         if version == phpfpm.LegacyVersion {
-            cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-            defer cancel()
             _ = phpfpm.RemoveLegacy(cleanup, app.ID)
+        } else if app.Service.PHPVersion == phpfpm.LegacyVersion {
+            _ = phpfpm.Remove(cleanup, app.ID)
         }
     }
     site, hasSite, err := cfg.Caddy.SiteForApp(app.ID)
@@ -140,6 +142,6 @@ func phpRuntimeBlock(app panelapp.App) string {
             </select>
             <button class="button" type="submit">Apply PHP version</button>
         </form>
-        <p class="note" style="margin:12px 0 0">PHP 7.4 is no longer supported upstream. Install the Docker image and upload the official ionCube archive in <a href="/software">Software</a> first. The switch validates the new backend before changing Caddy.</p>
+        <p class="note" style="margin:12px 0 0">PHP 7.4 is no longer supported upstream. Install the Docker image and upload the official ionCube archive in <a href="/software">Software</a> first. The switch validates the new backend before changing Caddy. The built-in terminal still uses the host PHP CLI; site HTTP requests use the selected PHP-FPM runtime.</p>
     </section>`
 }
