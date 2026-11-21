@@ -10,11 +10,9 @@ import (
     "fmt"
     "io"
     "os"
-    "os/user"
     "path"
     "path/filepath"
     "sort"
-    "strconv"
     "strings"
     "unicode/utf8"
 
@@ -41,8 +39,6 @@ type Entry struct {
 
 type Manager struct {
     root *os.File
-    uid int
-    gid int
 }
 
 func validName(name string) bool {
@@ -59,17 +55,10 @@ func validPath(name string) bool {
     return len(name) <= 4096
 }
 
-func Open(root, username string) (*Manager, error) {
+func Open(root string) (*Manager, error) {
     if !filepath.IsAbs(root) || filepath.Clean(root) == "/" {
         return nil, errors.New("invalid application root")
     }
-    account, err := user.Lookup(username)
-    if err != nil { return nil, fmt.Errorf("lookup application owner: %w", err) }
-    uid, err := strconv.Atoi(account.Uid)
-    if err != nil { return nil, err }
-    gid, err := strconv.Atoi(account.Gid)
-    if err != nil { return nil, err }
-
     base, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
     if err != nil { return nil, err }
     defer unix.Close(base)
@@ -78,7 +67,7 @@ func Open(root, username string) (*Manager, error) {
         Resolve: unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS,
     })
     if err != nil { return nil, fmt.Errorf("open application root: %w", err) }
-    return &Manager{root: os.NewFile(uintptr(fd), root), uid: uid, gid: gid}, nil
+    return &Manager{root: os.NewFile(uintptr(fd), root)}, nil
 }
 
 func (m *Manager) Close() error { return m.root.Close() }
@@ -181,7 +170,6 @@ func (m *Manager) write(folder, name string, source io.Reader, limit int64, over
     output := os.NewFile(uintptr(temporaryFD), temp)
     written, copyErr := io.Copy(output, io.LimitReader(source, limit+1))
     if copyErr == nil && written > limit { copyErr = fmt.Errorf("file exceeds %d MiB limit", limit>>20) }
-    if copyErr == nil { copyErr = unix.Fchown(temporaryFD, m.uid, m.gid) }
     mode := uint32(0640)
     if overwrite { mode = uint32(stat.Mode & 0777) }
     if copyErr == nil { copyErr = unix.Fchmod(temporaryFD, mode) }
@@ -214,12 +202,7 @@ func (m *Manager) Mkdir(folder, name string) error {
     fd, err := m.directory(folder)
     if err != nil { return err }
     defer unix.Close(fd)
-    if err := unix.Mkdirat(fd, name, 0750); err != nil { return err }
-    if err := unix.Fchownat(fd, name, m.uid, m.gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-        _ = unix.Unlinkat(fd, name, unix.AT_REMOVEDIR)
-        return err
-    }
-    return nil
+    return unix.Mkdirat(fd, name, 0750)
 }
 
 func splitTarget(destination string) (string, string, error) {
@@ -299,9 +282,7 @@ func (m *Manager) makeDirectories(base, relative string) (string, error) {
         fd, err := m.directory(current)
         if err != nil { return "", err }
         err = unix.Mkdirat(fd, name, 0750)
-        if errors.Is(err, unix.EEXIST) { err = nil } else if err == nil {
-            err = unix.Fchownat(fd, name, m.uid, m.gid, unix.AT_SYMLINK_NOFOLLOW)
-        }
+        if errors.Is(err, unix.EEXIST) { err = nil }
         if err == nil {
             childFD, openErr := unix.Openat2(fd, name, &unix.OpenHow{
                 Flags: uint64(unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC),
