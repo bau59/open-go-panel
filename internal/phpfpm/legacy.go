@@ -224,12 +224,22 @@ func EnsureLegacy(ctx context.Context, id int64, username, root string, port int
             "--mount", "type=bind,src="+root+",dst="+root,
             "--mount", loaderMount,
             "--mount", "type=bind,src="+ErrorLogPath(id)+",dst="+legacyErrorLogInside,
+        }
+        // Preserve localhost/socket MySQL access where a host MySQL server
+        // uses the standard Ubuntu Unix socket. TCP localhost still resolves
+        // inside the container and requires explicit application config.
+        if stat, err := os.Stat("/run/mysqld"); err == nil && stat.IsDir() {
+            args = append(args, "--mount", "type=bind,src=/run/mysqld,dst=/run/mysqld,readonly")
+        }
+        args = append(args,
             "--workdir", root,
             LegacyImage, "php-fpm", "-F",
             "-d", "zend_extension="+legacyLoaderInside,
             "-d", "log_errors=1", "-d", "display_errors=0",
             "-d", "error_log="+legacyErrorLogInside,
-        }
+            "-d", "mysqli.default_socket=/run/mysqld/mysqld.sock",
+            "-d", "pdo_mysql.default_socket=/run/mysqld/mysqld.sock",
+        )
         if _, err := dockerOutput(ctx, args...); err != nil { return err }
     } else {
         return fmt.Errorf("legacy PHP container in unexpected state %s", status)
