@@ -85,9 +85,25 @@ func switchPHPVersion(ctx context.Context, cfg Config, app panelapp.App, version
 
     if hasSite {
         if err := cfg.Caddy.ReloadSites(ctx); err != nil {
+            // A Caddy reload can succeed but persisting the domain state can
+            // fail afterwards. Restore both the app state and live Caddy route
+            // before removing the prepared pool.
             rollbackErr := cfg.Apps.SetPHPVersion(app.ID, old)
+            if rollbackErr != nil {
+                return errors.Join(fmt.Errorf("Caddy PHP routing failed: %w", err),
+                    fmt.Errorf("restore saved PHP version: %w", rollbackErr))
+            }
+            rollbackCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+            restoreErr := cfg.Caddy.ReloadSites(rollbackCtx)
+            cancel()
+            if restoreErr != nil {
+                // The new pool may still be referenced by live Caddy: do not
+                // remove it until the rollback has been repaired manually.
+                return errors.Join(fmt.Errorf("Caddy PHP routing failed: %w", err),
+                    fmt.Errorf("restore Caddy route: %w", restoreErr))
+            }
             cleanupCandidate()
-            return errors.Join(fmt.Errorf("Caddy PHP routing failed: %w", err), rollbackErr)
+            return fmt.Errorf("Caddy PHP routing failed (previous version restored): %w", err)
         }
     }
 
