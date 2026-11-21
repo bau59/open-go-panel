@@ -25,6 +25,13 @@ func TestPHPDocumentRoot(t *testing.T) {
 	}
 }
 
+func TestPHPLogsLink(t *testing.T) {
+	app := panelapp.App{ID: 42, Type: "php", Name: "example", User: "test", Root: "/home/test/example"}
+	for _, page := range []string{appsPage([]panelapp.App{app}, nil, ""), appPage(app, "active", "", "")} {
+		if !strings.Contains(page, `/apps/42/php-logs`) { t.Fatal("PHP error log link missing") }
+	}
+}
+
 func TestPHPAppOption(t *testing.T) {
 	page := appsPage(nil, nil, "")
 	if !strings.Contains(page, `value="php"`) {
