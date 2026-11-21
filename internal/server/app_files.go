@@ -262,7 +262,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         if folder != "" && folder != "." {
             parent := path.Dir(folder)
             if parent == "." { parent = "" }
-            rows.WriteString(`<tr><td><a href="`+appFilesURL(app.ID, parent)+`">📁 ..</a></td><td>Parent folder</td><td>—</td><td></td></tr>`)
+            rows.WriteString(`<tr><td></td><td><a href="`+appFilesURL(app.ID, parent)+`">📁 ..</a></td><td>Parent folder</td><td>—</td><td></td></tr>`)
         }
         for _, item := range items {
             name := html.EscapeString(item.Name)
@@ -307,13 +307,18 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                     <label>Copy to</label><input name="destination" required placeholder="folder/copy-name">
                     <button class="secondary compact-action">Copy</button></form>`)
             }
+            if item.Directory {
+                actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Move all contents of this folder here? Existing names will not be replaced.')">
+                    `+fileHidden("move_contents", folder, item.Name)+`
+                    <button class="secondary compact-action" type="submit">Move contents here</button></form>`)
+            }
             actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Delete this item permanently?')">
                 `+fileHidden("delete", folder, item.Name)+`<button class="danger compact-action">Delete</button></form></div></details>`)
-            fmt.Fprintf(&rows, `<tr><td>%s</td><td>%s</td><td>%s</td><td><div class="actions fileman-actions">%s</div></td></tr>`,
-                entry, html.EscapeString(kind), html.EscapeString(size), actions.String())
+            fmt.Fprintf(&rows, `<tr><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td>%s</td><td><div class="actions fileman-actions">%s</div></td></tr>`,
+                name, name, entry, html.EscapeString(kind), html.EscapeString(size), actions.String())
         }
-        if len(items) == 0 { rows.WriteString(`<tr><td colspan="4" class="empty">This folder is empty.</td></tr>`) }
-        if limited { alert += `<div class="alert">Displaying the first 400 entries. Use the terminal for larger directories.</div>` }
+        if len(items) == 0 { rows.WriteString(`<tr><td colspan="5" class="empty">This folder is empty.</td></tr>`) }
+        if limited { alert += `<div class="alert">Only the first 400 entries are shown and selectable. "Move all contents up" moves the entire folder, including entries not displayed.</div>` }
         fmt.Fprintf(&content, `<section class="panel panel-pad fileman-panel">
             <div class="fileman-tools">
                 <form method="post" action="%s" enctype="multipart/form-data" class="fileman-tool">
