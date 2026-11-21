@@ -38,6 +38,25 @@ func LegacyLoaderPath() string {
     return filepath.Join("/usr/local/lib/open-go-panel/ioncube", runtime.GOARCH, "ioncube_loader_lin_7.4.so")
 }
 
+// The Loader must precede OPcache in the PHP-FPM ini scan order.
+// A mounted 00-ini file is more predictable than passing Zend extensions via
+// command-line -d flags after the image's own extension configuration.
+func ensureLegacyLoaderINI() (string, error) {
+    dir := filepath.Dir(LegacyLoaderPath())
+    ini := filepath.Join(dir, "00-ioncube-php74.ini")
+    file, err := os.CreateTemp(dir, ".php74-ini-*")
+    if err != nil { return "", err }
+    defer os.Remove(file.Name())
+    if _, err := io.WriteString(file, "zend_extension="+legacyLoaderInside+"\n"); err != nil {
+        _ = file.Close()
+        return "", err
+    }
+    if err := file.Chmod(0644); err != nil { _ = file.Close(); return "", err }
+    if err := file.Close(); err != nil { return "", err }
+    if err := os.Rename(file.Name(), ini); err != nil { return "", err }
+    return ini, nil
+}
+
 func LegacyLoaderPresent() bool {
     info, err := os.Stat(LegacyLoaderPath())
     return err == nil && info.Mode().IsRegular() && info.Size() >= 64
@@ -202,6 +221,8 @@ func EnsureLegacy(ctx context.Context, id int64, username, root string, port int
         return fmt.Errorf("PHP 7.4 ionCube compatibility check failed: %v: %s", err, verify)
     }
 
+    iniFile, err := ensureLegacyLoaderINI()
+    if err != nil { return fmt.Errorf("write PHP 7.4 ionCube config: %w", err) }
     name := LegacyContainerName(id)
     status := LegacyStatus(ctx, id)
     if status == "active" { return nil }
@@ -221,6 +242,7 @@ func EnsureLegacy(ctx context.Context, id int64, username, root string, port int
             "--add-host", "host.docker.internal:host-gateway",
             "--mount", "type=bind,src="+root+",dst="+root,
             "--mount", loaderMount,
+            "--mount", "type=bind,src="+iniFile+",dst=/usr/local/etc/php/conf.d/00-ioncube.ini,readonly",
             "--mount", "type=bind,src="+ErrorLogPath(id)+",dst="+legacyErrorLogInside,
         }
         // Preserve localhost/socket MySQL access where a host MySQL server
@@ -232,7 +254,6 @@ func EnsureLegacy(ctx context.Context, id int64, username, root string, port int
         args = append(args,
             "--workdir", root,
             LegacyImage, "php-fpm", "-F",
-            "-d", "zend_extension="+legacyLoaderInside,
             "-d", "log_errors=1", "-d", "display_errors=0",
             "-d", "error_log="+legacyErrorLogInside,
             "-d", "mysqli.default_socket=/run/mysqld/mysqld.sock",
