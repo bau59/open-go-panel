@@ -140,3 +140,36 @@ func TestTarGzExtraction(t *testing.T) {
     content, err := manager.ReadText("public", "index.php")
     if err != nil || content != "<?php echo 'ok';" { t.Fatalf("tar extract: %q, %v", content, err) }
 }
+
+func TestZIPWithTrailingPayload(t *testing.T) {
+    manager, _ := openTestManager(t)
+    archive := makeZip(t, map[string]string{"site/index.php": "<?php echo 'ok';"})
+    // More than 64 KiB of trailing data hides the end record from the
+    // standard reader, but the ZIP entries are otherwise intact.
+    archive = append(archive, bytes.Repeat([]byte("not-part-of-zip"), 16<<10)...)
+    if err := manager.Upload("", "trailing.zip", bytes.NewReader(archive)); err != nil { t.Fatal(err) }
+    count, err := manager.Extract("", "trailing.zip")
+    if err != nil || count != 1 { t.Fatalf("trailing ZIP: count=%d err=%v", count, err) }
+    content, err := manager.ReadText("site", "index.php")
+    if err != nil || content != "<?php echo 'ok';" { t.Fatalf("extracted content = %q, %v", content, err) }
+}
+
+func TestZIPFormatDiagnostics(t *testing.T) {
+    tests := []struct {
+        name string
+        data []byte
+        want string
+    }{
+        {"rar.zip", []byte{'R','a','r','!',0x1a,0x07,0x01,0x00}, "RAR data"},
+        {"7z.zip", []byte{'7','z',0xbc,0xaf,0x27,0x1c}, "7z data"},
+        {"notzip.zip", []byte("PK\\x03\\x04partial archive"), "ZIP structure is missing or damaged"},
+    }
+    for _, tc := range tests {
+        t.Run(tc.name, func(t *testing.T) {
+            manager, _ := openTestManager(t)
+            if err := manager.Upload("", tc.name, bytes.NewReader(tc.data)); err != nil { t.Fatal(err) }
+            _, err := manager.Extract("", tc.name)
+            if err == nil || !strings.Contains(err.Error(), tc.want) { t.Fatalf("got error %v, want %q", err, tc.want) }
+        })
+    }
+}
