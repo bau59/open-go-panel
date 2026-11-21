@@ -166,11 +166,16 @@ func LegacyImageInstalled(ctx context.Context) bool {
 
 func LegacyStatus(ctx context.Context, id int64) string {
     if id <= 0 { return "not configured" }
-    output, err := dockerOutput(ctx, "container", "inspect", "--format", "{{.State.Status}}", LegacyContainerName(id))
+    format := "{{.State.Status}}|{{index .Config.Labels \"org.open-go-panel.managed-runtime\"}}|{{index .Config.Labels \"org.open-go-panel.php-app-id\"}}"
+    output, err := dockerOutput(ctx, "container", "inspect", "--format", format, LegacyContainerName(id))
     if err != nil { return "not configured" }
-    if output == "running" { return "active" }
-    if output == "exited" || output == "created" { return "inactive" }
-    return output
+    fields := strings.Split(output, "|")
+    if len(fields) != 3 || fields[1] != "php74" || fields[2] != strconv.FormatInt(id, 10) {
+        return "conflict" // Name is occupied by another container: never modify it.
+    }
+    if fields[0] == "running" { return "active" }
+    if fields[0] == "exited" || fields[0] == "created" { return "inactive" }
+    return fields[0]
 }
 
 // EnsureLegacy starts the isolated PHP-FPM backend bound only to localhost.
@@ -214,6 +219,8 @@ func EnsureLegacy(ctx context.Context, id int64, username, root string, port int
     } else if status == "not configured" {
         args := []string{
             "run", "-d", "--name", name, "--restart", "unless-stopped",
+            "--label", "org.open-go-panel.managed-runtime=php74",
+            "--label", "org.open-go-panel.php-app-id="+strconv.FormatInt(id, 10),
             "--user", fmt.Sprintf("%d:%d", uid, gid),
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "--read-only", "--tmpfs", "/tmp:rw,nosuid,noexec,size=64m",
@@ -263,6 +270,7 @@ func RemoveLegacy(ctx context.Context, id int64) error {
     name := LegacyContainerName(id)
     status := LegacyStatus(ctx, id)
     if status == "not configured" { return nil }
+    if status == "conflict" { return errors.New("refusing to remove a Docker container not owned by Open Go Panel") }
     _, err := dockerOutput(ctx, "rm", "-f", name)
     return err
 }
