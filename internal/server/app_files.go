@@ -123,9 +123,10 @@ func openAppFiles(w http.ResponseWriter, r *http.Request, cfg Config) (panelapp.
 }
 
 func fileHidden(action, folder, name string) string {
-    return `<input type="hidden" name="action" value="`+html.EscapeString(action)+`">`+
-        `<input type="hidden" name="dir" value="`+html.EscapeString(folder)+`">`+
-        `<input type="hidden" name="name" value="`+html.EscapeString(name)+`">`
+    result := `<input type="hidden" name="action" value="`+html.EscapeString(action)+`">`+
+        `<input type="hidden" name="dir" value="`+html.EscapeString(folder)+`">`
+    if name != "" { result += `<input type="hidden" name="name" value="`+html.EscapeString(name)+`">` }
+    return result
 }
 
 func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editName string, create bool, message, notice string) (string, error) {
