@@ -15,24 +15,7 @@ import (
 	"time"
 )
 
-var accountNameRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]*[$]?package phpfpm
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"os/user"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-)
-
-var accountNameRE = )
+var accountNameRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 
 type Runtime struct {
 	Version string
