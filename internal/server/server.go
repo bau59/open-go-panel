@@ -213,6 +213,7 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Caddy != nil && cfg.Apps != nil {
 		registerCaddyRoutes(mux, store, cfg)
+		registerPHPRuntimeRoutes(mux, store, cfg)
 		registerPerformanceRoutes(mux, store, cfg)
 		registerLogRetentionRoutes(mux, store, cfg)
 	}
