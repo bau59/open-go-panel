@@ -93,7 +93,10 @@ pm.max_children = 5
 pm.process_idle_timeout = 10s
 pm.max_requests = 500
 security.limit_extensions = .php
-`, poolName(id), username, group, Socket(id))
+php_admin_flag[log_errors] = on
+php_admin_flag[display_errors] = off
+php_admin_value[error_log] = %s
+`, poolName(id), username, group, Socket(id), ErrorLogPath(id))
 }
 
 func run(ctx context.Context, name string, args ...string) error {
@@ -132,6 +135,11 @@ func Ensure(ctx context.Context, id int64, username string) error {
 	if !accountNameRE.MatchString(account.Username) || !accountNameRE.MatchString(group.Name) {
 		return errors.New("unsupported Linux user or group name for PHP-FPM")
 	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil { return fmt.Errorf("invalid PHP user ID: %w", err) }
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil { return fmt.Errorf("invalid PHP group ID: %w", err) }
+	if err := ensureErrorLog(id, uid, gid); err != nil { return err }
 
 	path := poolPath(runtime, id)
 	original, readErr := os.ReadFile(path)

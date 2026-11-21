@@ -625,7 +625,8 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 				return `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><input type="hidden" name="return_to" value="/apps"><button class="secondary compact-action">Restart</button></form>`
 			}(),
 			func() string {
-				if app.Type == "static" || app.Type == "php" { return "" }
+				if app.Type == "php" { return `<a class="secondary compact-action" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/php-logs">PHP errors</a>` }
+				if app.Type == "static" { return "" }
 				return `<a class="secondary compact-action" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">App logs</a>`
 			}(),
 			app.ID,
@@ -885,7 +886,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		serviceName = "PHP-FPM (shared daemon)"
 		autoStart = "PHP-FPM service"
 		resourceLimit = "shared runtime"
-		runtimeActions = `<div class="actions runtime-actions"><a class="secondary" href="/terminal?user=` + html.EscapeString(app.User) + `&app=` + fmt.Sprintf("%d", app.ID) + `">Terminal</a><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/caddy-logs">Caddy logs</a><a class="secondary" href="/software#php-extensions">PHP extensions</a></div>`
+		runtimeActions = `<div class="actions runtime-actions"><a class="secondary" href="/terminal?user=` + html.EscapeString(app.User) + `&app=` + fmt.Sprintf("%d", app.ID) + `">Terminal</a><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/php-logs">PHP errors</a><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/caddy-logs">Caddy logs</a><a class="secondary" href="/software#php-extensions">PHP extensions</a></div>`
 	}
 
 	portFact := `<div><span>Port</span><code>` + port + `</code></div>`
