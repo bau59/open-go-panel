@@ -19,7 +19,7 @@ func TestDatabaseSQLUploadMenu(t *testing.T) {
         if !strings.Contains(page, url) { t.Errorf("missing file import form %q", url) }
     }
     for _, required := range []string{
-        `enctype="multipart/form-data"`, `name="file"`, `accept=".sql,.sql.gz"`,
+        `enctype="multipart/form-data"`, `class="file-upload-input"`, `name="file"`, `accept=".sql,.sql.gz"`,
         `name="mode"`, `value="apply"`, `value="replace"`,
         `Import SQL`, `Upload &amp; import`,
     } {
