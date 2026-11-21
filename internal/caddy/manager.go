@@ -35,6 +35,8 @@ const recommendedStaticSiteTemplate = `{domain} {
 	log
 }`
 
+var phpMinorVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
 var domainRE = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
 
 type Site struct {
@@ -106,7 +108,15 @@ func (m *Manager) QueryLogs(ctx context.Context, query journal.Query) (journal.R
 func (m *Manager) Sites() ([]Site, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.load()
+	sites, err := m.load()
+	if err != nil { return nil, err }
+	for i := range sites {
+		if sites[i].Kind != "php" { continue }
+		version, err := m.phpVersionForApp(sites[i].AppID)
+		if err != nil { return nil, err }
+		sites[i].PHPVersion = version
+	}
+	return sites, nil
 }
 
 func (m *Manager) SiteForApp(appID int64) (Site, bool, error) {
@@ -772,14 +782,10 @@ func (m *Manager) phpVersionForApp(id int64) (string, error) {
     if err := json.Unmarshal([]byte(raw), &service); err != nil {
         return "", fmt.Errorf("decode PHP version for app %d: %w", id, err)
     }
-    if service.PHPVersion != "" {
-        if _, err := phpfpm.DetectVersion(service.PHPVersion); err != nil {
-            // Allow generation when the runtime was uninstalled: Caddy can
-            // still route to the configured path and show a clear 502.
-            if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(service.PHPVersion) {
-                return "", errors.New("invalid saved PHP version")
-            }
-        }
+    // Runtime availability is checked when enabling the site, not while
+    // rendering Caddy config; a removed PHP package must not block reload.
+    if service.PHPVersion != "" && !phpMinorVersionRE.MatchString(service.PHPVersion) {
+        return "", errors.New("invalid saved PHP version")
     }
     return service.PHPVersion, nil
 }
@@ -1277,6 +1283,7 @@ func (s Site) Target() string {
 	}
 	if s.Kind == "redirect" { return s.Root }
 	if s.Kind == "php" {
+		if s.PHPVersion != "" { return "PHP-FPM " + s.PHPVersion + " · " + s.Root }
 		return "PHP-FPM · " + s.Root
 	}
 	if s.Kind == "static" || s.Port == 0 {
