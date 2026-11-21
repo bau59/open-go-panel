@@ -101,7 +101,7 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 					</form>
 				</div>`)
 			}
-			phpExtra = `<details class="php-extensions">
+			phpExtra = `<details id="php-extensions" class="php-extensions">
 				<summary class="secondary">Manage PHP `+html.EscapeString(phpVersion)+` extensions</summary>
 				<p class="note">Extensions are shared by all applications using this PHP-FPM version. Installing a new extension reloads PHP-FPM.</p>
 				<div class="php-extension-grid">`+list.String()+`</div>
