@@ -384,6 +384,42 @@ func openZIPArchive(file *os.File, size int64) (*zip.Reader, error) {
     }
 }
 
+// validateZIPArchive reads and verifies every regular ZIP entry before any
+// destination files are created. A damaged archive must not leave a half
+// unpacked PHP site behind. It verifies entry size, CRC, path traversal and
+// the overall expansion cap while keeping memory usage constant.
+func validateZIPArchive(archive *zip.Reader) error {
+    if len(archive.File) > MaxArchiveEntries {
+        return fmt.Errorf("ZIP contains %d entries; maximum is %d", len(archive.File), MaxArchiveEntries)
+    }
+    remaining := int64(MaxExtractBytes)
+    for index, item := range archive.File {
+        if (item.Name == "./" || item.Name == ".") && item.FileInfo().IsDir() { continue }
+        if item.Mode() & os.ModeType != 0 && !item.FileInfo().IsDir() {
+            return fmt.Errorf("ZIP entry %d contains an unsupported file type", index+1)
+        }
+        name, directory, err := validateArchiveName(item.Name)
+        if err != nil { return fmt.Errorf("ZIP entry %d: %w", index+1, err) }
+        if directory {
+            continue
+        }
+        if item.UncompressedSize64 > uint64(MaxUploadBytes) || item.UncompressedSize64 > uint64(remaining) {
+            return fmt.Errorf("ZIP entry %d (%s) exceeds extraction size limit", index+1, name)
+        }
+        input, err := item.Open()
+        if err != nil { return fmt.Errorf("ZIP entry %d (%s) cannot be opened: %w", index+1, name, err) }
+        read, readErr := io.Copy(io.Discard, io.LimitReader(input, int64(item.UncompressedSize64)+1))
+        closeErr := input.Close()
+        if readErr != nil { return fmt.Errorf("ZIP entry %d (%s) is damaged: %w", index+1, name, readErr) }
+        if closeErr != nil { return fmt.Errorf("ZIP entry %d (%s) cannot close: %w", index+1, name, closeErr) }
+        if read != int64(item.UncompressedSize64) {
+            return fmt.Errorf("ZIP entry %d (%s) size differs from its header", index+1, name)
+        }
+        remaining -= read
+    }
+    return nil
+}
+
 func (m *Manager) Extract(folder, name string) (int, error) {
     lower := strings.ToLower(name)
     if !strings.HasSuffix(lower, ".zip") && !strings.HasSuffix(lower, ".tar.gz") && !strings.HasSuffix(lower, ".tgz") {
@@ -399,7 +435,7 @@ func (m *Manager) Extract(folder, name string) (int, error) {
     if strings.HasSuffix(lower, ".zip") {
         archive, err := openZIPArchive(file, info.Size())
         if err != nil { return 0, err }
-        if len(archive.File) > MaxArchiveEntries { return 0, errors.New("archive contains too many entries") }
+        if err := validateZIPArchive(archive); err != nil { return 0, err }
         for _, item := range archive.File {
             if (item.Name == "./" || item.Name == ".") && item.FileInfo().IsDir() { continue }
             if item.Mode() & os.ModeType != 0 && !item.FileInfo().IsDir() {
