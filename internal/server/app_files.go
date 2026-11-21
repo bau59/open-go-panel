@@ -273,17 +273,21 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         fmt.Fprintf(&content, `<section class="panel panel-pad fileman-panel">
             <div class="fileman-tools">
                 <form method="post" action="%s" enctype="multipart/form-data" class="fileman-tool">
-                    %s<label>Upload file (max 1 GiB)</label>
-                    <input type="file" name="file" required>
-                    <button class="button">Upload</button>
+                    %s<label class="fileman-tool-label" for="fileman-upload-file">Upload file <span>Max 1 GiB</span></label>
+                    <div class="fileman-control-row">
+                        <input id="fileman-upload-file" class="fileman-file-input" type="file" name="file" required>
+                        <button class="button" type="submit">Upload</button>
+                    </div>
                 </form>
                 <form method="post" action="%s" class="fileman-tool">
-                    %s<label>New folder</label>
-                    <input name="name" required maxlength="255" placeholder="folder-name">
-                    <button class="secondary">Create</button>
+                    %s<label class="fileman-tool-label" for="fileman-folder-name">New folder</label>
+                    <div class="fileman-control-row">
+                        <input id="fileman-folder-name" name="name" required maxlength="255" placeholder="Folder name">
+                        <button class="secondary" type="submit">Create</button>
+                    </div>
                 </form>
-                <div class="fileman-tool">
-                    <label>Text editor</label>
+                <div class="fileman-tool fileman-tool-new">
+                    <span class="fileman-tool-label">Text editor</span>
                     <a class="secondary" href="%s">New file</a>
                 </div>
             </div>
@@ -294,11 +298,20 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
     }
     return header + `<style>
         .fileman-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:12px 0 18px;font-size:14px}
-        .fileman-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) auto;gap:15px;align-items:end;margin-bottom:20px}
-        .fileman-tool{display:flex;flex-direction:column;gap:9px;min-width:0}
-        .fileman-tool label{font-size:12px;font-weight:650}
-        .fileman-tool button,.fileman-tool>a{align-self:flex-start}
+        .fileman-tools{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:18px;align-items:end;margin-bottom:16px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+        .fileman-tool{display:flex;flex-direction:column;min-width:0;margin:0}
+        .fileman-tool-label{display:flex;align-items:center;gap:9px;min-height:18px;margin:0 0 8px;color:#b8c9e2;font-size:12px;font-weight:700}
+        .fileman-tool-label span{color:var(--muted-2);font-size:11px;font-weight:600}
+        .fileman-control-row{display:flex;align-items:center;gap:8px;min-width:0}
+        .fileman-control-row input{flex:1 1 auto;min-width:0;width:100%;height:42px}
+        .fileman-control-row button,.fileman-tool-new>a{flex:0 0 auto;height:42px;white-space:nowrap}
+        .fileman-file-input{display:block;padding:0;overflow:hidden;color:var(--text);font-size:12px;line-height:40px}
+        .fileman-file-input::file-selector-button{height:40px;margin:0 12px 0 0;padding:0 13px;border:0;border-right:1px solid var(--border-strong);border-radius:10px 0 0 10px;background:rgba(68,103,151,.38);color:#d9e9fa;font:inherit;font-weight:700;cursor:pointer}
+        .fileman-file-input:hover::file-selector-button{background:rgba(85,128,183,.53)}
+        .fileman-tool-new>a{align-self:flex-start}
         .fileman-table{overflow-x:auto}
+        .fileman-table td:first-child{overflow-wrap:anywhere}
+        .fileman-table .empty{padding:42px 16px;text-align:center;color:var(--muted-2)}
         .fileman-actions{justify-content:flex-end;flex-wrap:nowrap}
         .fileman-more{position:relative}
         .fileman-more>summary{cursor:pointer;list-style:none;white-space:nowrap}
@@ -307,7 +320,20 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         .fileman-popover form:last-child{margin-bottom:0}
         .fileman-popover input{min-width:0}
         .fileman-editor{display:block;width:100%;min-height:55vh;margin-top:14px;white-space:pre;tab-size:4;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-        @media(max-width:800px){.fileman-tools{grid-template-columns:1fr}.fileman-actions{flex-wrap:wrap}}
+        @media(max-width:1120px){
+            .fileman-tools{grid-template-columns:repeat(2,minmax(0,1fr))}
+            .fileman-tool-new{grid-column:1/-1;flex-direction:row;align-items:center;gap:12px}
+            .fileman-tool-new .fileman-tool-label{margin:0}
+        }
+        @media(max-width:740px){
+            .fileman-tools{grid-template-columns:minmax(0,1fr)}
+            .fileman-tool-new{grid-column:auto}
+            .fileman-actions{flex-wrap:wrap;justify-content:flex-start}
+        }
+        @media(max-width:430px){
+            .fileman-control-row{flex-wrap:wrap}
+            .fileman-control-row button{width:100%}
+        }
     </style>
     <main class="shell app-shell">
         <div class="app-page-head"><div>
