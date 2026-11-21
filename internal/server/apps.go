@@ -601,6 +601,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			<td>
 				<div class="actions app-quick-actions">
 					<a class="secondary compact-action" href="/apps/%d">Open</a>
+					<a class="secondary compact-action" href="/apps/%d/files">Files</a>
 					%s
 					%s
 					<a class="secondary compact-action" href="/apps/%d/caddy-logs">Caddy logs</a>
@@ -615,6 +616,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			html.EscapeString(app.Type),
 			port,
 			html.EscapeString(app.Root),
+			app.ID,
 			app.ID,
 			func() string {
 				if app.Type == "static" || app.Type == "php" {
@@ -918,7 +920,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				</div>
 				<p class="sub">` + html.EscapeString(app.User) + ` · ` + html.EscapeString(app.Root) + `</p>
 			</div>
-			<a class="secondary" href="/apps">Back to apps</a>
+			<div class="actions"><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/files">Files</a><a class="secondary" href="/apps">Back to apps</a></div>
 		</div>
 
 		` + alert + `
