@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"os"
+	"path/filepath"
 	"net/url"
 	"strconv"
 	"strings"
 
 	panelapp "github.com/bau59/open-go-panel/internal/app"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
+	"github.com/bau59/open-go-panel/internal/phpfpm"
 )
 
 func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
@@ -117,11 +120,15 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, "application not found", http.StatusNotFound)
 			return
 		}
-		kind := "proxy"
-		if app.Type == "static" {
-			kind = "static"
+		kind, root := "proxy", app.Root
+		if app.Type == "static" { kind = "static" }
+		if app.Type == "php" {
+			kind = "php"
+			root, err = phpDocumentRoot(app, "")
+			if err == nil { err = phpfpm.Ensure(r.Context(), app.ID, app.User) }
+			if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
 		}
-		if err := cfg.Caddy.AttachStandaloneDomain(r.Context(), id, appID, app.Port, app.Root, kind); err != nil {
+		if err := cfg.Caddy.AttachStandaloneDomain(r.Context(), id, appID, app.Port, root, kind); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -281,14 +288,19 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		kind := "proxy"
+		kind, root := "proxy", app.Root
 		if app.Type == "static" {
 			kind = "static"
+		} else if app.Type == "php" {
+			kind = "php"
+			root, err = phpDocumentRoot(app, r.FormValue("document_root"))
+			if err == nil { err = phpfpm.Ensure(r.Context(), app.ID, app.User) }
+			if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
 		} else if app.Port == 0 {
 			http.Error(w, "this app has no web port", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Caddy.SetSite(r.Context(), id, r.FormValue("domain"), app.Port, app.Root, kind); err != nil {
+		if err := cfg.Caddy.SetSite(r.Context(), id, r.FormValue("domain"), app.Port, root, kind); err != nil {
 			status := cfg.Apps.Status(r.Context(), id)
 			unit, _ := cfg.Apps.Unit(id)
 			writeHTML(w, cfg.Logger, http.StatusBadRequest, appPage(app, status, unit, err.Error()))
@@ -309,6 +321,21 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		}
 		http.Redirect(w, r, fmt.Sprintf("/apps/%d", id), http.StatusSeeOther)
 	})))
+}
+
+func phpDocumentRoot(app panelapp.App, choice string) (string, error) {
+	public := filepath.Join(app.Root, "public")
+	switch choice {
+	case "":
+		if info, err := os.Stat(public); err == nil && info.IsDir() { return public, nil }
+		return app.Root, nil
+	case "public":
+		return public, nil
+	case "root":
+		return app.Root, nil
+	default:
+		return "", fmt.Errorf("unsupported PHP document root")
+	}
 }
 
 func caddyPage(status string, sites []panelcaddy.Site, config, template string, settings panelcaddy.GlobalSettings, selectedID int64, message string) string {
@@ -378,7 +405,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			placeholderNote := `<code>{domain}</code> and <code>{port}</code>`
 			if site.Kind == "parked" { placeholderNote = `<code>{domain}</code>` }
 			if site.Kind == "redirect" { placeholderNote = `<code>{domain}</code> and <code>{root}</code>` }
-			if site.Kind == "static" {
+			if site.Kind == "static" || site.Kind == "php" {
 				placeholderNote = `<code>{domain}</code> and <code>{root}</code>`
 			}
 			selectedEditor = `
@@ -396,7 +423,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 				<div><span>Target</span><code>` + html.EscapeString(site.Target()) + `</code></div>
 				<div><span>Configuration</span><strong>` + func() string { if panelcaddy.IsManagedProxyStatic(override) { return "Managed static" }; if override != "" { return "Custom override" }; if site.AppID < 0 { if site.Kind == "redirect" { return "Managed redirect" }; return "Parked" }; return "Global defaults" }() + `</strong></div>
 			</div>
-			` + func() string { if site.AppID <= 0 || site.Kind == "static" { return "" }; return `
+			` + func() string { if site.AppID <= 0 || site.Kind == "static" || site.Kind == "php" { return "" }; return `
 			<details class="advanced-block" style="margin-top:16px">
 				<summary class="secondary">Static files from public/</summary>
 				<p class="note">Serve selected URLs directly with Caddy and proxy all other requests to the application. The panel sets directory ACL automatically.</p>
@@ -598,14 +625,14 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 }
 
 func cfgTemplateForDisplay(site panelcaddy.Site, template string, settings panelcaddy.GlobalSettings) string {
-	if site.Kind == "static" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
+	if site.Kind == "static" || site.Kind == "php" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
 		return panelcaddy.ManagedSiteTemplate(site, settings)
 	}
 	return template
 }
 
 func appDomainBlock(cfg Config, app panelapp.App) string {
-	if cfg.Caddy == nil || (app.Port == 0 && app.Type != "static") {
+	if cfg.Caddy == nil || (app.Port == 0 && app.Type != "static" && app.Type != "php") {
 		return ""
 	}
 	site, ok, err := cfg.Caddy.SiteForApp(app.ID)
