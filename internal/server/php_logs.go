@@ -43,7 +43,7 @@ func registerPHPLogRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
     mux.Handle("POST /apps/{id}/php-logs/enable", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         app, ok := loadApp(w, r)
         if !ok { return }
-        if err := phpfpm.Ensure(r.Context(), app.ID, app.User); err != nil {
+        if err := phpfpm.EnsureVersion(r.Context(), app.ID, app.User, app.Service.PHPVersion); err != nil {
             writeHTML(w, cfg.Logger, http.StatusBadRequest,
                 phpErrorLogsPage(app, phpfpm.ErrorLoggingConfigured(app.ID), "", "Enable PHP error logging: "+err.Error()))
             return
