@@ -513,6 +513,16 @@ func runAsUserEnv(ctx context.Context, username, dir string, env []string, name 
 	return string(out), nil
 }
 
+// WithFileOperation serializes file changes with staged Git deployment and
+// rollback. Files must be opened after this lock is acquired, so operations
+// never target an application tree that was atomically exchanged.
+func (m *Manager) WithFileOperation(ctx context.Context, operation func() error) error {
+    m.deployMu.Lock()
+    defer m.deployMu.Unlock()
+    if err := ctx.Err(); err != nil { return err }
+    return operation()
+}
+
 func (m *Manager) Deploy(ctx context.Context, id int64) error {
 	m.deployMu.Lock()
 	defer m.deployMu.Unlock()
