@@ -602,7 +602,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 				<div class="actions app-quick-actions">
 					<a class="secondary compact-action" href="/apps/%d">Open</a>
 					%s
-					<a class="secondary compact-action" href="/apps/%d/logs">App logs</a>
+					%s
 					<a class="secondary compact-action" href="/apps/%d/caddy-logs">Caddy logs</a>
 				</div>
 			</td>
@@ -622,7 +622,10 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 				}
 				return `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><input type="hidden" name="return_to" value="/apps"><button class="secondary compact-action">Restart</button></form>`
 			}(),
-			app.ID,
+			func() string {
+				if app.Type == "static" || app.Type == "php" { return "" }
+				return `<a class="secondary compact-action" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">App logs</a>`
+			}(),
 			app.ID,
 		)
 	}
