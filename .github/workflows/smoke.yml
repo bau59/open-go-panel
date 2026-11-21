@@ -129,6 +129,14 @@ jobs:
           move_code="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'action=move&dir=&name=ogp-file-upload.txt&destination=assets/test.txt' http://127.0.0.1:8443/apps/1/files)"
           test "$move_code" = "303"
           curl -fsS -b /tmp/ogp-cookies 'http://127.0.0.1:8443/apps/1/files/download?dir=assets&name=test.txt' | grep -qx 'file-manager-smoke'
+          FILE_HASH="$(curl -fsS -b /tmp/ogp-cookies 'http://127.0.0.1:8443/apps/1/files?dir=assets&edit=test.txt' | grep -o 'name="base_sha256" value="[0-9a-f]*"' | head -n1 | cut -d '"' -f4)"
+          test -n "$FILE_HASH"
+          SAVE_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'action=save&dir=assets&name=test.txt' --data-urlencode "base_sha256=$FILE_HASH" --data-urlencode 'content=updated-file' http://127.0.0.1:8443/apps/1/files)"
+          test "$SAVE_CODE" = "303"
+          curl -fsS -b /tmp/ogp-cookies 'http://127.0.0.1:8443/apps/1/files/download?dir=assets&name=test.txt' | grep -qx 'updated-file'
+          STALE_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'action=save&dir=assets&name=test.txt' --data-urlencode "base_sha256=$FILE_HASH" --data-urlencode 'content=stale-overwrite' http://127.0.0.1:8443/apps/1/files)"
+          test "$STALE_CODE" = "400"
+          curl -fsS -b /tmp/ogp-cookies 'http://127.0.0.1:8443/apps/1/files/download?dir=assets&name=test.txt' | grep -qx 'updated-file'
 
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server redis-tools
