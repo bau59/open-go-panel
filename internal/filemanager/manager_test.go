@@ -173,3 +173,29 @@ func TestZIPFormatDiagnostics(t *testing.T) {
         })
     }
 }
+
+func TestCorruptZIPDoesNotPartiallyExtract(t *testing.T) {
+    manager, root := openTestManager(t)
+    var buffer bytes.Buffer
+    writer := zip.NewWriter(&buffer)
+    for _, entry := range []struct{ name, body string }{
+        {"site/first.txt", "first-valid"},
+        {"site/broken.txt", "second-damaged-payload"},
+    } {
+        header := &zip.FileHeader{Name: entry.name, Method: zip.Store}
+        output, err := writer.CreateHeader(header)
+        if err != nil { t.Fatal(err) }
+        if _, err := io.WriteString(output, entry.body); err != nil { t.Fatal(err) }
+    }
+    if err := writer.Close(); err != nil { t.Fatal(err) }
+    data := buffer.Bytes()
+    at := bytes.Index(data, []byte("second-damaged-payload"))
+    if at < 0 { t.Fatal("ZIP test fixture missing second entry") }
+    data[at] ^= 0x11 // Break the CRC while preserving the central directory.
+    if err := manager.Upload("", "damaged.zip", bytes.NewReader(data)); err != nil { t.Fatal(err) }
+    count, err := manager.Extract("", "damaged.zip")
+    if err == nil || count != 0 { t.Fatalf("corrupt ZIP accepted: count=%d error=%v", count, err) }
+    if _, err := os.Stat(filepath.Join(root, "site")); !os.IsNotExist(err) {
+        t.Fatalf("partial site extracted before CRC failure: %v", err)
+    }
+}
