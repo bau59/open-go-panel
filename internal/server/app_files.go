@@ -2,6 +2,8 @@ package server
 
 import (
     "crypto/sha256"
+    "errors"
+    "time"
     "fmt"
     "html"
     "io"
@@ -52,6 +54,16 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     })))
 
     mux.Handle("POST /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.FormValue("action") == "extract" {
+            // Archive extraction can write tens of thousands of PHP files.
+            // The panel's normal 30s HTTP write deadline is far too short;
+            // extend only this operation without changing other requests.
+            controller := http.NewResponseController(w)
+            if err := controller.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+                http.Error(w, "cannot set extraction response deadline", http.StatusServiceUnavailable)
+                return
+            }
+        }
         // Take the same lock used by Git deploy/rollback before opening the
         // application root. A release exchange cannot discard these changes.
         lockErr := cfg.Apps.WithFileOperation(r.Context(), func() error {
