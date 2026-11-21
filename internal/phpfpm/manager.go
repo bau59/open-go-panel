@@ -12,10 +12,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-var accountNameRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+var (
+	accountNameRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+	phpVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+	poolMu sync.Mutex
+)
 
 type Runtime struct {
 	Version string
@@ -53,7 +58,7 @@ func runtimes() ([]Runtime, error) {
 	var found []Runtime
 	for _, dir := range dirs {
 		version := filepath.Base(filepath.Dir(filepath.Dir(dir)))
-		if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(version) { continue }
+		if !phpVersionRE.MatchString(version) { continue }
 		binary := "/usr/sbin/php-fpm" + version
 		if info, err := os.Stat(binary); err != nil || info.IsDir() { continue }
 		found = append(found, Runtime{
@@ -114,6 +119,8 @@ func writePool(path, data string) error {
 // Ensure gives each application its own on-demand PHP-FPM pool running as its
 // Linux owner. The FastCGI socket is accessible to Caddy, not other apps.
 func Ensure(ctx context.Context, id int64, username string) error {
+	poolMu.Lock()
+	defer poolMu.Unlock()
 	if id <= 0 { return errors.New("invalid PHP application id") }
 	runtime, err := Detect()
 	if err != nil { return err }
@@ -158,6 +165,7 @@ func Ensure(ctx context.Context, id int64, username string) error {
 		if err := ctx.Err(); err != nil { return err }
 		time.Sleep(100 * time.Millisecond)
 	}
+	rollback()
 	return fmt.Errorf("PHP-FPM socket %s was not created", Socket(id))
 }
 
@@ -175,6 +183,8 @@ func Status(ctx context.Context, id int64) string {
 }
 
 func Remove(ctx context.Context, id int64) error {
+	poolMu.Lock()
+	defer poolMu.Unlock()
 	found, err := runtimes()
 	if err != nil { return err }
 	for _, runtime := range found {
