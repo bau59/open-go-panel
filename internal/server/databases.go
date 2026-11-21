@@ -396,7 +396,15 @@ func databasesPage(data databasePageData) string {
 	if data.ImportTask.Running {
 		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>` + importKind + ` import into database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` · ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup is created before changes. Import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
 	} else if data.ImportTask.Error != "" {
-		importNotice = `<div class="alert import-status"><div><strong>` + importKind + ` import failed</strong><p>` + html.EscapeString(data.ImportTask.Error) + `</p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
+		failure := data.ImportTask.Error
+		guidance := ""
+		if data.ImportTask.SourceKind == "file" {
+			failure = strings.TrimPrefix(failure, "SQL file import failed: ")
+			if strings.Contains(failure, "ERROR 1064") {
+				guidance = `<p class="note">MySQL rejected the SQL syntax in the uploaded dump. Check the reported line in the source file; the panel does not rewrite SQL statements.</p>`
+			}
+		}
+		importNotice = `<div class="alert import-status"><div><strong>` + importKind + ` import failed</strong><p>` + html.EscapeString(failure) + `</p>` + guidance + `</div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	} else if !data.ImportTask.FinishedAt.IsZero() {
 		importNotice = `<div class="alert import-status success"><div><strong>` + importKind + ` import completed</strong><p>Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	}
@@ -534,16 +542,16 @@ func databasesPage(data databasePageData) string {
 					<details class="db-action-menu">
 						<summary class="secondary">Import SQL</summary>
 						<div class="inline-popover wide">
-							<form method="post" action="/databases/%d/import/file" enctype="multipart/form-data" onsubmit="return confirm(this.elements.mode.value === 'replace' ? 'Replace this database with the SQL file? A safety backup will be created first.' : 'Execute this SQL file against the current database? A safety backup will be created first.')">
-								<label>SQL file</label>
-								<input type="file" name="file" accept=".sql,.sql.gz" required>
-								<label style="margin-top:10px">Import mode</label>
+							<form class="db-sql-import-form" method="post" action="/databases/%d/import/file" enctype="multipart/form-data" onsubmit="return confirm(this.elements.mode.value === 'replace' ? 'Replace this database with the SQL file? A safety backup will be created first.' : 'Execute this SQL file against the current database? A safety backup will be created first.')">
+								<label>SQL file · max 1 GiB</label>
+								<input class="file-upload-input" type="file" name="file" accept=".sql,.sql.gz" required>
+								<label>Import mode</label>
 								<select name="mode">
 									<option value="apply">Apply to existing database</option>
 									<option value="replace">Replace database contents</option>
 								</select>
-								<p class="note" style="margin:8px 0 0">.sql or .sql.gz · max 1 GiB. Runs as the database user, with a safety backup and recovery on error.</p>
-								<button class="button" style="margin-top:10px">Upload & import</button>
+								<p class="note">.sql or .sql.gz. Uses the database user. A safety backup is created before import; failures trigger recovery.</p>
+								<button class="button">Upload &amp; import</button>
 							</form>
 						</div>
 					</details>

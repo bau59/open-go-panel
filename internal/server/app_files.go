@@ -2,6 +2,8 @@ package server
 
 import (
     "crypto/sha256"
+    "errors"
+    "time"
     "fmt"
     "html"
     "io"
@@ -52,6 +54,16 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     })))
 
     mux.Handle("POST /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.FormValue("action") == "extract" {
+            // Archive extraction can write tens of thousands of PHP files.
+            // The panel's normal 30s HTTP write deadline is far too short;
+            // extend only this operation without changing other requests.
+            controller := http.NewResponseController(w)
+            if err := controller.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+                http.Error(w, "cannot set extraction response deadline", http.StatusServiceUnavailable)
+                return
+            }
+        }
         // Take the same lock used by Git deploy/rollback before opening the
         // application root. A release exchange cannot discard these changes.
         lockErr := cfg.Apps.WithFileOperation(r.Context(), func() error {
@@ -96,6 +108,19 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
                     err = fmt.Errorf("upload exceeds 1 GiB limit")
                 } else {
                     err = files.Upload(folder, header.Filename, input)
+                    if err == nil {
+                        // The upload passes through a multipart temporary
+                        // file and a user-owned helper process. Confirm no
+                        // bytes were lost in that transfer before reporting
+                        // success. Do not keep a truncated destination.
+                        storedSize, statErr := files.FileSize(folder, header.Filename)
+                        if statErr != nil {
+                            err = fmt.Errorf("verify uploaded file: %w", statErr)
+                        } else if storedSize != header.Size {
+                            _ = files.Delete(folder, header.Filename)
+                            err = fmt.Errorf("incomplete file transfer: received %d of %d bytes; try uploading again", storedSize, header.Size)
+                        }
+                    }
                 }
             }
         default:
@@ -275,7 +300,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 <form method="post" action="%s" enctype="multipart/form-data" class="fileman-tool">
                     %s<label class="fileman-tool-label" for="fileman-upload-file">Upload file <span>Max 1 GiB</span></label>
                     <div class="fileman-control-row">
-                        <input id="fileman-upload-file" class="fileman-file-input" type="file" name="file" required>
+                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required>
                         <button class="button" type="submit">Upload</button>
                     </div>
                 </form>
@@ -305,9 +330,6 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         .fileman-control-row{display:flex;align-items:center;gap:8px;min-width:0}
         .fileman-control-row input{flex:1 1 auto;min-width:0;width:100%;height:42px}
         .fileman-control-row button,.fileman-tool-new>a{flex:0 0 auto;height:42px;white-space:nowrap}
-        .fileman-file-input{display:block;padding:0;overflow:hidden;color:var(--text);font-size:12px;line-height:40px}
-        .fileman-file-input::file-selector-button{height:40px;margin:0 12px 0 0;padding:0 13px;border:0;border-right:1px solid var(--border-strong);border-radius:10px 0 0 10px;background:rgba(68,103,151,.38);color:#d9e9fa;font:inherit;font-weight:700;cursor:pointer}
-        .fileman-file-input:hover::file-selector-button{background:rgba(85,128,183,.53)}
         .fileman-tool-new>a{align-self:flex-start}
         .fileman-table{overflow-x:auto}
         .fileman-table td:first-child{overflow-wrap:anywhere}

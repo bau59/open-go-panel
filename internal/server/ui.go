@@ -130,6 +130,12 @@ const baseStyles = `
 	textarea{padding:11px 12px;resize:vertical}
 	input:focus,select:focus,textarea:focus{border-color:#89c8ff;box-shadow:0 0 0 3px rgba(103,188,255,.18)}
 	input::placeholder,textarea::placeholder{color:#849bb9}
+	/* Shared native upload control: consistent file selector across app and DB pages. */
+	.file-upload-input{display:block;width:100%;min-width:0;height:42px;padding:0;overflow:hidden;color:var(--text);font-size:12px;line-height:40px}
+	.file-upload-input::file-selector-button{height:40px;margin:0 12px 0 0;padding:0 13px;border:0;border-right:1px solid var(--border-strong);border-radius:10px 0 0 10px;background:rgba(68,103,151,.38);color:#d9e9fa;font:inherit;font-weight:700;cursor:pointer}
+	.file-upload-input:hover::file-selector-button{background:rgba(85,128,183,.53)}
+	.file-upload-input:focus-visible{border-color:#89c8ff;box-shadow:0 0 0 3px rgba(103,188,255,.18)}
+
 	label{display:block;margin-bottom:7px;color:#b8c0cd;font-size:12px;font-weight:700}
 	table{width:100%;border-collapse:collapse}
 	th{padding:13px 16px;border-bottom:1px solid var(--border);color:#abc4df;font-size:10px;text-align:left;text-transform:uppercase;letter-spacing:.085em;font-weight:800;background:rgba(17,40,74,.29)}
@@ -450,6 +456,12 @@ const baseStyles = `
 	.db-row-actions>details{position:relative}
 	.db-row-actions .inline-popover{box-sizing:border-box;max-width:min(460px,calc(100vw - 36px));white-space:normal;text-align:left}
 	.db-row-actions .inline-popover code{overflow-wrap:anywhere}
+	.db-sql-import-form{display:grid;gap:10px;min-width:0}
+	.db-sql-import-form label{margin:0}
+	.db-sql-import-form .file-upload-input,.db-sql-import-form select{min-width:0;max-width:100%}
+	.db-sql-import-form .note{margin:0;line-height:1.45;overflow-wrap:anywhere}
+	.db-sql-import-form .button{justify-self:start;margin-top:2px}
+
 	.db-backup-file{flex:1;min-width:0;overflow-wrap:anywhere}
 	.db-backup-file strong{font-size:12px}
 	.db-backup-actions{flex-shrink:0;justify-content:flex-end}

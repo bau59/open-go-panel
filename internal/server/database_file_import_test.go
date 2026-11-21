@@ -19,7 +19,7 @@ func TestDatabaseSQLUploadMenu(t *testing.T) {
         if !strings.Contains(page, url) { t.Errorf("missing file import form %q", url) }
     }
     for _, required := range []string{
-        `enctype="multipart/form-data"`, `name="file"`, `accept=".sql,.sql.gz"`,
+        `enctype="multipart/form-data"`, `class="file-upload-input"`, `name="file"`, `accept=".sql,.sql.gz"`,
         `name="mode"`, `value="apply"`, `value="replace"`,
         `Import SQL`, `Upload &amp; import`,
     } {
@@ -41,5 +41,24 @@ func TestSQLFileImportTaskEscapesFilename(t *testing.T) {
     }
     if !strings.Contains(page, "SQL file import into database #1") {
         t.Fatal("missing SQL upload task status")
+    }
+}
+
+func TestSQLSyntaxErrorDisplay(t *testing.T) {
+    page := databasesPage(databasePageData{
+        ImportTask: dbmanager.RemoteImportTask{
+            DatabaseID: 5,
+            SourceKind: "file",
+            Error: "SQL file import failed: execute SQL file: ERROR 1064 (42000) at line 167; target recovered from safety backup",
+        },
+    })
+    if !strings.Contains(page, "MySQL rejected the SQL syntax") {
+        t.Fatal("SQL file syntax errors should explain that the dump needs correction")
+    }
+    if strings.Contains(page, "SQL file import failed: execute SQL file:") {
+        t.Fatal("SQL import error repeats the alert heading")
+    }
+    if !strings.Contains(page, "line 167") || !strings.Contains(page, "target recovered") {
+        t.Fatal("SQL import error lost source line or recovery status")
     }
 }
