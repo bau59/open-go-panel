@@ -17,13 +17,14 @@ import (
     "unicode/utf8"
 
     "golang.org/x/sys/unix"
+    "github.com/bau59/open-go-panel/internal/uploadlimits"
 )
 
 const (
     MaxEditBytes = 2 << 20
-    MaxUploadBytes = 128 << 20
-    MaxArchiveBytes = 128 << 20
-    MaxExtractBytes = 256 << 20
+    MaxUploadBytes = uploadlimits.FileBytes
+    MaxArchiveBytes = uploadlimits.FileBytes
+    MaxExtractBytes = uploadlimits.ExpandedBytes
     MaxArchiveEntries = 10000
     MaxDirectoryEntries = 400
     maxDepth = 32
@@ -238,7 +239,7 @@ func (m *Manager) Copy(folder, name, destination string) error {
     file, info, err := m.openFile(folder, name)
     if err != nil { return err }
     defer file.Close()
-    if info.Size() > MaxUploadBytes { return errors.New("copy source exceeds 128 MiB") }
+    if info.Size() > MaxUploadBytes { return errors.New("copy source exceeds 1 GiB") }
     return m.write(targetDir, targetName, file, MaxUploadBytes, false)
 }
 
@@ -314,7 +315,7 @@ func (m *Manager) extractEntry(folder, name string, directory bool, size int64, 
         _, err := m.makeDirectories(folder, cleaned)
         return err
     }
-    if size < 0 || size > 64<<20 || size > *remaining { return errors.New("archive entry exceeds extraction limit") }
+    if size < 0 || size > MaxUploadBytes || size > *remaining { return errors.New("archive entry exceeds extraction limit") }
     parent := path.Dir(cleaned)
     target := folder
     if parent != "." {
@@ -334,7 +335,7 @@ func (m *Manager) Extract(folder, name string) (int, error) {
     file, info, err := m.openFile(folder, name)
     if err != nil { return 0, err }
     defer file.Close()
-    if info.Size() > MaxArchiveBytes { return 0, errors.New("archive exceeds 128 MiB") }
+    if info.Size() > MaxArchiveBytes { return 0, errors.New("archive exceeds 1 GiB") }
     remaining := int64(MaxExtractBytes)
     count := 0
 
@@ -350,7 +351,7 @@ func (m *Manager) Extract(folder, name string) (int, error) {
             cleaned, directory, err := validateArchiveName(item.Name)
             if err != nil { return count, err }
             size := int64(item.UncompressedSize64)
-            if item.UncompressedSize64 > 64<<20 { return count, errors.New("archive entry too large") }
+            if item.UncompressedSize64 > uint64(MaxUploadBytes) { return count, errors.New("archive entry too large") }
             if directory {
                 if err := m.extractEntry(folder, cleaned, true, 0, nil, &remaining); err != nil { return count, err }
             } else {
