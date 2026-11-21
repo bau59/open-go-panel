@@ -166,11 +166,18 @@ func validateLoaderELF(data []byte, machine uint16) error {
     return nil
 }
 
+const (
+    ionCubeMaxArchiveBytes = 64 << 20
+    ionCubeDownloadAttempts = 3
+)
+
+// downloadIonCube retries only network failures (including interrupted body
+// reads) and transient HTTP status codes. Never use bytes from a partial
+// response, and never retry malformed/unsupported loader binaries.
 func downloadIonCube(ctx context.Context, version, arch string) ([]byte, error) {
     url, machine, err := ionCubeURL(arch)
     if err != nil { return nil, err }
-    request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-    if err != nil { return nil, err }
+
     client := &http.Client{
         Timeout: 4*time.Minute,
         CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -180,16 +187,69 @@ func downloadIonCube(ctx context.Context, version, arch string) ([]byte, error) 
             return nil
         },
     }
+    return downloadIonCubeWithRetry(ctx, client, url, version, machine)
+}
+
+func downloadIonCubeWithRetry(ctx context.Context, client *http.Client, url, version string, machine uint16) ([]byte, error) {
+    var lastErr error
+    for attempt := 1; attempt <= ionCubeDownloadAttempts; attempt++ {
+        if err := ctx.Err(); err != nil { return nil, err }
+        data, retryable, err := fetchIonCubeOnce(ctx, client, url, version, machine)
+        if err == nil { return data, nil }
+        lastErr = err
+        if !retryable || attempt == ionCubeDownloadAttempts {
+            return nil, fmt.Errorf("ionCube download attempt %d/%d: %w", attempt, ionCubeDownloadAttempts, lastErr)
+        }
+        // Short bounded backoff and cancellation between attempts.
+        timer := time.NewTimer(time.Duration(attempt*2) * time.Second)
+        select {
+        case <-ctx.Done():
+            timer.Stop()
+            return nil, ctx.Err()
+        case <-timer.C:
+        }
+    }
+    return nil, lastErr
+}
+
+func fetchIonCubeOnce(ctx context.Context, client *http.Client, url, version string, machine uint16) ([]byte, bool, error) {
+    request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+    if err != nil { return nil, false, err }
+    request.Header.Set("Accept-Encoding", "identity")
     response, err := client.Do(request)
-    if err != nil { return nil, fmt.Errorf("download ionCube from official host: %w", err) }
+    if err != nil { return nil, ctx.Err() == nil, fmt.Errorf("contact official ionCube host: %w", err) }
     defer response.Body.Close()
+
     if response.StatusCode != http.StatusOK {
-        return nil, fmt.Errorf("ionCube download HTTP status %d", response.StatusCode)
+        retryable := response.StatusCode == http.StatusRequestTimeout ||
+            response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
+        return nil, retryable, fmt.Errorf("ionCube download HTTP status %d", response.StatusCode)
     }
-    if response.ContentLength > 64<<20 {
-        return nil, errors.New("ionCube package exceeds 64 MiB")
+    if response.ContentLength > ionCubeMaxArchiveBytes {
+        return nil, false, errors.New("ionCube package exceeds 64 MiB")
     }
-    return extractIonCube(response.Body, version, machine)
+
+    // Download the complete vendor archive to a private temporary file.
+    // Extracting directly from the HTTP stream could accept a partial
+    // archive if the matching loader happened to appear before the timeout.
+    archive, err := os.CreateTemp("", "ogp-ioncube-download-*")
+    if err != nil { return nil, false, fmt.Errorf("stage ionCube package: %w", err) }
+    defer os.Remove(archive.Name())
+    defer archive.Close()
+    if err := archive.Chmod(0600); err != nil { return nil, false, err }
+
+    size, err := io.Copy(archive, io.LimitReader(response.Body, ionCubeMaxArchiveBytes+1))
+    if err != nil { return nil, ctx.Err() == nil, fmt.Errorf("read ionCube download (%d bytes received): %w", size, err) }
+    if size > ionCubeMaxArchiveBytes {
+        return nil, false, errors.New("ionCube package exceeds 64 MiB")
+    }
+    if size == 0 || (response.ContentLength >= 0 && size != response.ContentLength) {
+        return nil, true, fmt.Errorf("incomplete ionCube download: received %d bytes, expected %d", size, response.ContentLength)
+    }
+    if _, err := archive.Seek(0, io.SeekStart); err != nil { return nil, false, err }
+    loader, err := extractIonCube(archive, version, machine)
+    if err != nil { return nil, false, err }
+    return loader, false, nil
 }
 
 func ionCubeLoaded(output []byte) bool {
