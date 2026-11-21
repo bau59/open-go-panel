@@ -5,6 +5,7 @@ import (
     "compress/gzip"
     "context"
     "debug/elf"
+    _ "embed"
     "errors"
     "fmt"
     "io"
@@ -104,18 +105,8 @@ func extractLegacyLoader(archive io.Reader) ([]byte, error) {
     return content, nil
 }
 
-const legacyDockerfile = `FROM php:7.4-fpm-bullseye
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-      libfreetype6-dev libjpeg62-turbo-dev libpng-dev libzip-dev libonig-dev \
-      libicu-dev libmagickwand-dev; \
-    docker-php-ext-configure gd --with-freetype --with-jpeg; \
-    docker-php-ext-install -j2 mysqli pdo_mysql gd zip mbstring intl opcache bcmath; \
-    pecl install imagick-3.7.0; \
-    docker-php-ext-enable imagick; \
-    rm -rf /var/lib/apt/lists/*
-`
+//go:embed php74.Dockerfile
+var legacyDockerfile string
 
 // BuildLegacyImage is called only by the existing asynchronous Software task.
 // The build uses an upstream official PHP image and never downloads ionCube;
