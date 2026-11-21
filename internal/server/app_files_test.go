@@ -3,6 +3,7 @@ package server
 import (
     "bytes"
     "io"
+    "html"
     "os/user"
     "log/slog"
     "mime/multipart"
@@ -82,7 +83,7 @@ func TestFileEditorPreservesDraftAndRevision(t *testing.T) {
     staleHash := strings.Repeat("a", 64)
     page, err = fileManagerPage(app, files, "", "index.php", false, "Conflict", "", draft, staleHash)
     if err != nil { t.Fatal(err) }
-    if !strings.Contains(page, "Conflict") || !strings.Contains(page, draft) {
+    if !strings.Contains(page, "Conflict") || !strings.Contains(page, html.EscapeString(draft)) {
         t.Fatal("draft editor content disappeared after an error")
     }
     if !strings.Contains(page, `name="base_sha256" value="`+staleHash+`"`) {
