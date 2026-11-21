@@ -50,6 +50,16 @@ func allowedPHPExtension(id string) bool {
 func (m *Manager) PHPExtensions() (string, []PHPExtension) {
     php, err := phpfpm.Detect()
     if err != nil { return "", nil }
+    return php.Version, extensionsForRuntime(php)
+}
+
+func (m *Manager) PHPExtensionsVersion(version string) ([]PHPExtension, error) {
+    php, err := phpfpm.DetectVersion(version)
+    if err != nil { return nil, err }
+    return extensionsForRuntime(php), nil
+}
+
+func extensionsForRuntime(php phpfpm.Runtime) []PHPExtension {
     var result []PHPExtension
     for _, item := range phpExtensionNames {
         files, _ := filepath.Glob(filepath.Join("/etc/php", php.Version, "fpm", "conf.d", "*-"+item.ID+".ini"))
@@ -60,13 +70,24 @@ func (m *Manager) PHPExtensions() (string, []PHPExtension) {
             ID: item.ID, Name: item.Name, Installed: len(files) != 0,
         })
     }
-    return php.Version, result
+    return result
 }
 
 func (m *Manager) StartPHPExtension(id string) error {
     if !allowedPHPExtension(id) { return errors.New("unsupported PHP extension") }
     php, err := phpfpm.Detect()
     if err != nil { return err }
+    return m.startPHPExtension(php, id)
+}
+
+func (m *Manager) StartPHPExtensionVersion(version, id string) error {
+    if !allowedPHPExtension(id) { return errors.New("unsupported PHP extension") }
+    php, err := phpfpm.DetectVersion(version)
+    if err != nil { return err }
+    return m.startPHPExtension(php, id)
+}
+
+func (m *Manager) startPHPExtension(php phpfpm.Runtime, id string) error {
     m.mu.Lock()
     if m.task.Running {
         current := m.task
@@ -265,6 +286,16 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     arch := runtime.GOARCH
     data, err := downloadIonCube(ctx, php.Version, arch)
     if err != nil { return err }
+    return installIonCubeData(ctx, php, data)
+}
+
+func installIonCubeData(ctx context.Context, php phpfpm.Runtime, data []byte) error {
+    arch := runtime.GOARCH
+    if _, machine, err := ionCubeURL(arch); err != nil {
+        return err
+    } else if err := validateLoaderELF(data, machine); err != nil {
+        return err
+    }
 
     dir := filepath.Join("/usr/local/lib/open-go-panel/ioncube", arch)
     if err := os.MkdirAll(dir, 0755); err != nil { return err }
@@ -335,4 +366,37 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
         return fmt.Errorf("ionCube PHP-FPM reload failed (previous config restored): %w", err)
     }
     return nil
+}
+
+
+// UploadIonCubeArchive installs a locally supplied official ionCube tarball
+// for a specific installed PHP-FPM version. This avoids relying on the
+// upstream download host during setup.
+func (m *Manager) UploadIonCubeArchive(ctx context.Context, version string, archive io.Reader) (err error) {
+    php, err := phpfpm.DetectVersion(version)
+    if err != nil { return err }
+    _, machine, err := ionCubeURL(runtime.GOARCH)
+    if err != nil { return err }
+
+    m.mu.Lock()
+    if m.task.Running {
+        task := m.task
+        m.mu.Unlock()
+        return fmt.Errorf("%s %s is already running", task.Action, task.SoftwareID)
+    }
+    m.task = Task{
+        SoftwareID: "PHP "+php.Version+" ioncube", Action: "upload extension",
+        Running: true, StartedAt: time.Now(),
+    }
+    m.mu.Unlock()
+    defer func() {
+        m.mu.Lock()
+        m.task.Running = false
+        m.task.FinishedAt = time.Now()
+        if err != nil { m.task.Error = err.Error() } else { m.task.Error = "" }
+        m.mu.Unlock()
+    }()
+    data, err := extractIonCube(io.LimitReader(archive, ionCubeMaxArchiveBytes+1), php.Version, machine)
+    if err != nil { return err }
+    return installIonCubeData(ctx, php, data)
 }
