@@ -93,7 +93,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             if err == nil {
                 defer input.Close()
                 if header.Size > filemanager.MaxUploadBytes {
-                    err = fmt.Errorf("upload exceeds 128 MiB limit")
+                    err = fmt.Errorf("upload exceeds 1 GiB limit")
                 } else {
                     err = files.Upload(folder, header.Filename, input)
                 }
@@ -273,7 +273,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         fmt.Fprintf(&content, `<section class="panel panel-pad fileman-panel">
             <div class="fileman-tools">
                 <form method="post" action="%s" enctype="multipart/form-data" class="fileman-tool">
-                    %s<label>Upload file (max 128 MiB)</label>
+                    %s<label>Upload file (max 1 GiB)</label>
                     <input type="file" name="file" required>
                     <button class="button">Upload</button>
                 </form>
