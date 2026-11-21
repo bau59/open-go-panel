@@ -216,7 +216,7 @@ func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editN
                 <div class="fileman-popover">
                     <form method="post" action="`+actionURL+`">
                         `+fileHidden("move", folder, item.Name)+`
-                        <label>Move / rename to</label><input name="destination" required placeholder="folder/new-name">
+                        <label>Move / rename to (from app root)</label><input name="destination" required value="`+html.EscapeString(func() string { if folder == "" { return item.Name }; return folder+"/"+item.Name }())+`" placeholder="folder/new-name">
                         <button class="secondary compact-action">Move</button>
                     </form>`)
             if !item.Directory && !item.Symlink {
@@ -264,7 +264,7 @@ func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editN
         .fileman-actions{justify-content:flex-end;flex-wrap:nowrap}
         .fileman-more{position:relative}
         .fileman-more>summary{cursor:pointer;list-style:none;white-space:nowrap}
-        .fileman-popover{position:absolute;right:0;top:100%;z-index:15;min-width:min(300px,80vw);padding:14px;border:1px solid #425a78;border-radius:12px;background:#172a43;box-shadow:0 16px 36px rgba(0,0,0,.35)}
+        .fileman-popover{position:static;min-width:min(300px,80vw);margin-top:9px;padding:14px;border:1px solid #425a78;border-radius:12px;background:#172a43}
         .fileman-popover form{display:grid;gap:8px;margin-bottom:14px}
         .fileman-popover form:last-child{margin-bottom:0}
         .fileman-popover input{min-width:0}
