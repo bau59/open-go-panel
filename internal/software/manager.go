@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bau59/open-go-panel/internal/phpfpm"
 )
 
 type Item struct {
@@ -41,6 +43,7 @@ func (m *Manager) Items(ctx context.Context) []Item {
 	return []Item{
 		dockerStatus(ctx),
 		nodeStatus(ctx),
+		phpStatus(ctx),
 		tailwindStatus(ctx),
 		goStatus(ctx),
 		airStatus(ctx),
@@ -93,7 +96,7 @@ func (m *Manager) Start(id, action string) error {
 
 func supportedID(id string) bool {
 	switch id {
-	case "docker", "node", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
+	case "docker", "node", "php", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
 		return true
 	default:
 		return false
@@ -106,6 +109,8 @@ func (m *Manager) run(ctx context.Context, id string) error {
 		return installDocker(ctx)
 	case "node":
 		return installNode(ctx)
+	case "php":
+		return aptInstall(ctx, "php-fpm", "php-cli", "php-mysql", "php-mbstring", "php-xml", "php-curl", "php-zip")
 	case "tailwind":
 		return installTailwind(ctx)
 	case "go":
@@ -135,6 +140,22 @@ func dockerStatus(ctx context.Context) Item {
 		if compose, err := commandOutput(ctx, "docker", "compose", "version", "--short"); err == nil {
 			item.Version += " · Compose " + strings.TrimSpace(compose)
 		}
+	}
+	return item
+}
+
+func phpStatus(ctx context.Context) Item {
+	item := Item{
+		ID: "php", Name: "PHP + PHP-FPM",
+		Description: "PHP FastCGI runtime with common extensions for managed PHP websites.",
+		Detail: "Ubuntu packages: php-fpm, php-cli, php-mysql, php-mbstring, php-xml, php-curl, php-zip.",
+	}
+	runtime, err := phpfpm.Detect()
+	if err != nil { item.Version = "not installed"; return item }
+	item.Installed = true
+	item.Version = "PHP-FPM " + runtime.Version
+	if output, err := commandOutput(ctx, "php", "-v"); err == nil {
+		item.Version += " · " + strings.Split(strings.TrimSpace(output), "\n")[0]
 	}
 	return item
 }

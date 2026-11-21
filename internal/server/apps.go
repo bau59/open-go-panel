@@ -602,7 +602,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 				<div class="actions app-quick-actions">
 					<a class="secondary compact-action" href="/apps/%d">Open</a>
 					%s
-					<a class="secondary compact-action" href="/apps/%d/logs">App logs</a>
+					%s
 					<a class="secondary compact-action" href="/apps/%d/caddy-logs">Caddy logs</a>
 				</div>
 			</td>
@@ -617,12 +617,15 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 			html.EscapeString(app.Root),
 			app.ID,
 			func() string {
-				if app.Type == "static" {
+				if app.Type == "static" || app.Type == "php" {
 					return ""
 				}
 				return `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><input type="hidden" name="return_to" value="/apps"><button class="secondary compact-action">Restart</button></form>`
 			}(),
-			app.ID,
+			func() string {
+				if app.Type == "static" || app.Type == "php" { return "" }
+				return `<a class="secondary compact-action" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/logs">App logs</a>`
+			}(),
 			app.ID,
 		)
 	}
@@ -664,6 +667,7 @@ func appsPage(apps []panelapp.App, users []linuxuser.User, message string) strin
 					<option value="go">Go web app</option>
 					<option value="node">Node.js web app</option>
 					<option value="static">Static site</option>
+					<option value="php">PHP web app (PHP-FPM)</option>
 					<option value="worker">Worker / bot</option>
 				</select>
 				<button class="button"` + disabled + `>Create app</button>
@@ -754,7 +758,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 	serviceName := "served directly by Caddy"
 	runtimeActions := ""
 	serviceBlock := ""
-	if app.Type != "static" {
+	if app.Type != "static" && app.Type != "php" {
 		runMode = svc.RunMode
 		autoStart = "disabled"
 		if svc.AutoStart {
@@ -874,7 +878,16 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		</details>`
 	}
 
+	if app.Type == "php" {
+		runMode = "PHP-FPM · dedicated pool"
+		serviceName = "PHP-FPM (shared daemon)"
+		autoStart = "PHP-FPM service"
+		resourceLimit = "shared runtime"
+		runtimeActions = `<div class="actions runtime-actions"><a class="secondary" href="/terminal?user=` + html.EscapeString(app.User) + `&app=` + fmt.Sprintf("%d", app.ID) + `">Terminal</a><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/caddy-logs">Caddy logs</a></div>`
+	}
+
 	portFact := `<div><span>Port</span><code>` + port + `</code></div>`
+	if app.Type == "php" { portFact = `<div><span>Transport</span><code>PHP-FPM socket</code></div>` }
 	if app.Type == "go" || app.Type == "node" {
 		portFact = `
 			<div class="runtime-port-fact">
@@ -1318,8 +1331,8 @@ func appResourcesScript() string {
 				const cpu = scope.querySelector('[data-resource="cpu"]');
 				const memory = scope.querySelector('[data-resource="memory"]');
 				const tasks = scope.querySelector('[data-resource="tasks"]');
-				if (usage.state === 'static') {
-					if (cpu) cpu.textContent = 'Caddy';
+				if (usage.state === 'static' || usage.state === 'php') {
+					if (cpu) cpu.textContent = usage.state === 'php' ? 'PHP-FPM' : 'Caddy';
 					if (memory) memory.textContent = 'shared';
 					if (tasks) tasks.textContent = '—';
 					return;
@@ -1390,6 +1403,10 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 	if app.Type == "static" {
 		processCard = naCard("Process", "served directly by Caddy")
 	}
+	if app.Type == "php" {
+		processCard = statusCard("down", "PHP-FPM pool", health.ProcessStatus)
+		if health.ProcessStatus == "active" { processCard = statusCard("ok", "PHP-FPM pool", "socket ready") }
+	}
 
 	portCard := naCard("Port", "not required")
 	localHTTPCard := naCard("Local HTTP", "not required")
@@ -1448,7 +1465,7 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 }
 
 func databaseBlock(cfg Config, app panelapp.App) string {
-	if cfg.Databases == nil || app.Type == "static" {
+	if cfg.Databases == nil || app.Type == "static" || app.Type == "php" {
 		return ""
 	}
 	items, err := cfg.Databases.List()
