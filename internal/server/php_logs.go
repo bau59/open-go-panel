@@ -33,19 +33,19 @@ func registerPHPLogRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
         if err != nil {
             cfg.Logger.Warn("read PHP error log", "app_id", app.ID, "err", err)
             writeHTML(w, cfg.Logger, http.StatusInternalServerError,
-                phpErrorLogsPage(app, phpfpm.ErrorLoggingConfigured(app.ID), "", "Cannot read PHP error log: "+err.Error()))
+                phpErrorLogsPage(app, (app.Service.PHPVersion == phpfpm.LegacyVersion || phpfpm.ErrorLoggingConfigured(app.ID)), "", "Cannot read PHP error log: "+err.Error()))
             return
         }
         w.Header().Set("Cache-Control", "no-store")
-        writeHTML(w, cfg.Logger, http.StatusOK, phpErrorLogsPage(app, phpfpm.ErrorLoggingConfigured(app.ID), body, ""))
+        writeHTML(w, cfg.Logger, http.StatusOK, phpErrorLogsPage(app, (app.Service.PHPVersion == phpfpm.LegacyVersion || phpfpm.ErrorLoggingConfigured(app.ID)), body, ""))
     })))
 
     mux.Handle("POST /apps/{id}/php-logs/enable", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         app, ok := loadApp(w, r)
         if !ok { return }
-        if err := phpfpm.Ensure(r.Context(), app.ID, app.User); err != nil {
+        if err := ensurePHPAppRuntime(r.Context(), app); err != nil {
             writeHTML(w, cfg.Logger, http.StatusBadRequest,
-                phpErrorLogsPage(app, phpfpm.ErrorLoggingConfigured(app.ID), "", "Enable PHP error logging: "+err.Error()))
+                phpErrorLogsPage(app, (app.Service.PHPVersion == phpfpm.LegacyVersion || phpfpm.ErrorLoggingConfigured(app.ID)), "", "Enable PHP error logging: "+err.Error()))
             return
         }
         http.Redirect(w, r, fmt.Sprintf("/apps/%d/php-logs", app.ID), http.StatusSeeOther)
