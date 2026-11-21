@@ -39,8 +39,8 @@ func (m *Manager) ResourceUsage(ctx context.Context, id int64) ResourceUsage {
 	if err != nil {
 		return ResourceUsage{AppID: id, Error: err.Error()}
 	}
-	if app.Type == "static" {
-		return ResourceUsage{AppID: id, State: "static"}
+	if app.Type == "static" || app.Type == "php" {
+		return ResourceUsage{AppID: id, State: app.Type}
 	}
 	result := m.ResourceUsageMany(ctx, []App{app})
 	if len(result) == 0 {
@@ -55,8 +55,8 @@ func (m *Manager) ResourceUsageMany(ctx context.Context, apps []App) []ResourceU
 
 	for i, app := range apps {
 		results[i].AppID = app.ID
-		if app.Type == "static" {
-			results[i].State = "static"
+		if app.Type == "static" || app.Type == "php" {
+			results[i].State = app.Type
 			continue
 		}
 		sample, err := readServiceSample(ctx, app.ID)
