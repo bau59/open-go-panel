@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"mime/multipart"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -239,6 +240,37 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 
+
+	mux.Handle("POST /databases/{id}/import/file", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid database id", http.StatusBadRequest)
+			return
+		}
+		var file multipart.File
+		var header *multipart.FileHeader
+		file, header, err = r.FormFile("file")
+		if err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "select a SQL file")
+			return
+		}
+		defer file.Close()
+		if header.Size > dbmanager.MaxSQLUploadBytes {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "SQL file exceeds 128 MiB")
+			return
+		}
+		mode := r.FormValue("mode")
+		if mode != "apply" && mode != "replace" {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "invalid SQL import mode")
+			return
+		}
+		if err := cfg.Databases.StartFileImport(id, header.Filename, file, mode == "replace"); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /databases/import/dismiss", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.Databases.ClearImportTask()
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
@@ -359,12 +391,14 @@ func databasesPage(data databasePageData) string {
 	}
 
 	importNotice := ""
+	importKind := "Remote database"
+	if data.ImportTask.SourceKind == "file" { importKind = "SQL file" }
 	if data.ImportTask.Running {
-		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>Database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` from ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup was created first. The import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
+		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>` + importKind + ` import into database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` · ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup is created before changes. Import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
 	} else if data.ImportTask.Error != "" {
-		importNotice = `<div class="alert import-status"><div><strong>Last database import failed</strong><p>` + html.EscapeString(data.ImportTask.Error) + `</p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
+		importNotice = `<div class="alert import-status"><div><strong>` + importKind + ` import failed</strong><p>` + html.EscapeString(data.ImportTask.Error) + `</p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	} else if !data.ImportTask.FinishedAt.IsZero() {
-		importNotice = `<div class="alert import-status success"><div><strong>Remote database import completed</strong><p>Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
+		importNotice = `<div class="alert import-status success"><div><strong>` + importKind + ` import completed</strong><p>Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	}
 
 	mysqlDetails := `<div class="db-service-facts">
@@ -498,6 +532,22 @@ func databasesPage(data databasePageData) string {
 						<div class="inline-popover wide"><code style="word-break:break-all">%s</code></div>
 					</details>
 					<details class="db-action-menu">
+						<summary class="secondary">Import SQL</summary>
+						<div class="inline-popover wide">
+							<form method="post" action="/databases/%d/import/file" enctype="multipart/form-data" onsubmit="return confirm(this.elements.mode.value === 'replace' ? 'Replace this database with the SQL file? A safety backup will be created first.' : 'Execute this SQL file against the current database? A safety backup will be created first.')">
+								<label>SQL file</label>
+								<input type="file" name="file" accept=".sql,.sql.gz" required>
+								<label style="margin-top:10px">Import mode</label>
+								<select name="mode">
+									<option value="apply">Apply to existing database</option>
+									<option value="replace">Replace database contents</option>
+								</select>
+								<p class="note" style="margin:8px 0 0">.sql or .sql.gz · max 128 MiB. Runs as the database user, with a safety backup and recovery on error.</p>
+								<button class="button" style="margin-top:10px">Upload & import</button>
+							</form>
+						</div>
+					</details>
+					<details class="db-action-menu">
 						<summary class="secondary">Import remote</summary>
 						<div class="inline-popover wide">
 							<form method="post" action="/databases/%d/import" onsubmit="return confirm('Replace the local database with a snapshot from the remote database? A safety backup will be created first.')">
@@ -525,6 +575,7 @@ func databasesPage(data databasePageData) string {
 			item.ID,
 			backupRows.String(),
 			html.EscapeString(item.DSN()),
+			item.ID,
 			item.ID,
 			func() string {
 				if item.Engine == "mysql" {
@@ -596,7 +647,7 @@ func databasesPage(data databasePageData) string {
 			<div class="panel-pad database-list-head">
 				<div>
 					<h2>Managed SQL databases</h2>
-					<p class="note" style="margin:6px 0 0">Credentials, backups, Adminer and one-time remote imports.</p>
+					<p class="note" style="margin:6px 0 0">Credentials, backups, Adminer, SQL uploads and one-time remote imports.</p>
 				</div>
 				<span class="meta-chip">` + fmt.Sprintf("%d", len(data.Items)) + ` databases</span>
 			</div>
