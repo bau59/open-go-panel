@@ -125,7 +125,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		if app.Type == "php" {
 			kind = "php"
 			root, err = phpDocumentRoot(app, "")
-			if err == nil { err = phpfpm.Ensure(r.Context(), app.ID, app.User) }
+			if err == nil { err = phpfpm.EnsureVersion(r.Context(), app.ID, app.User, app.Service.PHPVersion) }
 			if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
 		}
 		if err := cfg.Caddy.AttachStandaloneDomain(r.Context(), id, appID, app.Port, root, kind); err != nil {
@@ -294,7 +294,7 @@ func registerCaddyRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 		} else if app.Type == "php" {
 			kind = "php"
 			root, err = phpDocumentRoot(app, r.FormValue("document_root"))
-			if err == nil { err = phpfpm.Ensure(r.Context(), app.ID, app.User) }
+			if err == nil { err = phpfpm.EnsureVersion(r.Context(), app.ID, app.User, app.Service.PHPVersion) }
 			if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
 		} else if app.Port == 0 {
 			http.Error(w, "this app has no web port", http.StatusBadRequest)
