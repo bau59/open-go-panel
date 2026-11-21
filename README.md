@@ -10,6 +10,7 @@ Lightweight open-source Linux server control panel written in Go.
 - SQLite panel state;
 - Linux users and SSH keys;
 - applications with systemd services, resource limits and live journal logs;
+- PHP web applications through per-user PHP-FPM pools and Caddy FastCGI routing;
 - application health checks;
 - Git deploy, one-step rollback and optional automatic deployment when the configured branch changes;
 - domains, automatic TLS and per-domain Caddy configuration;
@@ -24,7 +25,7 @@ Lightweight open-source Linux server control panel written in Go.
 - UFW recommended firewall policy;
 - structured CrowdSec decisions, allowlist and alerts;
 - audit log for successful panel changes;
-- system-wide software management for Docker, Node.js LTS, Tailwind CLI, Go, Air, Git, build tools and common CLI utilities;
+- system-wide software management for Docker, Node.js LTS, PHP-FPM, Tailwind CLI, Go, Air, Git, build tools and common CLI utilities;
 - Docker container management: pull/run from image or registry URL, list, start, stop, restart, remove and autostart policy;
 - authenticated web terminal with root and managed-user shells; SSH tunnel remains the recommended access method;
 - release checksum verification, post-update health checks and automatic binary rollback;
@@ -45,6 +46,8 @@ If `/usr/local/go/bin/go` and `gofmt` are already installed when you run
 `/usr/local/bin/go` and `/usr/local/bin/gofmt` symlinks. This also runs on
 panel updates. Existing executables and symlinks are never overwritten, so
 managed application users can find Go without manual PATH changes.
+
+For PHP websites, install **Software → PHP + PHP-FPM** first, create a **PHP web app**, then deploy files and connect a domain. The domain form lets you choose the `public/` directory (Laravel/frameworks) or the application root (WordPress/plain PHP). Each app runs in an on-demand PHP-FPM pool under its Linux user, with a dedicated Unix socket for Caddy; no application HTTP port or per-app systemd service is created. Configure PHP application secrets in its project configuration or `.env`, not via the systemd environment editor. PHP-FPM daemon CPU/memory use is shared across sites.
 
 New installations bind the panel to localhost:
 
