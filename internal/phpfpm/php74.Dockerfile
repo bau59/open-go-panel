@@ -1,5 +1,7 @@
 FROM php:7.4-fpm-bullseye
 RUN set -eux; \
+    printf 'deb http://deb.debian.org/debian bullseye main\n' > /etc/apt/sources.list; \
+    rm -f /etc/apt/sources.list.d/*.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       libfreetype6-dev libjpeg62-turbo-dev libpng-dev libzip-dev libonig-dev \
