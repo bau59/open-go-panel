@@ -23,6 +23,7 @@ import (
 
 	"github.com/bau59/open-go-panel/internal/journal"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/phpfpm"
 	"github.com/bau59/open-go-panel/internal/state"
 )
 
@@ -169,7 +170,7 @@ func (m *Manager) Create(username, name, appType string) (App, error) {
 	}
 
 	switch appType {
-	case "go", "node", "static", "worker":
+	case "go", "node", "static", "php", "worker":
 	default:
 		return App{}, errors.New("unsupported app type")
 	}
@@ -693,7 +694,7 @@ func (m *Manager) recoverDeployment(app App, id int64, previous string, cause er
 	if err := m.prepareDeployment(ctx, app); err != nil {
 		return errors.Join(cause, fmt.Errorf("restore previous dependencies failed: %w", err))
 	}
-	if app.Type != "static" {
+	if app.Type != "static" && app.Type != "php" {
 		if err := m.Restart(ctx, id); err != nil {
 			return errors.Join(cause, fmt.Errorf("restart previous deployment failed: %w", err))
 		}
@@ -829,7 +830,10 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("app %d not found", id)
 	}
 
-	if app.Type != "static" {
+	if app.Type == "php" {
+		if err := phpfpm.Remove(ctx, id); err != nil { return err }
+	}
+	if app.Type != "static" && app.Type != "php" {
 		_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", serviceName(id)).Run()
 	}
 	_ = os.Remove(filepath.Join(m.serviceDir, serviceName(id)))
@@ -953,8 +957,8 @@ func (m *Manager) SetEnvironmentVariable(ctx context.Context, id int64, key, val
 	if err != nil {
 		return err
 	}
-	if app.Type == "static" {
-		return errors.New("static apps do not use service environment variables")
+	if app.Type == "static" || app.Type == "php" {
+		return errors.New("static and PHP apps do not use systemd environment variables; configure PHP variables in the application")
 	}
 	if app.Service.Mode == "raw" {
 		return errors.New("database attachment is unavailable in raw systemd mode")
@@ -1028,8 +1032,8 @@ func (m *Manager) RemoveEnvironmentVariable(ctx context.Context, id int64, key s
 	if err != nil {
 		return err
 	}
-	if app.Type == "static" {
-		return errors.New("static apps do not use service environment variables")
+	if app.Type == "static" || app.Type == "php" {
+		return errors.New("static and PHP apps do not use systemd environment variables; configure PHP variables in the application")
 	}
 	if app.Service.Mode == "raw" {
 		return errors.New("database attachment is unavailable in raw systemd mode")
@@ -1067,8 +1071,8 @@ func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceCon
 	if index == -1 {
 		return fmt.Errorf("app %d not found", id)
 	}
-	if apps[index].Type == "static" {
-		return errors.New("static apps do not use systemd services")
+	if apps[index].Type == "static" || apps[index].Type == "php" {
+		return errors.New("static and PHP apps do not use per-app systemd services")
 	}
 
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
@@ -1225,6 +1229,7 @@ func (m *Manager) Status(ctx context.Context, id int64) string {
 	if err != nil || app.Type == "static" {
 		return "not configured"
 	}
+	if app.Type == "php" { return phpfpm.Status(ctx, id) }
 
 	if app.Service.Mode == "raw" {
 		if strings.TrimSpace(app.Service.RawUnit) == "" {
@@ -1586,8 +1591,8 @@ func (m *Manager) StreamLogs(ctx context.Context, id int64, lines int, fn func(s
 }
 
 func validateRunnable(app App) error {
-	if app.Type == "static" {
-		return errors.New("static apps do not use systemd services")
+	if app.Type == "static" || app.Type == "php" {
+		return errors.New("static and PHP apps do not use per-app systemd services")
 	}
 
 	if app.Service.Mode == "raw" {
