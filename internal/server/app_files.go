@@ -144,7 +144,9 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         destination := appFilesURL(app.ID, folder)
         delimiter := "?"
         if strings.Contains(destination, "?") { delimiter = "&" }
-        http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(action+" completed"), http.StatusSeeOther)
+        notice := action + " completed"
+        if action == "upload" { notice = "Upload complete · SHA-256 verified" }
+        http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(notice), http.StatusSeeOther)
         return nil
         })
         if lockErr != nil { http.Error(w, lockErr.Error(), http.StatusRequestTimeout) }
