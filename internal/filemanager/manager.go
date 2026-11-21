@@ -105,12 +105,15 @@ func (m *Manager) List(folder string) ([]Entry, bool, error) {
     if limited { items = items[:MaxDirectoryEntries] }
     result := make([]Entry, 0, len(items))
     for _, item := range items {
-        info, err := item.Info()
-        if err != nil { continue }
+        // Read metadata relative to the already-validated directory fd.
+        // DirEntry.Info would resolve its path relative to the panel's cwd.
+        var info unix.Stat_t
+        if err := unix.Fstatat(fd, item.Name(), &info, unix.AT_SYMLINK_NOFOLLOW); err != nil { continue }
+        kind := info.Mode & unix.S_IFMT
         result = append(result, Entry{
-            Name: item.Name(), Directory: info.IsDir(),
-            Symlink: info.Mode()&os.ModeSymlink != 0,
-            Size: info.Size(), Mode: info.Mode(),
+            Name: item.Name(), Directory: kind == unix.S_IFDIR,
+            Symlink: kind == unix.S_IFLNK,
+            Size: info.Size, Mode: os.FileMode(info.Mode & 0777),
         })
     }
     sort.Slice(result, func(i, j int) bool {
@@ -196,7 +199,7 @@ func (m *Manager) write(folder, name string, source io.Reader, limit int64, over
 }
 
 func (m *Manager) Save(folder, name, content string, create bool) error {
-    if len(content) > MaxEditBytes || !utf8.ValidString(content) {
+    if len(content) > MaxEditBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
         return errors.New("editor content must be valid UTF-8 and <= 2 MiB")
     }
     return m.write(folder, name, strings.NewReader(content), MaxEditBytes, !create)
