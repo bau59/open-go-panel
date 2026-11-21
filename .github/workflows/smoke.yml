@@ -99,14 +99,17 @@ jobs:
           PASS="$(sudo sed -n 's/^OGP_ADMIN_PASSWORD=//p' /etc/open-go-panel/open-go-panel.env | head -n1)"
           LOGIN_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -c /tmp/ogp-cookies -d "username=admin&password=$PASS" http://127.0.0.1:8443/login)"
           test "$LOGIN_CODE" = "303"
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/ | grep -q "Open Go Panel is running"
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/terminal | grep -q "/assets/xterm/xterm.js"
-          if curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/terminal | grep -q "cdn.jsdelivr.net"; then
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/ -o /tmp/ogp-dashboard.html
+          grep -q "Open Go Panel is running" /tmp/ogp-dashboard.html
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/terminal -o /tmp/ogp-terminal.html
+          grep -q "/assets/xterm/xterm.js" /tmp/ogp-terminal.html
+          if grep -q "cdn.jsdelivr.net" /tmp/ogp-terminal.html; then
             echo "Terminal still references a runtime CDN" >&2
             exit 1
           fi
           curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/assets/xterm/xterm.js >/dev/null
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/docker | grep -q "<h1>Docker</h1>"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/docker -o /tmp/ogp-docker.html
+          grep -q "<h1>Docker</h1>" /tmp/ogp-docker.html
 
           CSRF="$(curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/ | grep -o 'name="ogp_csrf" value="[^"]*"' | head -n1 | cut -d '"' -f4)"
           test -n "$CSRF"
@@ -116,10 +119,12 @@ jobs:
 
           APP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'user=ogpsmoke&name=smoke&type=static' http://127.0.0.1:8443/apps)"
           test "$APP_CODE" = "303"
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/apps | grep -q "smoke"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/apps -o /tmp/ogp-apps.html
+          grep -q "smoke" /tmp/ogp-apps.html
 
           # The first app on this fresh runner has ID 1.
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/apps/1/files | grep -q "Upload file"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/apps/1/files -o /tmp/ogp-app-files.html
+          grep -q "Upload file" /tmp/ogp-app-files.html
           printf 'file-manager-smoke' > /tmp/ogp-file-upload.txt
           FILE_UPLOAD_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F "action=upload" -F 'dir=' -F 'client_size=18' -F 'file=@/tmp/ogp-file-upload.txt' http://127.0.0.1:8443/apps/1/files)"
           test "$FILE_UPLOAD_CODE" = "303"
@@ -209,7 +214,8 @@ jobs:
           test "$LOGIN_CODE" = "303"
           CSRF="$(curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/ | grep -o 'name="ogp_csrf" value="[^"]*"' | head -n1 | cut -d '"' -f4)"
           test -n "$CSRF"
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/databases/redis | grep -q "<h1>Redis</h1>"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/databases/redis -o /tmp/ogp-redis.html
+          grep -q "<h1>Redis</h1>" /tmp/ogp-redis.html
 
           # Install an extension using the panel's PHP-version-aware route.
           PHP_VERSION="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
@@ -251,7 +257,8 @@ jobs:
             systemctl is-active mysql.service || true
             exit 1
           fi
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/databases | grep -q '/databases/1/import/file'
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/databases -o /tmp/ogp-databases.html
+          grep -q '/databases/1/import/file' /tmp/ogp-databases.html
           printf "CREATE TABLE import_check (id INT PRIMARY KEY, text_value VARCHAR(32)); INSERT INTO import_check VALUES (1, 'upload-ok');\n" > /tmp/ogp-upload.sql
           SQL_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F 'mode=apply' -F 'file=@/tmp/ogp-upload.sql;filename=import.sql' http://127.0.0.1:8443/databases/1/import/file)"
           echo "SQL smoke: upload HTTP=$SQL_CODE"

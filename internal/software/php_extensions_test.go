@@ -7,6 +7,10 @@ import (
     "context"
     "encoding/binary"
     "io"
+    "net/http"
+    "net/http/httptest"
+    "strconv"
+    "sync/atomic"
     "strings"
     "testing"
 
@@ -113,4 +117,73 @@ func TestIonCubeLoadedRequiresPositiveRuntimeSignature(t *testing.T) {
             t.Fatalf("false-positive loader detection: %q", text)
         }
     }
+}
+
+func TestIonCubeRetriesTruncatedHTTPArchive(t *testing.T) {
+    data := loaderFixture(t, "ioncube/ioncube_loader_lin_8.3.so", 62)
+    var count atomic.Int32
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if count.Add(1) == 1 {
+            w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+            w.WriteHeader(http.StatusOK)
+            _, _ = w.Write(data[:len(data)/2])
+            return // An incomplete HTTP body must never become the loader.
+        }
+        w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+        _, _ = w.Write(data)
+    }))
+    defer server.Close()
+    loader, err := downloadIonCubeWithRetry(context.Background(), server.Client(), server.URL, "8.3", 62)
+    if err != nil { t.Fatal(err) }
+    if len(loader) != 128 || count.Load() != 2 {
+        t.Fatalf("expected one retry and validated loader, got size=%d attempts=%d", len(loader), count.Load())
+    }
+}
+
+func TestIonCubeDoesNotRetryPermanentHTTPStatus(t *testing.T) {
+    var count atomic.Int32
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        count.Add(1)
+        http.Error(w, "not found", http.StatusNotFound)
+    }))
+    defer server.Close()
+    _, err := downloadIonCubeWithRetry(context.Background(), server.Client(), server.URL, "8.3", 62)
+    if err == nil || !strings.Contains(err.Error(), "404") || count.Load() != 1 {
+        t.Fatalf("should fail on first 404: error=%v attempts=%d", err, count.Load())
+    }
+}
+
+func TestIonCubeRejectsOversizedAndMalformedPackagesWithoutRetries(t *testing.T) {
+    t.Run("too-large", func(t *testing.T) {
+        var count atomic.Int32
+        server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            count.Add(1)
+            w.Header().Set("Content-Length", strconv.FormatInt(ionCubeMaxArchiveBytes+1, 10))
+            w.WriteHeader(http.StatusOK)
+        }))
+        defer server.Close()
+        _, err := downloadIonCubeWithRetry(context.Background(), server.Client(), server.URL, "8.3", 62)
+        if err == nil || !strings.Contains(err.Error(), "exceeds 64 MiB") || count.Load() != 1 {
+            t.Fatalf("oversized archive should fail without retry: %v, attempts %d", err, count.Load())
+        }
+    })
+    t.Run("invalid-tar", func(t *testing.T) {
+        var count atomic.Int32
+        server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            count.Add(1)
+            _, _ = io.WriteString(w, "not a gzip archive")
+        }))
+        defer server.Close()
+        _, err := downloadIonCubeWithRetry(context.Background(), server.Client(), server.URL, "8.3", 62)
+        if err == nil || count.Load() != 1 {
+            t.Fatalf("invalid loader archive should fail without retry: %v, attempts %d", err, count.Load())
+        }
+    })
+}
+
+func TestIonCubeDownloadRespectsCanceledContext(t *testing.T) {
+    ctx, cancel := context.WithCancel(context.Background())
+    cancel()
+    _, err := downloadIonCubeWithRetry(ctx, http.DefaultClient, "http://127.0.0.1:1", "8.3", 62)
+    if err != context.Canceled { t.Fatalf("expected cancellation, got %v", err) }
 }
