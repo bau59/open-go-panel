@@ -112,7 +112,7 @@ func TestFileManagerToolbarControlsStayAligned(t *testing.T) {
         `for="fileman-folder-name"`,
         `id="fileman-folder-name"`,
         `class="fileman-tool fileman-tool-new"`,
-        `fileman-file-input::file-selector-button`,
+        `file-upload-input::file-selector-button`,
         `Upload file <span>Max 1 GiB</span>`,
     } {
         if !strings.Contains(page, expected) {
