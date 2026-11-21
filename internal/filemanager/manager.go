@@ -26,7 +26,7 @@ const (
     MaxUploadBytes = 128 << 20
     MaxArchiveBytes = 128 << 20
     MaxExtractBytes = 256 << 20
-    MaxArchiveEntries = 3000
+    MaxArchiveEntries = 10000
     MaxDirectoryEntries = 400
     maxDepth = 32
 )
