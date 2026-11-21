@@ -30,13 +30,15 @@ func TestMultipartMutationRequiresCSRF(t *testing.T) {
         AdminUser: "admin",
         AdminPassword: "secret",
     })
-    cookie, token := loginAndGetCSRF(t, handler)
     for _, tc := range []struct{token string; want int}{
-        {token: token, want: http.StatusSeeOther},
+        {token: "valid", want: http.StatusSeeOther},
         {token: "wrong", want: http.StatusForbidden},
         {token: "", want: http.StatusForbidden},
     } {
-        body, mediaType := multipartCSRFRequest(t, tc.token)
+        // Logout invalidates its session; use a fresh login per case.
+        cookie, token := loginAndGetCSRF(t, handler)
+        if tc.token != "valid" { token = tc.token }
+        body, mediaType := multipartCSRFRequest(t, token)
         req := httptest.NewRequest(http.MethodPost, "/logout", body)
         req.Header.Set("Content-Type", mediaType)
         req.AddCookie(cookie)
