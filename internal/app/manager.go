@@ -55,6 +55,7 @@ type ServiceConfig struct {
 	TasksMax         int    `json:"tasks_max,omitempty"`
 	LogRetentionDays int    `json:"log_retention_days,omitempty"`
 	LogDisabled      bool   `json:"log_disabled,omitempty"`
+	PHPVersion       string `json:"php_version,omitempty"`
 	AutoStart        bool   `json:"auto_start,omitempty"`
 	Environment      string `json:"environment,omitempty"`
 	RawUnit          string `json:"raw_unit,omitempty"`
@@ -859,6 +860,888 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// SetPHPVersion persists only the runtime selection; callers must ensure the
+// new pool is healthy and update the web server before removing the old pool.
+func (m *Manager) SetPHPVersion(id int64, version string) error {
+	if version != "" && !regexp.MustCompile(`^[0-9]+\\.[0-9]+package app
+
+import (
+	"bufio"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"net"
+	"net/http"
+	"net/url"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bau59/open-go-panel/internal/journal"
+	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/phpfpm"
+	"github.com/bau59/open-go-panel/internal/state"
+)
+
+const (
+	minPort = 8100
+	maxPort = 8999
+)
+
+var (
+	appNamePattern = regexp.MustCompile("^[a-z0-9][a-z0-9_-]{0,63}$")
+	envNamePattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
+	cpuPattern     = regexp.MustCompile("^[0-9]{1,4}%$")
+	memoryPattern  = regexp.MustCompile("^[0-9]+[KMGTP]$")
+	branchPattern  = regexp.MustCompile("^[A-Za-z0-9._/-]{1,128}$")
+)
+
+type ServiceConfig struct {
+	Mode             string `json:"mode,omitempty"`
+	RunMode          string `json:"run_mode,omitempty"`
+	Command          string `json:"command,omitempty"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Restart          string `json:"restart,omitempty"`
+	RestartSec       int    `json:"restart_sec,omitempty"`
+	TimeoutStopSec   int    `json:"timeout_stop_sec,omitempty"`
+	CPUQuota         string `json:"cpu_quota,omitempty"`
+	MemoryMax        string `json:"memory_max,omitempty"`
+	LimitNOFILE      int    `json:"limit_nofile,omitempty"`
+	TasksMax         int    `json:"tasks_max,omitempty"`
+	LogRetentionDays int    `json:"log_retention_days,omitempty"`
+	LogDisabled      bool   `json:"log_disabled,omitempty"`
+	PHPVersion       string `json:"php_version,omitempty"`
+	AutoStart        bool   `json:"auto_start,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	RawUnit          string `json:"raw_unit,omitempty"`
+}
+
+type App struct {
+	ID        int64         `json:"id"`
+	User      string        `json:"user"`
+	Name      string        `json:"name"`
+	Type      string        `json:"type"`
+	Root      string        `json:"root"`
+	Port      int           `json:"port,omitempty"`
+	Command   string        `json:"command,omitempty"`
+	Service   ServiceConfig `json:"service,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
+type DeployConfig struct {
+	Repository     string
+	Branch         string
+	CurrentCommit  string
+	PreviousCommit string
+	AutoDeploy     bool
+	AutoDeployIntervalSeconds int
+	LastCheckedAt  time.Time
+	DeployedAt     time.Time
+}
+
+type DeployKeyInfo struct {
+	PublicKey  string
+	KeyPath    string
+	KnownHosts string
+	Host       string
+	Generated  bool
+	HostKnown  bool
+}
+
+type RuntimeHealth struct {
+	ProcessStatus string
+	PortListening bool
+	HTTPReachable bool
+	HTTPStatus    int
+	Error         string
+}
+
+
+type Manager struct {
+	mu              sync.Mutex
+	deployMu        sync.Mutex
+	promotionMu     sync.Mutex
+	promotionTask   PromotionTask
+	store           *state.Store
+	legacyStateFile string
+	serviceDir      string
+	runnerDir       string
+	envDir          string
+	journalDir      string
+	users           *linuxuser.Manager
+}
+
+func New(store *state.Store, legacyStateFile string, users *linuxuser.Manager) *Manager {
+	return &Manager{
+		store:           store,
+		legacyStateFile: legacyStateFile,
+		serviceDir:      "/etc/systemd/system",
+		runnerDir:       "/var/lib/open-go-panel/runners",
+		envDir:          "/var/lib/open-go-panel/env",
+		journalDir:      "/etc/systemd",
+		users:           users,
+	}
+}
+
+func (m *Manager) List() ([]App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	apps, err := m.load()
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].ID < apps[j].ID
+	})
+
+	return apps, nil
+}
+
+func (m *Manager) Get(id int64) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	apps, err := m.load()
+	if err != nil {
+		return App{}, err
+	}
+
+	for _, app := range apps {
+		if app.ID == id {
+			return app, nil
+		}
+	}
+
+	return App{}, fmt.Errorf("app %d not found", id)
+}
+
+func (m *Manager) Create(username, name, appType string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !appNamePattern.MatchString(name) {
+		return App{}, errors.New("app name must contain only lowercase letters, digits, underscore or hyphen")
+	}
+
+	switch appType {
+	case "go", "node", "static", "php", "worker":
+	default:
+		return App{}, errors.New("unsupported app type")
+	}
+
+	managed, err := m.userManaged(username)
+	if err != nil {
+		return App{}, err
+	}
+	if !managed {
+		return App{}, fmt.Errorf("user %q is not managed by Open Go Panel", username)
+	}
+
+	account, err := user.Lookup(username)
+	if err != nil {
+		return App{}, fmt.Errorf("lookup user %q: %w", username, err)
+	}
+
+	apps, err := m.load()
+	if err != nil {
+		return App{}, err
+	}
+
+	for _, existing := range apps {
+		if existing.User == username && existing.Name == name {
+			return App{}, fmt.Errorf("app %q already exists for user %q", name, username)
+		}
+	}
+
+	root := filepath.Join(account.HomeDir, "apps", name)
+	if err := os.MkdirAll(root, 0750); err != nil {
+		return App{}, fmt.Errorf("create app directory: %w", err)
+	}
+
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return App{}, fmt.Errorf("parse uid: %w", err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return App{}, fmt.Errorf("parse gid: %w", err)
+	}
+
+	if err := os.Chown(filepath.Join(account.HomeDir, "apps"), uid, gid); err != nil {
+		return App{}, fmt.Errorf("chown apps directory: %w", err)
+	}
+	if err := os.Chown(root, uid, gid); err != nil {
+		return App{}, fmt.Errorf("chown app directory: %w", err)
+	}
+
+	app := App{
+		ID:        nextID(apps),
+		User:      username,
+		Name:      name,
+		Type:      appType,
+		Root:      root,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if appType == "go" || appType == "node" {
+		port, err := nextPort(apps)
+		if err != nil {
+			return App{}, err
+		}
+		app.Port = port
+	}
+
+	apps = append(apps, app)
+	if err := m.save(apps); err != nil {
+		return App{}, err
+	}
+
+	return app, nil
+}
+
+func (m *Manager) DeployConfig(id int64) (DeployConfig, error) {
+	var cfg DeployConfig
+	var deployedAt string
+	var lastCheckedAt string
+	err := m.store.DB().QueryRow(`
+		SELECT repository, branch, current_commit, previous_commit,
+			auto_deploy, auto_deploy_interval_sec, last_checked_at, deployed_at
+		FROM deployments
+		WHERE app_id = ?
+	`, id).Scan(&cfg.Repository, &cfg.Branch, &cfg.CurrentCommit, &cfg.PreviousCommit,
+		&cfg.AutoDeploy, &cfg.AutoDeployIntervalSeconds, &lastCheckedAt, &deployedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeployConfig{Branch: "main", AutoDeployIntervalSeconds: DefaultAutoDeployIntervalSeconds}, nil
+	}
+	if err != nil {
+		return cfg, fmt.Errorf("read deployment config: %w", err)
+	}
+	if deployedAt != "" {
+		cfg.DeployedAt, _ = time.Parse(time.RFC3339Nano, deployedAt)
+	}
+	if lastCheckedAt != "" {
+		cfg.LastCheckedAt, _ = time.Parse(time.RFC3339Nano, lastCheckedAt)
+	}
+	return cfg, nil
+}
+
+const (
+	DefaultAutoDeployIntervalSeconds = 300
+	MinAutoDeployIntervalSeconds     = 30
+	MaxAutoDeployIntervalSeconds     = 86400
+)
+
+func (m *Manager) SetDeployConfig(id int64, repository, branch string, autoDeploy bool) error {
+	return m.SetDeployConfigInterval(id, repository, branch, autoDeploy, DefaultAutoDeployIntervalSeconds)
+}
+
+func (m *Manager) SetDeployConfigInterval(id int64, repository, branch string, autoDeploy bool, intervalSeconds int) error {
+	if intervalSeconds < MinAutoDeployIntervalSeconds || intervalSeconds > MaxAutoDeployIntervalSeconds {
+		return fmt.Errorf("auto deploy interval must be between %d and %d seconds", MinAutoDeployIntervalSeconds, MaxAutoDeployIntervalSeconds)
+	}
+	repository = strings.TrimSpace(repository)
+	branch = strings.TrimSpace(branch)
+	if repository == "" {
+		return errors.New("Git repository is required")
+	}
+	if strings.ContainsAny(repository, " \t\r\n") {
+		return errors.New("Git repository URL must not contain whitespace")
+	}
+	if !(strings.HasPrefix(repository, "https://") || strings.HasPrefix(repository, "ssh://") || strings.HasPrefix(repository, "git@")) {
+		return errors.New("Git repository must use https://, ssh:// or git@")
+	}
+	if !branchPattern.MatchString(branch) || strings.Contains(branch, "..") || strings.HasPrefix(branch, "-") {
+		return errors.New("invalid Git branch")
+	}
+	if _, err := m.Get(id); err != nil {
+		return err
+	}
+	_, err := m.store.DB().Exec(`
+		INSERT INTO deployments(app_id, repository, branch, auto_deploy, auto_deploy_interval_sec)
+		VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(app_id) DO UPDATE SET
+			last_checked_at=CASE
+				WHEN deployments.repository <> excluded.repository
+					OR deployments.branch <> excluded.branch
+					OR deployments.auto_deploy <> excluded.auto_deploy
+					OR deployments.auto_deploy_interval_sec <> excluded.auto_deploy_interval_sec
+				THEN '' ELSE deployments.last_checked_at END,
+			repository=excluded.repository,
+			branch=excluded.branch,
+			auto_deploy=excluded.auto_deploy,
+			auto_deploy_interval_sec=excluded.auto_deploy_interval_sec
+	`, id, repository, branch, autoDeploy, intervalSeconds)
+	if err != nil {
+		return fmt.Errorf("save deployment config: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) DeployKeyInfo(id int64) (DeployKeyInfo, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+
+	account, err := user.Lookup(app.User)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("lookup user %q: %w", app.User, err)
+	}
+	keyPath := filepath.Join(account.HomeDir, ".ssh", fmt.Sprintf("ogp-app-%d", app.ID))
+	knownHosts := filepath.Join(account.HomeDir, ".ssh", "known_hosts")
+	info := DeployKeyInfo{
+		KeyPath:    keyPath,
+		KnownHosts: knownHosts,
+		Host:       repositorySSHHost(cfg.Repository),
+	}
+
+	if data, err := os.ReadFile(keyPath + ".pub"); err == nil {
+		info.PublicKey = strings.TrimSpace(string(data))
+		info.Generated = info.PublicKey != ""
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return info, fmt.Errorf("read deploy public key: %w", err)
+	}
+
+	if info.Host != "" {
+		cmd := exec.Command("ssh-keygen", "-F", info.Host, "-f", knownHosts)
+		if err := cmd.Run(); err == nil {
+			info.HostKnown = true
+		}
+	}
+	return info, nil
+}
+
+func (m *Manager) EnsureDeployKey(ctx context.Context, id int64) (DeployKeyInfo, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	account, err := user.Lookup(app.User)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("lookup user %q: %w", app.User, err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("parse uid: %w", err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("parse gid: %w", err)
+	}
+
+	sshDir := filepath.Join(account.HomeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("create deploy SSH directory: %w", err)
+	}
+	if err := os.Chown(sshDir, uid, gid); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("chown deploy SSH directory: %w", err)
+	}
+	if err := os.Chmod(sshDir, 0700); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("chmod deploy SSH directory: %w", err)
+	}
+
+	keyPath := filepath.Join(sshDir, fmt.Sprintf("ogp-app-%d", app.ID))
+	if _, err := os.Stat(keyPath); errors.Is(err, os.ErrNotExist) {
+		if _, err := exec.LookPath("ssh-keygen"); err != nil {
+			return DeployKeyInfo{}, errors.New("ssh-keygen is not installed")
+		}
+		if _, err := runAsUser(ctx, app.User, account.HomeDir, "ssh-keygen",
+			"-q", "-t", "ed25519", "-N", "", "-C", fmt.Sprintf("open-go-panel-app-%d", app.ID), "-f", keyPath); err != nil {
+			return DeployKeyInfo{}, err
+		}
+	} else if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("inspect deploy key: %w", err)
+	}
+	_ = os.Chmod(keyPath, 0600)
+	_ = os.Chmod(keyPath+".pub", 0644)
+	_ = os.Chown(keyPath, uid, gid)
+	_ = os.Chown(keyPath+".pub", uid, gid)
+	return m.DeployKeyInfo(id)
+}
+
+func (m *Manager) TrustDeployHost(ctx context.Context, id int64) (DeployKeyInfo, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return DeployKeyInfo{}, err
+	}
+	host := repositorySSHHost(cfg.Repository)
+	if host == "" {
+		return DeployKeyInfo{}, errors.New("repository is not an SSH Git URL")
+	}
+	if _, err := exec.LookPath("ssh-keyscan"); err != nil {
+		return DeployKeyInfo{}, errors.New("ssh-keyscan is not installed")
+	}
+	account, err := user.Lookup(app.User)
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("lookup user %q: %w", app.User, err)
+	}
+	uid, _ := strconv.Atoi(account.Uid)
+	gid, _ := strconv.Atoi(account.Gid)
+	sshDir := filepath.Join(account.HomeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return DeployKeyInfo{}, err
+	}
+	_ = os.Chown(sshDir, uid, gid)
+	_ = os.Chmod(sshDir, 0700)
+
+	out, err := exec.CommandContext(ctx, "ssh-keyscan", "-H", "-T", "5", host).CombinedOutput()
+	if err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("scan SSH host %s: %w: %s", host, err, strings.TrimSpace(string(out)))
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return DeployKeyInfo{}, fmt.Errorf("ssh-keyscan returned no keys for %s", host)
+	}
+
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	existing, _ := os.ReadFile(knownHosts)
+	content := strings.TrimRight(string(existing), "\n")
+	if content != "" {
+		content += "\n"
+	}
+	content += strings.TrimSpace(string(out)) + "\n"
+	if err := os.WriteFile(knownHosts, []byte(content), 0600); err != nil {
+		return DeployKeyInfo{}, fmt.Errorf("write known_hosts: %w", err)
+	}
+	_ = os.Chown(knownHosts, uid, gid)
+	return m.DeployKeyInfo(id)
+}
+
+func repositorySSHHost(repository string) string {
+	repository = strings.TrimSpace(repository)
+	if strings.HasPrefix(repository, "ssh://") {
+		u, err := url.Parse(repository)
+		if err == nil {
+			return u.Hostname()
+		}
+		return ""
+	}
+	if at := strings.Index(repository, "@"); at >= 0 {
+		rest := repository[at+1:]
+		if colon := strings.Index(rest, ":"); colon > 0 {
+			return rest[:colon]
+		}
+	}
+	return ""
+}
+
+func (m *Manager) gitEnvironment(id int64, repository string) ([]string, error) {
+	if repositorySSHHost(repository) == "" {
+		return nil, nil
+	}
+	info, err := m.DeployKeyInfo(id)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Generated {
+		return nil, errors.New("private SSH repository requires a deploy key; generate one first")
+	}
+	if !info.HostKnown {
+		return nil, fmt.Errorf("SSH host %q is not trusted yet", info.Host)
+	}
+	command := "ssh -i " + info.KeyPath + " -o IdentitiesOnly=yes -o UserKnownHostsFile=" + info.KnownHosts
+	return []string{"GIT_SSH_COMMAND=" + command}, nil
+}
+
+func runAsUserEnv(ctx context.Context, username, dir string, env []string, name string, args ...string) (string, error) {
+	runArgs := []string{"-u", username, "--"}
+	if len(env) > 0 {
+		runArgs = append(runArgs, "env")
+		runArgs = append(runArgs, env...)
+	}
+	runArgs = append(runArgs, name)
+	runArgs = append(runArgs, args...)
+	cmd := exec.CommandContext(ctx, "runuser", runArgs...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+// WithFileOperation serializes file changes with staged Git deployment and
+// rollback. Files must be opened after this lock is acquired, so operations
+// never target an application tree that was atomically exchanged.
+func (m *Manager) WithFileOperation(ctx context.Context, operation func() error) error {
+    m.deployMu.Lock()
+    defer m.deployMu.Unlock()
+    if err := ctx.Err(); err != nil { return err }
+    return operation()
+}
+
+func (m *Manager) Deploy(ctx context.Context, id int64) error {
+	m.deployMu.Lock()
+	defer m.deployMu.Unlock()
+
+	return m.deployUnlocked(ctx, id)
+}
+
+func (m *Manager) deployUnlocked(ctx context.Context, id int64) error {
+	return m.deployStaged(ctx, id, false)
+}
+
+func (m *Manager) RemoteCommit(ctx context.Context, id int64) (string, error) {
+	app, err := m.Get(id)
+	if err != nil {
+		return "", err
+	}
+	cfg, err := m.DeployConfig(id)
+	if err != nil {
+		return "", err
+	}
+	if cfg.Repository == "" {
+		return "", errors.New("Git repository is not configured")
+	}
+	gitEnv, err := m.gitEnvironment(id, cfg.Repository)
+	if err != nil {
+		return "", err
+	}
+	out, err := runAsUserEnv(ctx, app.User, app.Root, gitEnv, "git", "ls-remote", cfg.Repository, "refs/heads/"+cfg.Branch)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 1 || len(fields[0]) != 40 {
+		return "", fmt.Errorf("branch %q was not found in remote repository", cfg.Branch)
+	}
+	return fields[0], nil
+}
+
+func (m *Manager) RunAutoDeploys(ctx context.Context) (int, error) {
+	return m.RunAutoDeploysDue(ctx, time.Now())
+}
+
+// RunAutoDeploysDue checks only applications whose persisted interval has
+// elapsed. Check timestamps survive panel restarts, and are recorded before
+// contacting Git so repeated failures do not hammer remote repositories.
+func (m *Manager) RunAutoDeploysDue(ctx context.Context, now time.Time) (int, error) {
+	now = now.UTC()
+	apps, err := m.List()
+	if err != nil {
+		return 0, err
+	}
+	deployed := 0
+	var failures []string
+	for _, app := range apps {
+		cfg, err := m.DeployConfig(app.ID)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("app %d: %v", app.ID, err))
+			continue
+		}
+		// Prebuilt production binaries are promoted from a separate Air
+		// development application, never from an independent Git fetch.
+		if app.Type == "go" && app.Service.RunMode == "go-binary" {
+			continue
+		}
+		if !autoDeployCheckDue(cfg, now) {
+			continue
+		}
+		// Claim the check before fetching, but only if the saved settings
+		// still match this snapshot. A changed interval or branch should
+		// take effect immediately rather than executing stale work.
+		claimed, err := m.claimAutoDeployCheck(app.ID, cfg, now)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: schedule check: %v", app.Name, err))
+			continue
+		}
+		if !claimed {
+			continue
+		}
+		remote, err := m.RemoteCommit(ctx, app.ID)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", app.Name, err))
+			continue
+		}
+		if remote == cfg.CurrentCommit {
+			continue
+		}
+		// A manual rollback may have disabled auto deploy while the
+		// remote query was running. Re-check the setting under deployMu.
+		m.deployMu.Lock()
+		latest, checkErr := m.DeployConfig(app.ID)
+		skip := checkErr == nil && !shouldContinueAutoDeploy(cfg, latest, remote)
+		if checkErr != nil {
+			err = checkErr
+		} else if !skip {
+			err = m.deployUnlocked(ctx, app.ID)
+		}
+		m.deployMu.Unlock()
+		if skip {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", app.Name, err))
+			continue
+		}
+		deployed++
+	}
+	if len(failures) > 0 {
+		return deployed, errors.New(strings.Join(failures, "; "))
+	}
+	return deployed, nil
+}
+
+func autoDeployCheckDue(cfg DeployConfig, now time.Time) bool {
+	if !cfg.AutoDeploy || strings.TrimSpace(cfg.Repository) == "" {
+		return false
+	}
+	interval := cfg.AutoDeployIntervalSeconds
+	if interval < MinAutoDeployIntervalSeconds || interval > MaxAutoDeployIntervalSeconds {
+		interval = DefaultAutoDeployIntervalSeconds
+	}
+	return cfg.LastCheckedAt.IsZero() || !now.Before(cfg.LastCheckedAt.Add(time.Duration(interval)*time.Second))
+}
+
+func (m *Manager) claimAutoDeployCheck(id int64, cfg DeployConfig, now time.Time) (bool, error) {
+	expected := ""
+	if !cfg.LastCheckedAt.IsZero() {
+		expected = cfg.LastCheckedAt.UTC().Format(time.RFC3339Nano)
+	}
+	result, err := m.store.DB().Exec(`
+		UPDATE deployments SET last_checked_at = ?
+		WHERE app_id = ? AND auto_deploy = 1 AND repository = ? AND branch = ?
+			AND auto_deploy_interval_sec = ? AND last_checked_at = ?
+	`, now.Format(time.RFC3339Nano), id, cfg.Repository, cfg.Branch,
+		cfg.AutoDeployIntervalSeconds, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
+}
+
+func shouldContinueAutoDeploy(before, after DeployConfig, remote string) bool {
+	return after.AutoDeploy &&
+		after.Repository == before.Repository &&
+		after.Branch == before.Branch &&
+		after.AutoDeployIntervalSeconds == before.AutoDeployIntervalSeconds &&
+		after.CurrentCommit != remote
+}
+// Rollback and Deploy must never mutate the same working tree concurrently.
+func (m *Manager) Rollback(ctx context.Context, id int64) error {
+	m.deployMu.Lock()
+	defer m.deployMu.Unlock()
+
+	return m.deployStaged(ctx, id, true)
+}
+
+// A manual rollback must not be immediately undone by the periodic auto deploy.
+func (m *Manager) recordRollback(id int64, target, original string) error {
+	_, err := m.store.DB().Exec(`
+		UPDATE deployments
+		SET current_commit = ?, previous_commit = ?, deployed_at = ?, auto_deploy = 0
+		WHERE app_id = ?
+	`, target, original, time.Now().UTC().Format(time.RFC3339Nano), id)
+	return err
+}
+
+// Recover both Git files and runtime dependencies after a failed deployment.
+// A Git reset alone cannot repair node_modules modified by a failed npm ci.
+// The recovery runs independently of the canceled HTTP request, with a limit.
+func (m *Manager) recoverDeployment(app App, id int64, previous string, cause error) error {
+	if previous == "" {
+		return fmt.Errorf("%w; no prior Git revision is available for recovery", cause)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if _, err := runAsUser(ctx, app.User, app.Root, "git", "reset", "--hard", previous); err != nil {
+		return errors.Join(cause, fmt.Errorf("reset previous commit %s failed: %w", previous, err))
+	}
+	if err := m.prepareDeployment(ctx, app); err != nil {
+		return errors.Join(cause, fmt.Errorf("restore previous dependencies failed: %w", err))
+	}
+	if app.Type != "static" && app.Type != "php" {
+		if err := m.Restart(ctx, id); err != nil {
+			return errors.Join(cause, fmt.Errorf("restart previous deployment failed: %w", err))
+		}
+	}
+	return fmt.Errorf("%w; previous commit %s restored", cause, previous)
+}
+
+func (m *Manager) prepareDeployment(ctx context.Context, app App) error {
+	switch app.Type {
+	case "node":
+		if _, err := os.Stat(filepath.Join(app.Root, "package-lock.json")); err == nil {
+			_, err = runAsUser(ctx, app.User, app.Root, "npm", "ci")
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(app.Root, "package.json")); err == nil {
+			_, err = runAsUser(ctx, app.User, app.Root, "npm", "install")
+			return err
+		}
+	case "go":
+		// Air resolves/rebuilds source in the development service. A binary-only
+		// production service does not need module resolution at runtime.
+		if app.Service.RunMode == "go-air" || app.Service.RunMode == "go-binary" {
+			return nil
+		}
+		if _, err := os.Stat(filepath.Join(app.Root, "go.mod")); err == nil {
+			// runuser inherits the panel service's PATH, which may not
+			// contain /usr/local/go/bin even when Go is installed and
+			// available to the application's own systemd service.
+			goBinary, err := resolveDeployGo()
+			if err != nil {
+				return err
+			}
+			_, err = runAsUser(ctx, app.User, app.Root, goBinary, "mod", "download")
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveDeployGo returns an absolute executable path so runuser does not
+// depend on the panel daemon's PATH when preparing staged Go releases.
+func resolveDeployGo() (string, error) {
+	candidates := []string{"/usr/local/go/bin/go", "/usr/local/bin/go", "/usr/bin/go", "/bin/go"}
+	if path, err := exec.LookPath("go"); err == nil {
+		candidates = append(candidates, path)
+	}
+	if path := firstExecutableGo(candidates); path != "" {
+		return path, nil
+	}
+	return "", errors.New("Go toolchain is not installed or executable; install Go from Software before deploying this application")
+}
+
+func firstExecutableGo(candidates []string) string {
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(absolute)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return absolute
+		}
+	}
+	return ""
+}
+
+func runAsUser(ctx context.Context, username, dir, name string, args ...string) (string, error) {
+	runArgs := []string{"-u", username, "--", name}
+	runArgs = append(runArgs, args...)
+	cmd := exec.CommandContext(ctx, "runuser", runArgs...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
+	app, err := m.Get(id)
+	if err != nil {
+		return RuntimeHealth{Error: err.Error()}
+	}
+	health := RuntimeHealth{ProcessStatus: m.Status(ctx, id)}
+	if app.Port <= 0 {
+		return health
+	}
+
+	dialer := net.Dialer{Timeout: time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(app.Port)))
+	if err == nil {
+		health.PortListening = true
+		_ = conn.Close()
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(app.Port)+"/", nil)
+	if err != nil {
+		health.Error = err.Error()
+		return health
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if health.Error == "" {
+			health.Error = err.Error()
+		}
+		return health
+	}
+	health.HTTPReachable = true
+	health.HTTPStatus = resp.StatusCode
+	_ = resp.Body.Close()
+	return health
+}
+
+func (m *Manager) Delete(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	apps, err := m.load()
+	if err != nil {
+		return err
+	}
+	index := -1
+	var app App
+	for i := range apps {
+		if apps[i].ID == id {
+			index = i
+			app = apps[i]
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("app %d not found", id)
+	}
+
+	if app.Type == "php" {
+		if err := phpfpm.Remove(ctx, id); err != nil { return err }
+	}
+	if app.Type != "static" && app.Type != "php" {
+		_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", serviceName(id)).Run()
+	}
+	_ = os.Remove(filepath.Join(m.serviceDir, serviceName(id)))
+	_ = os.Remove(runnerPath(m.runnerDir, id))
+	_ = os.Remove(envPath(m.envDir, id))
+	_ = os.RemoveAll(filepath.Join(m.journalDir, "journald@"+journalNamespace(id)+".conf.d"))
+	_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+
+	apps = append(apps[:index], apps[index+1:]...)
+	if err := m.save(apps); err != nil {
+		return err
+	}
+	return nil
+}
+
+).MatchString(version) {
+		return errors.New("invalid PHP version")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	apps, err := m.load()
+	if err != nil { return err }
+	for i := range apps {
+		if apps[i].ID != id { continue }
+		if apps[i].Type != "php" { return errors.New("PHP version can be set only for PHP apps") }
+		if apps[i].Service.PHPVersion == version { return nil }
+		apps[i].Service.PHPVersion = version
+		return m.save(apps)
+	}
+	return fmt.Errorf("app %d not found", id)
+}
+
 func (m *Manager) SetPort(ctx context.Context, id int64, port int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1239,7 +2122,7 @@ func (m *Manager) Status(ctx context.Context, id int64) string {
 	if err != nil || app.Type == "static" {
 		return "not configured"
 	}
-	if app.Type == "php" { return phpfpm.Status(ctx, id) }
+	if app.Type == "php" { return phpfpm.StatusVersion(ctx, id, app.Service.PHPVersion) }
 
 	if app.Service.Mode == "raw" {
 		if strings.TrimSpace(app.Service.RawUnit) == "" {
