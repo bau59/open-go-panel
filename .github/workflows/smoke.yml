@@ -121,7 +121,7 @@ jobs:
           # The first app on this fresh runner has ID 1.
           curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/apps/1/files | grep -q "Upload file"
           printf 'file-manager-smoke' > /tmp/ogp-file-upload.txt
-          FILE_UPLOAD_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F "action=upload" -F 'dir=' -F 'file=@/tmp/ogp-file-upload.txt' http://127.0.0.1:8443/apps/1/files)"
+          FILE_UPLOAD_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F "action=upload" -F 'dir=' -F 'client_size=18' -F 'file=@/tmp/ogp-file-upload.txt' http://127.0.0.1:8443/apps/1/files)"
           test "$FILE_UPLOAD_CODE" = "303"
           APP_ROOT="$(getent passwd ogpsmoke | cut -d: -f6)/apps/smoke"
           test "$(stat -c '%u:%g' "$APP_ROOT/ogp-file-upload.txt")" = "$(id -u ogpsmoke):$(id -g ogpsmoke)"
@@ -133,12 +133,27 @@ jobs:
           mkdir -p /tmp/ogp-zip-source/demo
           printf '<?php echo "uploaded";\n' > /tmp/ogp-zip-source/demo/index.php
           (cd /tmp/ogp-zip-source && zip -q /tmp/ogp-smoke.zip demo/index.php)
-          ZIP_UPLOAD="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F 'action=upload' -F 'dir=' -F 'file=@/tmp/ogp-smoke.zip;filename=smoke.zip' http://127.0.0.1:8443/apps/1/files)"
+          ZIP_UPLOAD="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F 'action=upload' -F 'dir=' -F "client_size=$(stat -c %s /tmp/ogp-smoke.zip)" -F 'file=@/tmp/ogp-smoke.zip;filename=smoke.zip' http://127.0.0.1:8443/apps/1/files)"
           test "$ZIP_UPLOAD" = "303"
           test "$(sha256sum /tmp/ogp-smoke.zip | cut -d ' ' -f1)" = "$(sha256sum "$APP_ROOT/smoke.zip" | cut -d ' ' -f1)"
           ZIP_EXTRACT="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'action=extract&dir=&name=smoke.zip' http://127.0.0.1:8443/apps/1/files)"
           test "$ZIP_EXTRACT" = "303"
           cmp /tmp/ogp-zip-source/demo/index.php "$APP_ROOT/demo/index.php"
+
+          # The multipart parser must reject an incomplete transfer based on
+          # the size selected by the browser, without leaving a file behind.
+          WRONG_SIZE_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F 'action=upload' -F 'dir=' -F 'client_size=1' -F 'file=@/tmp/ogp-smoke.zip;filename=wrong-size.zip' http://127.0.0.1:8443/apps/1/files)"
+          test "$WRONG_SIZE_CODE" = "400"
+          test ! -e "$APP_ROOT/wrong-size.zip"
+
+          # Stress the same multipart-to-runuser path with an actual 192 MiB
+          # binary file (larger than the former 128 MiB cap). Its digest must
+          # exactly match the original bytes on disk.
+          dd if=/dev/urandom of=/tmp/ogp-large-upload.bin bs=1M count=192 status=none
+          BIG_SIZE="$(stat -c %s /tmp/ogp-large-upload.bin)"
+          BIG_UPLOAD="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies -F "ogp_csrf=$CSRF" -F 'action=upload' -F 'dir=' -F "client_size=$BIG_SIZE" -F 'file=@/tmp/ogp-large-upload.bin;filename=large-upload.bin' http://127.0.0.1:8443/apps/1/files)"
+          test "$BIG_UPLOAD" = "303"
+          test "$(sha256sum /tmp/ogp-large-upload.bin | cut -d ' ' -f1)" = "$(sha256sum "$APP_ROOT/large-upload.bin" | cut -d ' ' -f1)"
           mkdir_code="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'action=mkdir&dir=&name=assets' http://127.0.0.1:8443/apps/1/files)"
           test "$mkdir_code" = "303"
           move_code="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" -d 'action=move&dir=&name=ogp-file-upload.txt&destination=assets/test.txt' http://127.0.0.1:8443/apps/1/files)"
