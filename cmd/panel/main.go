@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/app"
+	"github.com/bau59/open-go-panel/internal/filemanager"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
@@ -25,6 +27,15 @@ import (
 )
 
 func main() {
+    // In helper mode the process runs as the app owner, before any privileged
+    // panel config, SQLite state or background services are initialized.
+    if len(os.Args) > 1 && os.Args[1] == "--app-file-helper" {
+        if err := filemanager.RunHelper(os.Args[2:]); err != nil {
+            fmt.Fprintln(os.Stderr, err)
+            os.Exit(1)
+        }
+        return
+    }
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	cfg, err := config.Load()
