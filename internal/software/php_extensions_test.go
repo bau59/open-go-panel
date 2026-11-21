@@ -98,3 +98,19 @@ func TestPHPDownloadDoesNotUseShellOrArbitraryURLs(t *testing.T) {
     if err != nil { t.Fatal(err) }
     if _, err := io.Copy(io.Discard, bytes.NewReader(data)); err != nil { t.Fatal(err) }
 }
+
+func TestIonCubeLoadedRequiresPositiveRuntimeSignature(t *testing.T) {
+    if !ionCubeLoaded([]byte("PHP 8.3\nZend Engine v4.3\n    with the ionCube PHP Loader v15.5.1")) {
+        t.Fatal("valid ionCube loader not recognized")
+    }
+    for _, text := range []string{
+        "PHP Warning: Failed loading /tmp/ioncube_loader_lin_8.3.so",
+        "Could not load ionCube module",
+        "PHP 8.3 (fpm-fcgi) with Zend Engine",
+        "PHP Warning: Failed loading ioncube.so\nwith the ionCube PHP Loader",
+    } {
+        if ionCubeLoaded([]byte(text)) {
+            t.Fatalf("false-positive loader detection: %q", text)
+        }
+    }
+}
