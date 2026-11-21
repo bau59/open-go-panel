@@ -885,7 +885,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		serviceName = "PHP-FPM (shared daemon)"
 		autoStart = "PHP-FPM service"
 		resourceLimit = "shared runtime"
-		runtimeActions = `<div class="actions runtime-actions"><a class="secondary" href="/terminal?user=` + html.EscapeString(app.User) + `&app=` + fmt.Sprintf("%d", app.ID) + `">Terminal</a><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/caddy-logs">Caddy logs</a></div>`
+		runtimeActions = `<div class="actions runtime-actions"><a class="secondary" href="/terminal?user=` + html.EscapeString(app.User) + `&app=` + fmt.Sprintf("%d", app.ID) + `">Terminal</a><a class="secondary" href="/apps/` + fmt.Sprintf("%d", app.ID) + `/caddy-logs">Caddy logs</a><a class="secondary" href="/software#php-extensions">PHP extensions</a></div>`
 	}
 
 	portFact := `<div><span>Port</span><code>` + port + `</code></div>`
