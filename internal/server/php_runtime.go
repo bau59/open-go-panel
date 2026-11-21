@@ -86,7 +86,7 @@ func switchPHPAppVersion(ctx context.Context, cfg Config, app panelapp.App, vers
             cleanupCandidate()
             return errors.New("PHP version switching requires a managed PHP Caddy template; reset the custom override first")
         }
-        if err := cfg.Caddy.SetSite(ctx, app.ID, site.Domain, port, site.Root, "php"); err != nil {
+        if err := cfg.Caddy.SetPHPBackend(ctx, app.ID, port); err != nil {
             cleanupCandidate()
             return fmt.Errorf("switch Caddy FastCGI upstream: %w", err)
         }
@@ -95,7 +95,7 @@ func switchPHPAppVersion(ctx context.Context, cfg Config, app panelapp.App, vers
         if hasSite {
             rollback, cancel := context.WithTimeout(context.Background(), 20*time.Second)
             defer cancel()
-            if rollbackErr := cfg.Caddy.SetSite(rollback, app.ID, site.Domain, site.Port, site.Root, site.Kind); rollbackErr != nil {
+            if rollbackErr := cfg.Caddy.SetPHPBackend(rollback, app.ID, site.Port); rollbackErr != nil {
                 return errors.Join(err, fmt.Errorf("Caddy rollback failed: %w", rollbackErr))
             }
         }
