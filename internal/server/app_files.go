@@ -107,19 +107,19 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
                 if header.Size > filemanager.MaxUploadBytes {
                     err = fmt.Errorf("upload exceeds 1 GiB limit")
                 } else {
-                    err = files.Upload(folder, header.Filename, input)
-                    if err == nil {
-                        // The upload passes through a multipart temporary
-                        // file and a user-owned helper process. Confirm no
-                        // bytes were lost in that transfer before reporting
-                        // success. Do not keep a truncated destination.
-                        storedSize, statErr := files.FileSize(folder, header.Filename)
-                        if statErr != nil {
-                            err = fmt.Errorf("verify uploaded file: %w", statErr)
-                        } else if storedSize != header.Size {
-                            _ = files.Delete(folder, header.Filename)
-                            err = fmt.Errorf("incomplete file transfer: received %d of %d bytes; try uploading again", storedSize, header.Size)
+                    // Browser-selected file size is recorded before transfer.
+                    // A mismatch means the HTTP multipart body is incomplete.
+                    clientSize := r.FormValue("client_size")
+                    if clientSize != "" {
+                        selected, sizeErr := strconv.ParseInt(clientSize, 10, 64)
+                        if sizeErr != nil || selected != header.Size {
+                            err = fmt.Errorf("incomplete upload: browser selected %s bytes, server received %d", clientSize, header.Size)
                         }
+                    }
+                    if err == nil {
+                        // SHA-256 is verified across the helper pipe against
+                        // the saved file read back from disk.
+                        err = files.Upload(folder, header.Filename, input, header.Size)
                     }
                 }
             }
@@ -300,7 +300,8 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 <form method="post" action="%s" enctype="multipart/form-data" class="fileman-tool">
                     %s<label class="fileman-tool-label" for="fileman-upload-file">Upload file <span>Max 1 GiB</span></label>
                     <div class="fileman-control-row">
-                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required>
+                        <input type="hidden" name="client_size" value="">
+                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required onchange="this.form.elements.client_size.value = this.files.length ? this.files[0].size : ''">
                         <button class="button" type="submit">Upload</button>
                     </div>
                 </form>
