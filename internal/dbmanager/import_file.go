@@ -11,11 +11,13 @@ import (
     "path/filepath"
     "strings"
     "time"
+
+    "github.com/bau59/open-go-panel/internal/uploadlimits"
 )
 
 const (
-    MaxSQLUploadBytes = 128 << 20
-    MaxSQLExpandedBytes = 512 << 20
+    MaxSQLUploadBytes = uploadlimits.FileBytes
+    MaxSQLExpandedBytes = uploadlimits.ExpandedBytes
 )
 
 func sqlUploadFormat(name string) (compressed bool, err error) {
@@ -39,7 +41,7 @@ func stageSQLFile(reader io.Reader) (path string, err error) {
     }()
     size, copyErr := io.Copy(temp, io.LimitReader(reader, MaxSQLUploadBytes+1))
     if copyErr == nil && (size == 0 || size > MaxSQLUploadBytes) {
-        copyErr = errors.New("SQL upload must be between 1 byte and 128 MiB")
+        copyErr = errors.New("SQL upload must be between 1 byte and 1 GiB")
     }
     if copyErr == nil { copyErr = temp.Sync() }
     closeErr := temp.Close()
@@ -66,7 +68,7 @@ func validateSQLFile(path string, compressed bool) error {
     count, err := io.Copy(io.Discard, io.LimitReader(gz, MaxSQLExpandedBytes+1))
     if err != nil { return fmt.Errorf("invalid compressed SQL: %w", err) }
     if count == 0 || count > MaxSQLExpandedBytes {
-        return errors.New("decompressed SQL must be between 1 byte and 512 MiB")
+        return errors.New("decompressed SQL must be between 1 byte and 4 GiB")
     }
     return nil
 }
