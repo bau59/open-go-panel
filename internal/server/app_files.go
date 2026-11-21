@@ -53,8 +53,11 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     })))
 
     mux.Handle("POST /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Take the same lock used by Git deploy/rollback before opening the
+        // application root. A release exchange cannot discard these changes.
+        lockErr := cfg.Apps.WithFileOperation(r.Context(), func() error {
         app, files, ok := openAppFiles(w, r, cfg)
-        if !ok { return }
+        if !ok { return nil }
         defer files.Close()
         folder := r.FormValue("dir")
         name := r.FormValue("name")
@@ -92,14 +95,17 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         }
         if err != nil {
             page, renderErr := fileManagerPage(app, files, folder, "", false, err.Error(), "")
-            if renderErr != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
+            if renderErr != nil { http.Error(w, err.Error(), http.StatusBadRequest); return nil }
             writeHTML(w, cfg.Logger, http.StatusBadRequest, page)
-            return
+            return nil
         }
         destination := appFilesURL(app.ID, folder)
         delimiter := "?"
         if strings.Contains(destination, "?") { delimiter = "&" }
         http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(action+" completed"), http.StatusSeeOther)
+        return nil
+        })
+        if lockErr != nil { http.Error(w, lockErr.Error(), http.StatusRequestTimeout) }
     })))
 }
 
