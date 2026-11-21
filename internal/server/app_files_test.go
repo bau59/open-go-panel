@@ -106,7 +106,7 @@ func TestFileManagerToolbarControlsStayAligned(t *testing.T) {
     for _, expected := range []string{
         `class="fileman-tools"`,
         `class="fileman-control-row"`,
-        `class="fileman-file-input"`,
+        `class="file-upload-input"`,
         `for="fileman-upload-file"`,
         `id="fileman-upload-file"`,
         `for="fileman-folder-name"`,
