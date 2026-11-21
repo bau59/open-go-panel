@@ -338,6 +338,19 @@ func phpDocumentRoot(app panelapp.App, choice string) (string, error) {
 	}
 }
 
+func phpDocumentRootSelect(app panelapp.App, current string) string {
+	if app.Type != "php" { return "" }
+	if current == "" {
+		current, _ = phpDocumentRoot(app, "")
+	}
+	choice := "root"
+	if current == filepath.Join(app.Root, "public") { choice = "public" }
+	return `<label>PHP document root</label><select name="document_root">
+		<option value="public"` + selected(choice, "public") + `>public/ (Laravel, frameworks)</option>
+		<option value="root"` + selected(choice, "root") + `>Application root (WordPress, plain PHP)</option>
+	</select>`
+}
+
 func caddyPage(status string, sites []panelcaddy.Site, config, template string, settings panelcaddy.GlobalSettings, selectedID int64, message string) string {
 	alert := ""
 	if message != "" {
@@ -653,7 +666,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 		return `
 			<section class="panel panel-pad app-card">
 				<div class="section-title">
-					<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Public address and reverse proxy routing.</p></div>
+					<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Public address and Caddy routing.</p></div>
 					<span class="state-text ok"><i></i>connected</span>
 				</div>
 				<div class="domain-summary">
@@ -671,6 +684,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 						<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="inline-popover wide">
 							<label>New domain</label>
 							<input name="domain" value="` + html.EscapeString(site.Domain) + `" required>
+							` + phpDocumentRootSelect(app, site.Root) + `
 							<button class="button">Save domain</button>
 						</form>
 					</details>
@@ -685,6 +699,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 			</div>
 			<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/domain" class="compact-form">
 				<input name="domain" placeholder="example.com" required>
+				` + phpDocumentRootSelect(app, "") + `
 				<button class="button">Connect domain</button>
 			</form>
 		</section>`
