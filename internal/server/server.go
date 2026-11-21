@@ -207,6 +207,7 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Apps != nil && cfg.Users != nil {
 		registerAppRoutes(mux, store, cfg)
+		registerPHPVersionRoutes(mux, store, cfg)
 		registerPHPLogRoutes(mux, store, cfg)
 		registerAppFileRoutes(mux, store, cfg)
 		registerTerminalRoutes(mux, store, cfg)
