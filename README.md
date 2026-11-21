@@ -59,7 +59,7 @@ Open **Applications → Files** (or **Files** in an application's header). The f
 - moving/renaming files and folders, copying individual files, deleting files or directories;
 - extracting ZIP, TAR.GZ and TGZ archives without overwriting existing files.
 
-Uploads, editing and archive extraction are one-time operations, not background tasks. Archive extraction is limited to 3,000 entries and 256 MiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible.
+Uploads, editing and archive extraction are one-time operations, not background tasks. Archive extraction is limited to 10,000 entries and 256 MiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible.
 
 New installations bind the panel to localhost:
 
