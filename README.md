@@ -21,6 +21,7 @@ Lightweight open-source Linux server control panel written in Go.
 - application ↔ database attachments;
 - MySQL, PostgreSQL and Redis runtime metrics plus resource-aware MySQL tuning preset;
 - database backups, restore and daily retention schedule;
+- upload and import `.sql` / `.sql.gz` files into managed MySQL and PostgreSQL databases, with safety snapshots;
 - Adminer behind the panel session;
 - CrowdSec Security Engine and nftables firewall bouncer;
 - UFW recommended firewall policy;
@@ -157,6 +158,8 @@ Caddy-managed sites are isolated in:
 ```
 
 The root Caddyfile imports that directory, so unrelated manual Caddy configuration can coexist with Open Go Panel.
+
+To import an SQL file, open **Databases → the selected database → Import SQL**. Upload a `.sql` or `.sql.gz` file (max 128 MiB uploaded; compressed SQL expands to at most 512 MiB). Choose **Apply to existing database** to execute the script without first clearing existing tables, or **Replace database contents** to drop and recreate only the selected managed database before applying the script. Imports execute asynchronously and display success/failure on the Databases page. A safety backup is created before any modifications; if the SQL command fails, the panel attempts to restore the original database from that backup. Imported SQL runs under the managed database user and an unprivileged Linux process. SQL is executable code that may alter or remove data; verify the file's origin before importing.
 
 Database backups are stored in:
 
