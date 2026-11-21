@@ -19,6 +19,9 @@ func legacyELFFixture() []byte {
     if runtime.GOARCH == "arm64" { machine = elf.EM_AARCH64 }
     binary.LittleEndian.PutUint16(data[18:20], uint16(machine))
     binary.LittleEndian.PutUint16(data[52:54], 64)
+    binary.LittleEndian.PutUint64(data[40:48], 64) // Section table starts after ELF header.
+    binary.LittleEndian.PutUint16(data[58:60], 64) // ELF64 section-header size.
+    binary.LittleEndian.PutUint16(data[60:62], 1)  // SHT_NULL section.
     return data
 }
 
