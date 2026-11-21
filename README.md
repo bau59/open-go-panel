@@ -11,6 +11,7 @@ Lightweight open-source Linux server control panel written in Go.
 - Linux users and SSH keys;
 - applications with systemd services, resource limits and live journal logs;
 - PHP web applications through per-user PHP-FPM pools and Caddy FastCGI routing;
+- per-application file browser/editor with upload, download, mkdir, rename/move, copy, delete and ZIP/TAR.GZ extraction;
 - application health checks;
 - Git deploy, one-step rollback and optional automatic deployment when the configured branch changes;
 - domains, automatic TLS and per-domain Caddy configuration;
@@ -48,6 +49,17 @@ panel updates. Existing executables and symlinks are never overwritten, so
 managed application users can find Go without manual PATH changes.
 
 For PHP websites, install **Software → PHP + PHP-FPM** first, create a **PHP web app**, then deploy files and connect a domain. The domain form lets you choose the `public/` directory (Laravel/frameworks) or the application root (WordPress/plain PHP). Each app runs in an on-demand PHP-FPM pool under its Linux user, with a dedicated Unix socket for Caddy; no application HTTP port or per-app systemd service is created. Configure PHP application secrets in its project configuration or `.env`, not via the systemd environment editor. PHP-FPM daemon CPU/memory use is shared across sites.
+
+## Application files
+
+Open **Applications → Files** (or **Files** in an application's header). The file manager operates only within the selected application's root, using the app's Linux ownership. It supports:
+
+- browsing directories and editing UTF-8 text files (up to 2 MiB);
+- uploading a file (up to 128 MiB), downloading files, creating files or folders;
+- moving/renaming files and folders, copying individual files, deleting files or directories;
+- extracting ZIP, TAR.GZ and TGZ archives without overwriting existing files.
+
+Uploads, editing and archive extraction are one-time operations, not background tasks. Archive extraction is limited to 3,000 entries and 256 MiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible.
 
 New installations bind the panel to localhost:
 
