@@ -81,6 +81,15 @@ func (w *csrfResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hijacker.Hijack()
 }
 
+// The generic file manager permits large uploads, but an ionCube package
+// must stay small even though CSRF middleware parses multipart data first.
+func multipartLimitForPath(path string) int64 {
+    if strings.HasPrefix(path, "/software/php/") && strings.HasSuffix(path, "/ioncube/upload") {
+        return (64 << 20) + (1 << 20) // archive + multipart overhead
+    }
+    return fileUploadBodyLimit
+}
+
 func csrfProtection(store *sessionStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authenticated := store.authenticated(r)
@@ -115,7 +124,7 @@ func csrfProtection(store *sessionStore, next http.Handler) http.Handler {
 					}
 					// ParseMultipartForm streams large parts to disk. Cap the
 					// entire body and clean up the temporary parts after use.
-					r.Body = http.MaxBytesReader(w, r.Body, fileUploadBodyLimit)
+					r.Body = http.MaxBytesReader(w, r.Body, multipartLimitForPath(r.URL.Path))
 					parseErr = r.ParseMultipartForm(8 << 20)
 					if r.MultipartForm != nil { defer r.MultipartForm.RemoveAll() }
 				} else {
