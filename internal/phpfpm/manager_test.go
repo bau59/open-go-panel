@@ -12,6 +12,8 @@ func TestPoolConfigUsesDedicatedIdentityAndSocket(t *testing.T) {
 		"listen = /run/php/ogp-app-42.sock",
 		"listen.owner = caddy", "listen.mode = 0660",
 		"pm = ondemand", "security.limit_extensions = .php",
+		"php_admin_flag[log_errors] = on", "php_admin_flag[display_errors] = off",
+		"php_admin_value[error_log] = /var/log/open-go-panel/php/app-42.log",
 	} {
 		if !strings.Contains(value, expected) {
 			t.Errorf("missing %q in PHP-FPM pool", expected)
