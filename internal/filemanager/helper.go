@@ -2,9 +2,12 @@ package filemanager
 
 import (
     "context"
+    "crypto/sha256"
+    "encoding/hex"
     "encoding/json"
     "errors"
     "fmt"
+    "hash"
     "io"
     "os"
     "os/exec"
@@ -115,9 +118,84 @@ func (c *Client) Save(folder, name, content string, create bool) error {
     return err
 }
 
-func (c *Client) Upload(folder, name string, source io.Reader) error {
-    _, err := c.call("upload", folder, name, "", io.LimitReader(source, MaxUploadBytes+1))
-    return err
+// Upload checks every byte transferred to the unprivileged helper against the
+// file read back from its final location. The size supplied by the browser is
+// also verified, so a truncated multipart request is not silently accepted.
+func (c *Client) Upload(folder, name string, source io.Reader, expectedSize int64) error {
+    if expectedSize < 0 || expectedSize > MaxUploadBytes {
+        return errors.New("file upload exceeds the 1 GiB limit")
+    }
+    reader := &digestReader{source: io.LimitReader(source, MaxUploadBytes+1), digest: sha256.New()}
+    output, err := c.call("upload", folder, name, "", reader)
+    if err != nil { return err }
+
+    var saved uploadDigest
+    if err := json.Unmarshal(output, &saved); err != nil {
+        // A successful upload can only be returned with a verified digest.
+        cleanupErr := c.Delete(folder, name)
+        return fmt.Errorf("invalid upload verification response: %w (cleanup: %v)", err, cleanupErr)
+    }
+    if err := verifyUploadDigest(expectedSize, reader, saved); err != nil {
+        cleanupErr := c.Delete(folder, name)
+        return fmt.Errorf("%w (cleanup: %v)", err, cleanupErr)
+    }
+    return nil
+}
+
+type uploadDigest struct {
+    Size int64 `json:"size"`
+    SHA256 string `json:"sha256"`
+}
+
+type digestReader struct {
+    source io.Reader
+    digest hash.Hash
+    bytes int64
+}
+func (r *digestReader) Read(p []byte) (int, error) {
+    n, err := r.source.Read(p)
+    if n > 0 {
+        _, _ = r.digest.Write(p[:n])
+        r.bytes += int64(n)
+    }
+    return n, err
+}
+
+func verifyUploadDigest(expectedSize int64, reader *digestReader, saved uploadDigest) error {
+    if reader.bytes != expectedSize || saved.Size != expectedSize {
+        return fmt.Errorf("upload is incomplete: browser sent %d bytes, helper received %d, saved %d", expectedSize, reader.bytes, saved.Size)
+    }
+    originalSHA256 := hex.EncodeToString(reader.digest.Sum(nil))
+    if !strings.EqualFold(originalSHA256, saved.SHA256) {
+        return fmt.Errorf("upload checksum mismatch: source SHA-256 %s, saved SHA-256 %s", originalSHA256, saved.SHA256)
+    }
+    return nil
+}
+
+// helperUpload atomically saves a file as the Linux app owner, then reads
+// it back from disk and reports its SHA-256 and length to the parent process.
+func helperUpload(manager *Manager, folder, name string, input io.Reader, output io.Writer) error {
+    if err := manager.Upload(folder, name, io.LimitReader(input, MaxUploadBytes+1)); err != nil {
+        return err
+    }
+    complete := false
+    defer func() {
+        if !complete { _ = manager.Delete(folder, name) }
+    }()
+
+    file, info, err := manager.Download(folder, name)
+    if err != nil { return fmt.Errorf("verify uploaded file: %w", err) }
+    defer file.Close()
+    digest := sha256.New()
+    copied, err := io.Copy(digest, file)
+    if err != nil { return fmt.Errorf("read uploaded file for verification: %w", err) }
+    if copied != info.Size() { return errors.New("uploaded file changed during verification") }
+    result := uploadDigest{Size: copied, SHA256: hex.EncodeToString(digest.Sum(nil))}
+    if err := json.NewEncoder(output).Encode(result); err != nil {
+        return fmt.Errorf("write upload verification: %w", err)
+    }
+    complete = true
+    return nil
 }
 
 func (c *Client) Mkdir(folder, name string) error {
@@ -186,7 +264,7 @@ func RunHelper(args []string) error {
         return err
     case "save", "create", "upload":
         if operation == "upload" {
-            return manager.Upload(folder, name, io.LimitReader(os.Stdin, MaxUploadBytes+1))
+            return helperUpload(manager, folder, name, os.Stdin, os.Stdout)
         }
         data, err := io.ReadAll(io.LimitReader(os.Stdin, MaxEditBytes+1))
         if err != nil { return err }
