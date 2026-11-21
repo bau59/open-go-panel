@@ -44,6 +44,7 @@ func (m *Manager) Items(ctx context.Context) []Item {
 		dockerStatus(ctx),
 		nodeStatus(ctx),
 		phpStatus(ctx),
+		php74Status(ctx),
 		tailwindStatus(ctx),
 		goStatus(ctx),
 		airStatus(ctx),
@@ -96,7 +97,7 @@ func (m *Manager) Start(id, action string) error {
 
 func supportedID(id string) bool {
 	switch id {
-	case "docker", "node", "php", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
+	case "docker", "node", "php", "php74", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
 		return true
 	default:
 		return false
@@ -111,6 +112,12 @@ func (m *Manager) run(ctx context.Context, id string) error {
 		return installNode(ctx)
 	case "php":
 		return aptInstall(ctx, "php-fpm", "php-cli", "php-mysql", "php-mbstring", "php-xml", "php-curl", "php-zip")
+	case "php74":
+		// Never add third-party APT sources implicitly. Administrators must
+		// first configure a trusted repository providing PHP 7.4 packages.
+		return aptInstall(ctx, "php7.4-fpm", "php7.4-cli", "php7.4-mysql",
+			"php7.4-mbstring", "php7.4-xml", "php7.4-curl", "php7.4-zip",
+			"php7.4-gd", "php7.4-intl", "php7.4-bcmath", "php7.4-imagick")
 	case "tailwind":
 		return installTailwind(ctx)
 	case "go":
@@ -140,6 +147,21 @@ func dockerStatus(ctx context.Context) Item {
 		if compose, err := commandOutput(ctx, "docker", "compose", "version", "--short"); err == nil {
 			item.Version += " · Compose " + strings.TrimSpace(compose)
 		}
+	}
+	return item
+}
+
+func php74Status(ctx context.Context) Item {
+	item := Item{
+		ID: "php74", Name: "PHP 7.4 + PHP-FPM (legacy)",
+		Description: "Optional older PHP runtime for legacy sites; independent of the system PHP version.",
+		Detail: "Requires a trusted APT repository providing php7.4-* packages. PHP 7.4 is end-of-life; installing this does not replace PHP 8.3.",
+	}
+	if runtime, err := phpfpm.DetectVersion("7.4"); err == nil {
+		item.Installed = true
+		item.Version = "PHP-FPM " + runtime.Version
+	} else {
+		item.Version = "not installed"
 	}
 	return item
 }
