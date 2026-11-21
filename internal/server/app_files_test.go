@@ -3,12 +3,15 @@ package server
 import (
     "bytes"
     "io"
+    "os/user"
     "log/slog"
     "mime/multipart"
     "net/http"
     "net/http/httptest"
     "strings"
     "testing"
+    panelapp "github.com/bau59/open-go-panel/internal/app"
+    "github.com/bau59/open-go-panel/internal/filemanager"
 )
 
 func multipartCSRFRequest(t *testing.T, token string) (*bytes.Buffer, string) {
@@ -59,5 +62,30 @@ func TestFileManagerHTMLForms(t *testing.T) {
     path := appFilesURL(21, "public/my files")
     if path != "/apps/21/files?dir=public%2Fmy+files" {
         t.Fatalf("file browser path not encoded: %q", path)
+    }
+}
+
+func TestFileEditorPreservesDraftAndRevision(t *testing.T) {
+    root := t.TempDir()
+    account, err := user.Current()
+    if err != nil { t.Fatal(err) }
+    files, err := filemanager.Open(root, account.Username)
+    if err != nil { t.Fatal(err) }
+    defer files.Close()
+    if err := files.Save("", "index.php", "<?php echo 'old';", true); err != nil { t.Fatal(err) }
+    app := panelapp.App{ID: 12, Name: "site", Root: root, User: account.Username}
+    page, err := fileManagerPage(app, files, "", "index.php", false, "", "")
+    if err != nil { t.Fatal(err) }
+    if !strings.Contains(page, `name="base_sha256"`) { t.Fatal("original file digest missing from editor") }
+
+    draft := "<?php echo 'new';"
+    staleHash := strings.Repeat("a", 64)
+    page, err = fileManagerPage(app, files, "", "index.php", false, "Conflict", "", draft, staleHash)
+    if err != nil { t.Fatal(err) }
+    if !strings.Contains(page, "Conflict") || !strings.Contains(page, draft) {
+        t.Fatal("draft editor content disappeared after an error")
+    }
+    if !strings.Contains(page, `name="base_sha256" value="`+staleHash+`"`) {
+        t.Fatal("stale digest was silently replaced")
     }
 }
