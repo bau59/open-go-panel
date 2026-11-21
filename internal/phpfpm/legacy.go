@@ -54,38 +54,8 @@ func dockerOutput(ctx context.Context, args ...string) (string, error) {
 // InstallLegacyLoader selects only the PHP 7.4 shared object from an official
 // ionCube Linux tarball. Tar entry paths are never used as output filenames.
 func InstallLegacyLoader(archive io.Reader) error {
-    gz, err := gzip.NewReader(io.LimitReader(archive, 64<<20))
-    if err != nil { return fmt.Errorf("read ionCube gzip: %w", err) }
-    defer gz.Close()
-    tarReader := tar.NewReader(io.LimitReader(gz, 256<<20))
-    target := "ioncube/ioncube_loader_lin_7.4.so"
-    var content []byte
-    for {
-        header, err := tarReader.Next()
-        if errors.Is(err, io.EOF) { break }
-        if err != nil { return fmt.Errorf("read ionCube archive: %w", err) }
-        if strings.TrimPrefix(header.Name, "./") != target { continue }
-        if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
-            return errors.New("ionCube Loader must be a regular file")
-        }
-        if header.Size < 64 || header.Size > 32<<20 {
-            return errors.New("invalid ionCube Loader size")
-        }
-        content, err = io.ReadAll(io.LimitReader(tarReader, header.Size+1))
-        if err != nil { return err }
-        if int64(len(content)) != header.Size { return errors.New("ionCube Loader truncated") }
-        break
-    }
-    if content == nil { return errors.New("archive does not contain ioncube_loader_lin_7.4.so") }
-    machine := elf.EM_X86_64
-    if runtime.GOARCH == "arm64" { machine = elf.EM_AARCH64 }
-    if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
-        return errors.New("unsupported ionCube Loader architecture")
-    }
-    elfFile, err := elf.NewFile(strings.NewReader(string(content)))
-    if err != nil || elfFile.Class != elf.ELFCLASS64 || elfFile.Type != elf.ET_DYN || elfFile.Machine != machine {
-        return errors.New("ionCube Loader is not a shared object for this server architecture")
-    }
+    content, err := extractLegacyLoader(archive)
+    if err != nil { return err }
     dir := filepath.Dir(LegacyLoaderPath())
     if err := os.MkdirAll(dir, 0755); err != nil { return err }
     file, err := os.CreateTemp(dir, ".ioncube-7.4-*")
@@ -96,6 +66,42 @@ func InstallLegacyLoader(archive io.Reader) error {
     if err := file.Sync(); err != nil { _ = file.Close(); return err }
     if err := file.Close(); err != nil { return err }
     return os.Rename(file.Name(), LegacyLoaderPath())
+}
+
+func extractLegacyLoader(archive io.Reader) ([]byte, error) {
+    gz, err := gzip.NewReader(io.LimitReader(archive, 64<<20))
+    if err != nil { return nil, fmt.Errorf("read ionCube gzip: %w", err) }
+    defer gz.Close()
+    tarReader := tar.NewReader(io.LimitReader(gz, 256<<20))
+    target := "ioncube/ioncube_loader_lin_7.4.so"
+    var content []byte
+    for {
+        header, err := tarReader.Next()
+        if errors.Is(err, io.EOF) { break }
+        if err != nil { return nil, fmt.Errorf("read ionCube archive: %w", err) }
+        if strings.TrimPrefix(header.Name, "./") != target { continue }
+        if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+            return nil, errors.New("ionCube Loader must be a regular file")
+        }
+        if header.Size < 64 || header.Size > 32<<20 {
+            return nil, errors.New("invalid ionCube Loader size")
+        }
+        content, err = io.ReadAll(io.LimitReader(tarReader, header.Size+1))
+        if err != nil { return nil, err }
+        if int64(len(content)) != header.Size { return nil, errors.New("ionCube Loader truncated") }
+        break
+    }
+    if content == nil { return nil, errors.New("archive does not contain ioncube_loader_lin_7.4.so") }
+    machine := elf.EM_X86_64
+    if runtime.GOARCH == "arm64" { machine = elf.EM_AARCH64 }
+    if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+        return nil, errors.New("unsupported ionCube Loader architecture")
+    }
+    elfFile, err := elf.NewFile(strings.NewReader(string(content)))
+    if err != nil || elfFile.Class != elf.ELFCLASS64 || elfFile.Type != elf.ET_DYN || elfFile.Machine != machine {
+        return nil, errors.New("ionCube Loader is not a shared object for this server architecture")
+    }
+    return content, nil
 }
 
 const legacyDockerfile = `FROM php:7.4-fpm-bullseye
