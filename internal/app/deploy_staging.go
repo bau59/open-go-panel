@@ -184,7 +184,7 @@ func (m *Manager) deployStaged(ctx context.Context, id int64, rollback bool) err
 	}
 
 	activate := func() error {
-		if app.Type != "static" {
+		if app.Type != "static" && app.Type != "php" {
 			if err := m.Restart(ctx, id); err != nil {
 				return fmt.Errorf("restart new application: %w", err)
 			}
@@ -203,7 +203,7 @@ func (m *Manager) deployStaged(ctx context.Context, id int64, rollback bool) err
 		return err
 	}
 	recoverPrevious := func() error {
-		if app.Type == "static" {
+		if app.Type == "static" || app.Type == "php" {
 			return nil
 		}
 		recoveryCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
