@@ -218,6 +218,43 @@ func (c *Client) Delete(folder, name string) error {
     return err
 }
 
+func (c *Client) MoveMany(folder string, names []string, destination string) (int, error) {
+    if err := checkSelectedNames(names, MaxBulkSelection); err != nil { return 0, err }
+    data, err := json.Marshal(names)
+    if err != nil { return 0, err }
+    result, err := c.call("bulk-move", folder, "", destination, strings.NewReader(string(data)))
+    if err != nil { return 0, err }
+    return strconv.Atoi(strings.TrimSpace(string(result)))
+}
+
+func (c *Client) DeleteMany(folder string, names []string) (int, error) {
+    if err := checkSelectedNames(names, MaxBulkSelection); err != nil { return 0, err }
+    data, err := json.Marshal(names)
+    if err != nil { return 0, err }
+    result, err := c.call("bulk-delete", folder, "", "", strings.NewReader(string(data)))
+    if err != nil { return 0, err }
+    return strconv.Atoi(strings.TrimSpace(string(result)))
+}
+
+func (c *Client) MoveContentsUp(folder, child string) (int, error) {
+    result, err := c.call("move-contents", folder, child, "", nil)
+    if err != nil { return 0, err }
+    return strconv.Atoi(strings.TrimSpace(string(result)))
+}
+
+// Decode only bounded lists: the helper is unprivileged, but must never read
+// arbitrary amounts of stdin in response to a bulk action.
+func readBulkNames(input io.Reader) ([]string, error) {
+    const maxJSON = MaxBulkSelection*(255+8) + 256
+    raw, err := io.ReadAll(io.LimitReader(input, maxJSON+1))
+    if err != nil { return nil, err }
+    if len(raw) > maxJSON { return nil, errors.New("bulk selection exceeds request limit") }
+    var names []string
+    if err := json.Unmarshal(raw, &names); err != nil { return nil, err }
+    if err := checkSelectedNames(names, MaxBulkSelection); err != nil { return nil, err }
+    return names, nil
+}
+
 func (c *Client) Extract(folder, name string) (int, error) {
     output, err := c.call("extract", folder, name, "", nil)
     if err != nil { return 0, err }
@@ -273,6 +310,23 @@ func RunHelper(args []string) error {
         return manager.Mkdir(folder, name)
     case "move":
         return manager.Move(folder, name, destination)
+    case "bulk-move", "bulk-delete":
+        names, err := readBulkNames(os.Stdin)
+        if err != nil { return err }
+        var count int
+        if operation == "bulk-move" {
+            count, err = manager.MoveMany(folder, names, destination)
+        } else {
+            count, err = manager.DeleteMany(folder, names)
+        }
+        if err != nil { return err }
+        _, err = fmt.Fprintln(os.Stdout, count)
+        return err
+    case "move-contents":
+        count, err := manager.MoveContentsUp(folder, name)
+        if err != nil { return err }
+        _, err = fmt.Fprintln(os.Stdout, count)
+        return err
     case "copy":
         return manager.Copy(folder, name, destination)
     case "delete":
