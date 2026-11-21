@@ -192,6 +192,12 @@ func downloadIonCube(ctx context.Context, version, arch string) ([]byte, error) 
     return extractIonCube(response.Body, version, machine)
 }
 
+func ionCubeLoaded(output []byte) bool {
+    normalized := strings.ToLower(string(output))
+    return strings.Contains(normalized, "with the ioncube php loader") &&
+        !strings.Contains(normalized, "failed loading")
+}
+
 func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     if php.Version == "" || strings.ContainsAny(php.Version, "/\\") {
         return errors.New("invalid detected PHP version")
@@ -226,7 +232,7 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     phpCLI := "php"+php.Version
     check := exec.CommandContext(ctx, phpCLI, "-n", "-d", "zend_extension="+tempName, "-v")
     output, err := check.CombinedOutput()
-    if err != nil || !strings.Contains(strings.ToLower(string(output)), "ioncube") {
+    if err != nil || !ionCubeLoaded(output) {
         return fmt.Errorf("ionCube failed PHP %s loader validation: %s", php.Version, strings.TrimSpace(string(output)))
     }
 
@@ -260,7 +266,7 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     // php-fpm -t validates the ini syntax, while -v also confirms that the
     // Loader was actually recognized by the FPM binary before live reload.
     fpmOutput, verifyErr := exec.CommandContext(ctx, php.Binary, "-v").CombinedOutput()
-    if verifyErr != nil || !strings.Contains(strings.ToLower(string(fpmOutput)), "ioncube") {
+    if verifyErr != nil || !ionCubeLoaded(fpmOutput) {
         restore()
         return fmt.Errorf("ionCube is not active in PHP-FPM %s (previous config restored): %s", php.Version, strings.TrimSpace(string(fpmOutput)))
     }
