@@ -3,7 +3,9 @@ package filemanager
 import (
     "archive/tar"
     "archive/zip"
+    "bytes"
     "compress/gzip"
+    "encoding/binary"
     "crypto/rand"
     "encoding/hex"
     "errors"
@@ -327,6 +329,59 @@ func (m *Manager) extractEntry(folder, name string, directory bool, size int64, 
     return nil
 }
 
+// openZIPArchive first uses Go's standard ZIP reader. Some ZIP creators append
+// a non-ZIP payload after the end-of-central-directory record. That is not
+// part of the archive and must not prevent extracting its valid ZIP entries.
+// Only recover when a shorter view can be validated by archive/zip itself;
+// never invoke an unconfined external extractor.
+func openZIPArchive(file *os.File, size int64) (*zip.Reader, error) {
+    archive, err := zip.NewReader(file, size)
+    if err == nil { return archive, nil }
+    if !errors.Is(err, zip.ErrFormat) {
+        return nil, fmt.Errorf("read ZIP archive: %w", err)
+    }
+    const maxTrailingScan int64 = 8 << 20
+    const maxZIPComment int64 = 65535
+    const endRecordBytes int64 = 22
+    scan := maxTrailingScan + maxZIPComment + endRecordBytes
+    if size < scan { scan = size }
+    if scan >= endRecordBytes {
+        tail := make([]byte, int(scan))
+        start := size - scan
+        if _, readErr := file.ReadAt(tail, start); readErr == nil {
+            // Scan backwards; candidate offsets are validated with zip.NewReader
+            // before accepting any archive data. Bound attempts for malformed
+            // or adversarial files.
+            attempts := 0
+            for i := len(tail) - int(endRecordBytes); i >= 0 && attempts < 64; i-- {
+                if !bytes.Equal(tail[i:i+4], []byte{'P', 'K', 5, 6}) { continue }
+                commentLen := int(binary.LittleEndian.Uint16(tail[i+20 : i+22]))
+                end := i + int(endRecordBytes) + commentLen
+                if end >= len(tail) { continue }
+                attempts++
+                candidate, candidateErr := zip.NewReader(file, start+int64(end))
+                if candidateErr == nil { return candidate, nil }
+            }
+        }
+    }
+
+    var header [8]byte
+    n, _ := file.ReadAt(header[:], 0)
+    prefix := header[:n]
+    switch {
+    case bytes.HasPrefix(prefix, []byte{'R','a','r','!',0x1a,0x07}):
+        return nil, errors.New("file contains RAR data, not ZIP; upload a ZIP archive")
+    case bytes.HasPrefix(prefix, []byte{'7','z',0xbc,0xaf,0x27,0x1c}):
+        return nil, errors.New("file contains 7z data, not ZIP; upload a ZIP archive")
+    case bytes.HasPrefix(prefix, []byte{0x1f,0x8b}):
+        return nil, errors.New("file contains gzip data, not ZIP; use .tar.gz only for a tar archive")
+    case bytes.HasPrefix(bytes.TrimSpace(prefix), []byte{'<'}):
+        return nil, errors.New("file appears to be HTML/XML rather than a ZIP archive")
+    default:
+        return nil, fmt.Errorf("ZIP structure is missing or damaged (%d bytes). Check the source archive with unzip -t and compare its SHA-256 checksum; upload again if incomplete: %w", size, err)
+    }
+}
+
 func (m *Manager) Extract(folder, name string) (int, error) {
     lower := strings.ToLower(name)
     if !strings.HasSuffix(lower, ".zip") && !strings.HasSuffix(lower, ".tar.gz") && !strings.HasSuffix(lower, ".tgz") {
@@ -340,7 +395,7 @@ func (m *Manager) Extract(folder, name string) (int, error) {
     count := 0
 
     if strings.HasSuffix(lower, ".zip") {
-        archive, err := zip.NewReader(file, info.Size())
+        archive, err := openZIPArchive(file, info.Size())
         if err != nil { return 0, err }
         if len(archive.File) > MaxArchiveEntries { return 0, errors.New("archive contains too many entries") }
         for _, item := range archive.File {
