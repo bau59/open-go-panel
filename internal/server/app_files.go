@@ -4,6 +4,7 @@ import (
     "crypto/sha256"
     "fmt"
     "html"
+    "io"
     "mime"
     "net/http"
     "mime/multipart"
@@ -56,7 +57,6 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         lockErr := cfg.Apps.WithFileOperation(r.Context(), func() error {
         app, files, ok := openAppFiles(w, r, cfg)
         if !ok { return nil }
-        defer files.Close()
         folder := r.FormValue("dir")
         name := r.FormValue("name")
         action := r.FormValue("action")
