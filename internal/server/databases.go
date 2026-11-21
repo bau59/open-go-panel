@@ -534,16 +534,16 @@ func databasesPage(data databasePageData) string {
 					<details class="db-action-menu">
 						<summary class="secondary">Import SQL</summary>
 						<div class="inline-popover wide">
-							<form method="post" action="/databases/%d/import/file" enctype="multipart/form-data" onsubmit="return confirm(this.elements.mode.value === 'replace' ? 'Replace this database with the SQL file? A safety backup will be created first.' : 'Execute this SQL file against the current database? A safety backup will be created first.')">
-								<label>SQL file</label>
-								<input type="file" name="file" accept=".sql,.sql.gz" required>
-								<label style="margin-top:10px">Import mode</label>
+							<form class="db-sql-import-form" method="post" action="/databases/%d/import/file" enctype="multipart/form-data" onsubmit="return confirm(this.elements.mode.value === 'replace' ? 'Replace this database with the SQL file? A safety backup will be created first.' : 'Execute this SQL file against the current database? A safety backup will be created first.')">
+								<label>SQL file · max 1 GiB</label>
+								<input class="file-upload-input" type="file" name="file" accept=".sql,.sql.gz" required>
+								<label>Import mode</label>
 								<select name="mode">
 									<option value="apply">Apply to existing database</option>
 									<option value="replace">Replace database contents</option>
 								</select>
-								<p class="note" style="margin:8px 0 0">.sql or .sql.gz · max 1 GiB. Runs as the database user, with a safety backup and recovery on error.</p>
-								<button class="button" style="margin-top:10px">Upload & import</button>
+								<p class="note">.sql or .sql.gz. Uses the database user. A safety backup is created before import; failures trigger recovery.</p>
+								<button class="button">Upload &amp; import</button>
 							</form>
 						</div>
 					</details>
