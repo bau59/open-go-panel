@@ -598,7 +598,7 @@ func managedPHPTemplate(settings GlobalSettings) string {
 	lines = append(lines, securityHeaderLines(settings)...)
 	lines = append(lines,
 		"\troot * {root}",
-		"\t@ogp_hidden path_regexp /\\\\.",
+		"\t@ogp_hidden path_regexp /\\.",
 		"\trespond @ogp_hidden 404",
 		"\t@ogp_private path /vendor/* /composer.json /composer.lock",
 		"\trespond @ogp_private 404",
