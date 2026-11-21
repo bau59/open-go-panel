@@ -213,7 +213,9 @@ jobs:
 
           # Install an extension using the panel's PHP-version-aware route.
           PHP_VERSION="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software | grep -q "Manage PHP $PHP_VERSION extensions"
+          echo "PHP extensions smoke: detected PHP $PHP_VERSION"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software -o /tmp/ogp-software-php.html
+          grep -q "Manage PHP $PHP_VERSION extensions" /tmp/ogp-software-php.html
           EXT_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" http://127.0.0.1:8443/software/php/extensions/bcmath)"
           test "$EXT_CODE" = "303"
           EXT_READY=""
@@ -223,7 +225,9 @@ jobs:
           done
           test "$EXT_READY" = yes
           php -m | grep -iq '^bcmath'
-          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software | grep -q "BCMath"
+          echo "PHP extensions smoke: BCMath package enabled"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software -o /tmp/ogp-software-php.html
+          grep -q "BCMath" /tmp/ogp-software-php.html
 
           # PR-only acceptance: install official ionCube Loader and verify the
           # real PHP-FPM binary sees it. Remove this external-download test
