@@ -90,3 +90,43 @@ func TestFileEditorPreservesDraftAndRevision(t *testing.T) {
         t.Fatal("stale digest was silently replaced")
     }
 }
+
+func TestFileManagerToolbarControlsStayAligned(t *testing.T) {
+    root := t.TempDir()
+    account, err := user.Current()
+    if err != nil { t.Fatal(err) }
+    files, err := filemanager.Open(root)
+    if err != nil { t.Fatal(err) }
+    defer files.Close()
+
+    app := panelapp.App{ID: 29, Name: "site", Root: root, User: account.Username}
+    page, err := fileManagerPage(app, files, "", "", false, "", "")
+    if err != nil { t.Fatal(err) }
+
+    for _, expected := range []string{
+        `class="fileman-tools"`,
+        `class="fileman-control-row"`,
+        `class="fileman-file-input"`,
+        `for="fileman-upload-file"`,
+        `id="fileman-upload-file"`,
+        `for="fileman-folder-name"`,
+        `id="fileman-folder-name"`,
+        `class="fileman-tool fileman-tool-new"`,
+        `fileman-file-input::file-selector-button`,
+        `Upload file <span>Max 1 GiB</span>`,
+    } {
+        if !strings.Contains(page, expected) {
+            t.Errorf("toolbar is missing %q", expected)
+        }
+    }
+    if strings.Count(page, `class="fileman-control-row"`) != 2 {
+        t.Fatal("upload and folder-create forms must use the same input/button layout")
+    }
+    for _, path := range []string{
+        `method="post" action="/apps/29/files" enctype="multipart/form-data"`,
+        `name="file" required`,
+        `name="name" required maxlength="255"`,
+    } {
+        if !strings.Contains(page, path) { t.Errorf("existing file operation missing: %q", path) }
+    }
+}
