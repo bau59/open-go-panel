@@ -1,6 +1,8 @@
 FROM php:7.4-fpm-bullseye
+# Debian 11 Bullseye LTS ended in 2026; use its signed, archived repositories.
 RUN set -eux; \
-    printf 'deb http://deb.debian.org/debian bullseye main\n' > /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] http://archive.debian.org/debian bullseye main\n' > /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] http://archive.debian.org/debian-archive/debian-security bullseye-security main\n' >> /etc/apt/sources.list; \
     rm -f /etc/apt/sources.list.d/*.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
