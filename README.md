@@ -51,6 +51,10 @@ managed application users can find Go without manual PATH changes.
 
 For PHP websites, install **Software → PHP + PHP-FPM** first, create a **PHP web app**, then deploy files and connect a domain. The domain form lets you choose the `public/` directory (Laravel/frameworks) or the application root (WordPress/plain PHP). Each app runs in an on-demand PHP-FPM pool under its Linux user, with a dedicated Unix socket for Caddy; no application HTTP port or per-app systemd service is created. Configure PHP application secrets in its project configuration or `.env`, not via the systemd environment editor. PHP-FPM daemon CPU/memory use is shared across sites.
 
+To install additional PHP extensions, open **Software → PHP + PHP-FPM → Manage PHP extensions**. The panel offers an allowlist of Ubuntu extensions (GD, Intl, BCMath, SOAP, SQLite3, Redis, Imagick, APCu, OPcache) and the third-party **ionCube Loader**. Packages are installed for the detected PHP-FPM major/minor version, not arbitrary system PHP versions. Extensions affect **every application using that PHP-FPM runtime**; this is not a per-app toggle. Installation is asynchronous and PHP-FPM is reloaded only after a configuration test.
+
+ionCube is a proprietary PHP Zend extension downloaded via HTTPS from the [official ionCube Linux Loaders](https://www.ioncube.com/loaders.php) for the panel's AMD64 or ARM64 architecture. The panel selects only the library matching the active PHP version, verifies its ELF architecture, checks that PHP can load it, and validates PHP-FPM before reload. It restores the previous managed configuration on test/reload failure. It does not bypass ionCube licensing or PHP-version compatibility: protected files must be compatible with the installed PHP runtime.
+
 ## Application files
 
 Open **Applications → Files** (or **Files** in an application's header). Every filesystem operation runs in a short-lived process as the application's Linux user, using that user's normal filesystem permissions; the root-owned panel does not read or modify app files directly. The manager remains confined to the selected application's root. It supports:
