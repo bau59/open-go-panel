@@ -82,9 +82,9 @@ func switchPHPAppVersion(ctx context.Context, cfg Config, app panelapp.App, vers
     site, hasSite, err := cfg.Caddy.SiteForApp(app.ID)
     if err != nil { cleanupCandidate(); return err }
     if hasSite {
-        if site.Kind != "php" {
+        if site.Kind != "php" || site.Template != "" {
             cleanupCandidate()
-            return errors.New("connected domain is not a managed PHP site")
+            return errors.New("PHP version switching requires a managed PHP Caddy template; reset the custom override first")
         }
         if err := cfg.Caddy.SetSite(ctx, app.ID, site.Domain, port, site.Root, "php"); err != nil {
             cleanupCandidate()
