@@ -172,3 +172,27 @@ func TestFileManagerBulkControlsAndFolderLift(t *testing.T) {
         t.Fatal("bulk destination must default to app root from top-level folder")
     }
 }
+
+func TestFileManagerMoreMenuDoesNotExpandTable(t *testing.T) {
+    root := t.TempDir()
+    files, err := filemanager.Open(root)
+    if err != nil { t.Fatal(err) }
+    defer files.Close()
+    if err := files.Mkdir("", "unpacked"); err != nil { t.Fatal(err) }
+    app := panelapp.App{ID: 12, Name: "site", Root: root}
+    page, err := fileManagerPage(app, files, "", "", false, "", "")
+    if err != nil { t.Fatal(err) }
+    for _, expected := range []string{
+        ".fileman-popover{position:fixed;",
+        ".fileman-more>summary",
+        "details.addEventListener('toggle'",
+        "positionMenu(details)",
+        "event.key === 'Escape'",
+        "Move contents here",
+    } {
+        if !strings.Contains(page, expected) { t.Errorf("missing floating menu behavior: %q", expected) }
+    }
+    if strings.Contains(page, ".fileman-popover{position:static;") {
+        t.Fatal("menu is still part of normal table row flow")
+    }
+}
