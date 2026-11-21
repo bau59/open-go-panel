@@ -318,6 +318,7 @@ func (m *Manager) makeDirectories(base, relative string) (string, error) {
 
 func validateArchiveName(name string) (string, bool, error) {
     directory := strings.HasSuffix(name, "/")
+    for strings.HasPrefix(name, "./") { name = strings.TrimPrefix(name, "./") }
     cleaned := strings.TrimSuffix(name, "/")
     if strings.Count(cleaned, "/") >= maxDepth || !validPath(cleaned) || cleaned == "" || cleaned == "." {
         return "", false, errors.New("archive contains invalid or escaping path")
@@ -361,6 +362,7 @@ func (m *Manager) Extract(folder, name string) (int, error) {
         if err != nil { return 0, err }
         if len(archive.File) > MaxArchiveEntries { return 0, errors.New("archive contains too many entries") }
         for _, item := range archive.File {
+            if (item.Name == "./" || item.Name == ".") && item.FileInfo().IsDir() { continue }
             if item.Mode() & os.ModeType != 0 && !item.FileInfo().IsDir() {
                 return count, errors.New("archive contains an unsupported file type")
             }
@@ -393,10 +395,11 @@ func (m *Manager) Extract(folder, name string) (int, error) {
         if err != nil { return count, err }
         count++
         if count > MaxArchiveEntries { return count-1, errors.New("archive contains too many entries") }
+        if item.Typeflag == tar.TypeDir && (item.Name == "." || item.Name == "./") { continue }
         if item.Typeflag != tar.TypeDir && item.Typeflag != tar.TypeReg && item.Typeflag != tar.TypeRegA {
             return count-1, errors.New("archive contains links or unsupported entries")
         }
-        cleaned, _, err := validateArchiveName(strings.TrimSuffix(item.Name, "/"))
+        cleaned, _, err := validateArchiveName(item.Name)
         if err != nil { return count-1, err }
         if err := m.extractEntry(folder, cleaned, item.Typeflag == tar.TypeDir, item.Size, archive, &remaining); err != nil {
             return count-1, err
