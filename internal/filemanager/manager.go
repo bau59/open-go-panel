@@ -27,7 +27,9 @@ const (
     MaxUploadBytes = uploadlimits.FileBytes
     MaxArchiveBytes = uploadlimits.FileBytes
     MaxExtractBytes = uploadlimits.ExpandedBytes
-    MaxArchiveEntries = 10000
+    // Typical PHP sites with Composer vendor trees regularly exceed 10k.
+    // Keep an explicit bound against excessive inode creation.
+    MaxArchiveEntries = 100000
     MaxDirectoryEntries = 400
     maxDepth = 32
 )
