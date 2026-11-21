@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/bau59/open-go-panel/internal/journal"
+	"github.com/bau59/open-go-panel/internal/phpfpm"
 	"github.com/bau59/open-go-panel/internal/state"
 )
 
@@ -42,6 +43,7 @@ type Site struct {
 	Port     int    `json:"port"`
 	Root     string `json:"root,omitempty"`
 	Kind     string `json:"kind,omitempty"`
+	PHPVersion string `json:"-"` // runtime-only; authoritative selection lives in apps.service_json
 	Template string `json:"template,omitempty"`
 	WWWRedirect bool `json:"www_redirect,omitempty"`
 	Aliases []string `json:"aliases,omitempty"`
@@ -602,7 +604,7 @@ func managedPHPTemplate(settings GlobalSettings) string {
 		"\trespond @ogp_hidden 404",
 		"\t@ogp_private path /vendor/* /composer.json /composer.lock",
 		"\trespond @ogp_private 404",
-		"\tphp_fastcgi unix//run/php/ogp-app-{app_id}.sock",
+		"\tphp_fastcgi unix/{php_socket}",
 		"\tfile_server",
 	)
 	if settings.AccessLog { lines = append(lines, "\tlog") }
@@ -749,6 +751,39 @@ func (m *Manager) Config() (string, error) {
 	return string(data), nil
 }
 
+// ReloadSites rebuilds managed Caddy routing after an application's PHP
+// selection changes. Database schema and unrelated site templates are untouched.
+func (m *Manager) ReloadSites(ctx context.Context) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    sites, err := m.load()
+    if err != nil { return err }
+    template, err := m.Template()
+    if err != nil { return err }
+    return m.applyLocked(ctx, sites, template)
+}
+
+func (m *Manager) phpVersionForApp(id int64) (string, error) {
+    var raw string
+    err := m.store.DB().QueryRow("SELECT service_json FROM apps WHERE id = ?", id).Scan(&raw)
+    if errors.Is(err, sql.ErrNoRows) { return "", nil }
+    if err != nil { return "", fmt.Errorf("read PHP version for app %d: %w", id, err) }
+    var service struct { PHPVersion string `json:"php_version"` }
+    if err := json.Unmarshal([]byte(raw), &service); err != nil {
+        return "", fmt.Errorf("decode PHP version for app %d: %w", id, err)
+    }
+    if service.PHPVersion != "" {
+        if _, err := phpfpm.DetectVersion(service.PHPVersion); err != nil {
+            // Allow generation when the runtime was uninstalled: Caddy can
+            // still route to the configured path and show a clear 502.
+            if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(service.PHPVersion) {
+                return "", errors.New("invalid saved PHP version")
+            }
+        }
+    }
+    return service.PHPVersion, nil
+}
+
 func (m *Manager) apply(ctx context.Context, sites []Site) error {
 	template, err := m.Template()
 	if err != nil {
@@ -777,6 +812,11 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 	var b strings.Builder
 	b.WriteString("# Managed by Open Go Panel\n\n")
 	for _, site := range sites {
+		if site.Kind == "php" {
+			version, err := m.phpVersionForApp(site.AppID)
+			if err != nil { return err }
+			site.PHPVersion = version
+		}
 		siteTemplate := template
 		if site.Kind == "static" || site.Kind == "php" || site.Kind == "parked" || site.Kind == "redirect" || site.Port == 0 {
 			siteTemplate = ManagedSiteTemplate(site, settings)
@@ -990,6 +1030,7 @@ func ProxyStaticTemplateCache(root, raw string, settings GlobalSettings, selecte
 
 func renderSite(template string, site Site) string {
 	value := strings.ReplaceAll(template, "{domain}", site.Domain)
+	value = strings.ReplaceAll(value, "{php_socket}", phpfpm.SocketForVersion(site.AppID, site.PHPVersion))
 	value = strings.ReplaceAll(value, "{port}", strconv.Itoa(site.Port))
 	value = strings.ReplaceAll(value, "{root}", site.Root)
 	value = strings.ReplaceAll(value, "{app_id}", strconv.FormatInt(site.AppID, 10))
