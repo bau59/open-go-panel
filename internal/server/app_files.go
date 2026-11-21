@@ -96,6 +96,19 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
                     err = fmt.Errorf("upload exceeds 1 GiB limit")
                 } else {
                     err = files.Upload(folder, header.Filename, input)
+                    if err == nil {
+                        // The upload passes through a multipart temporary
+                        // file and a user-owned helper process. Confirm no
+                        // bytes were lost in that transfer before reporting
+                        // success. Do not keep a truncated destination.
+                        storedSize, statErr := files.FileSize(folder, header.Filename)
+                        if statErr != nil {
+                            err = fmt.Errorf("verify uploaded file: %w", statErr)
+                        } else if storedSize != header.Size {
+                            _ = files.Delete(folder, header.Filename)
+                            err = fmt.Errorf("incomplete file transfer: received %d of %d bytes; try uploading again", storedSize, header.Size)
+                        }
+                    }
                 }
             }
         default:
