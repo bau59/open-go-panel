@@ -35,3 +35,15 @@ func TestPHPRespectsGlobalSettings(t *testing.T) {
 		if strings.Contains(value, unexpected) { t.Fatalf("unexpected %q in %s", unexpected, value) }
 	}
 }
+
+
+func TestPHPVersionSelectsDedicatedFastCGISocket(t *testing.T) {
+    site := Site{AppID: 17, Domain: "legacy.example.com", Root: "/home/site/apps/blog/public", Kind: "php", PHPVersion: "7.4"}
+    rendered := renderSite(ManagedSiteTemplate(site, defaultGlobalSettings()), site)
+    if !strings.Contains(rendered, "php_fastcgi unix//run/php/ogp-app-17-php74.sock") {
+        t.Fatal("PHP 7.4 did not select its dedicated socket: " + rendered)
+    }
+    if strings.Contains(rendered, "{php_socket}") || strings.Contains(rendered, "ogp-app-17.sock") {
+        t.Fatal("PHP 7.4 accidentally routes to default PHP-FPM: " + rendered)
+    }
+}
