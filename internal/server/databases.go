@@ -256,7 +256,7 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		defer file.Close()
 		if header.Size > dbmanager.MaxSQLUploadBytes {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "SQL file exceeds 128 MiB")
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "SQL file exceeds 1 GiB")
 			return
 		}
 		mode := r.FormValue("mode")
@@ -542,7 +542,7 @@ func databasesPage(data databasePageData) string {
 									<option value="apply">Apply to existing database</option>
 									<option value="replace">Replace database contents</option>
 								</select>
-								<p class="note" style="margin:8px 0 0">.sql or .sql.gz · max 128 MiB. Runs as the database user, with a safety backup and recovery on error.</p>
+								<p class="note" style="margin:8px 0 0">.sql or .sql.gz · max 1 GiB. Runs as the database user, with a safety backup and recovery on error.</p>
 								<button class="button" style="margin-top:10px">Upload & import</button>
 							</form>
 						</div>

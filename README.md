@@ -56,11 +56,11 @@ For PHP websites, install **Software → PHP + PHP-FPM** first, create a **PHP w
 Open **Applications → Files** (or **Files** in an application's header). Every filesystem operation runs in a short-lived process as the application's Linux user, using that user's normal filesystem permissions; the root-owned panel does not read or modify app files directly. The manager remains confined to the selected application's root. It supports:
 
 - browsing directories and editing UTF-8 text files (up to 2 MiB);
-- uploading a file (up to 128 MiB), downloading files, creating files or folders;
+- uploading a file (up to 1 GiB), downloading files, creating files or folders;
 - moving/renaming files and folders, copying individual files, deleting files or directories;
 - extracting ZIP, TAR.GZ and TGZ archives without overwriting existing files.
 
-Uploads, editing and archive extraction are one-time operations, not background tasks. Archive extraction is limited to 10,000 entries and 256 MiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible.
+Uploads are streamed to temporary disk storage with a maximum of 1 GiB per file. Make sure the server has enough free disk space for the temporary upload, the destination file, and any database safety backup. Editing and archive extraction are one-time operations, not background tasks. Archive extraction is limited to 10,000 entries and 4 GiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible.
 
 New installations bind the panel to localhost:
 
@@ -159,7 +159,7 @@ Caddy-managed sites are isolated in:
 
 The root Caddyfile imports that directory, so unrelated manual Caddy configuration can coexist with Open Go Panel.
 
-To import an SQL file, open **Databases → the selected database → Import SQL**. Upload a `.sql` or `.sql.gz` file (max 128 MiB uploaded; compressed SQL expands to at most 512 MiB). Choose **Apply to existing database** to execute the script without first clearing existing tables, or **Replace database contents** to drop and recreate only the selected managed database before applying the script. Imports execute asynchronously and display success/failure on the Databases page. A safety backup is created before any modifications; if the SQL command fails, the panel attempts to restore the original database from that backup. Imported SQL runs under the managed database user and an unprivileged Linux process. SQL is executable code that may alter or remove data; verify the file's origin before importing.
+To import an SQL file, open **Databases → the selected database → Import SQL**. Upload a `.sql` or `.sql.gz` file (max 1 GiB uploaded; compressed SQL expands to at most 4 GiB). Choose **Apply to existing database** to execute the script without first clearing existing tables, or **Replace database contents** to drop and recreate only the selected managed database before applying the script. Imports execute asynchronously and display success/failure on the Databases page. A safety backup is created before any modifications; if the SQL command fails, the panel attempts to restore the original database from that backup. Imported SQL runs under the managed database user and an unprivileged Linux process. SQL is executable code that may alter or remove data; verify the file's origin before importing.
 
 Database backups are stored in:
 
