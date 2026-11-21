@@ -18,6 +18,7 @@ type RemoteImportTask struct {
 	DatabaseID int64
 	Engine     string
 	SourceHost string
+	SourceKind string
 	Running    bool
 	Error      string
 	BackupPath string
@@ -73,6 +74,7 @@ func (m *Manager) StartRemoteImport(id int64, connection string) error {
 		DatabaseID: id,
 		Engine:     target.Engine,
 		SourceHost: source.Host,
+		SourceKind: "remote",
 		Running:    true,
 		StartedAt:  time.Now(),
 	}
