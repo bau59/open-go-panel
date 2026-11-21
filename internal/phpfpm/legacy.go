@@ -130,7 +130,7 @@ func BuildLegacyImage(ctx context.Context) error {
     if err != nil { return err }
     defer os.Remove(output.Name())
     defer output.Close()
-    cmd := exec.CommandContext(ctx, "docker", "build", "--pull", "-t", LegacyImage, dir)
+    cmd := exec.CommandContext(ctx, "docker", "build", "-t", LegacyImage, dir)
     cmd.Stdout, cmd.Stderr = output, output
     if err := cmd.Run(); err != nil {
         _, _ = output.Seek(-min64(16<<10, mustFileSize(output)), io.SeekEnd)
