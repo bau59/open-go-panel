@@ -204,6 +204,15 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     if err := os.MkdirAll(dir, 0755); err != nil { return err }
     library := filepath.Join(dir, "ioncube_loader_lin_"+php.Version+".so")
     config := filepath.Join("/etc/php", php.Version, "fpm", "conf.d", "00-ioncube.ini")
+    // Do not load the vendor module twice if another administrator already
+    // enabled ionCube outside Open Go Panel's managed configuration.
+    configured, err := filepath.Glob(filepath.Join("/etc/php", php.Version, "fpm", "conf.d", "*ioncube*.ini"))
+    if err != nil { return err }
+    for _, candidate := range configured {
+        if candidate != config {
+            return fmt.Errorf("ionCube is already configured in %s; remove the duplicate manually before managing it here", candidate)
+        }
+    }
     tmp, err := os.CreateTemp(dir, ".ioncube-*.so")
     if err != nil { return err }
     tempName := tmp.Name()
@@ -228,9 +237,9 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     restore := func() {
         if readErr == nil { _ = os.WriteFile(library, oldLibrary, 0644) } else { _ = os.Remove(library) }
         if configErr == nil { _ = os.WriteFile(config, oldConfig, 0644) } else { _ = os.Remove(config) }
-        _ = run(context.Background(), php.Binary, "-t")
         rollback, cancel := context.WithTimeout(context.Background(), 30*time.Second)
         defer cancel()
+        _ = run(rollback, php.Binary, "-t")
         _ = reloadPHPService(rollback, php.Service)
     }
     if err := os.Rename(tempName, library); err != nil { return err }
@@ -247,6 +256,13 @@ func installIonCube(ctx context.Context, php phpfpm.Runtime) error {
     if err := run(ctx, php.Binary, "-t"); err != nil {
         restore()
         return fmt.Errorf("ionCube PHP-FPM config test failed (previous config restored): %w", err)
+    }
+    // php-fpm -t validates the ini syntax, while -v also confirms that the
+    // Loader was actually recognized by the FPM binary before live reload.
+    fpmOutput, verifyErr := exec.CommandContext(ctx, php.Binary, "-v").CombinedOutput()
+    if verifyErr != nil || !strings.Contains(strings.ToLower(string(fpmOutput)), "ioncube") {
+        restore()
+        return fmt.Errorf("ionCube is not active in PHP-FPM %s (previous config restored): %s", php.Version, strings.TrimSpace(string(fpmOutput)))
     }
     if err := reloadPHPService(ctx, php.Service); err != nil {
         restore()
