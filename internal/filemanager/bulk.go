@@ -14,6 +14,7 @@ import (
 const (
     MaxBulkSelection = 400
     MaxMoveContents = 100000
+    MaxDeleteEntries = 100000
 )
 
 func checkSelectedNames(names []string, limit int) error {
@@ -106,7 +107,7 @@ func (m *Manager) DeleteMany(folder string, names []string) (int, error) {
         }
     }
     for i, name := range names {
-        remaining := MaxMoveContents
+        remaining := MaxDeleteEntries
         if err := removeTree(fd, name, 0, &remaining); err != nil {
             return i, fmt.Errorf("deleted %d of %d items before %q failed: %w", i, len(names), name, err)
         }
