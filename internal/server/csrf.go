@@ -13,6 +13,7 @@ import (
 )
 
 const csrfFormField = "ogp_csrf"
+const fileUploadBodyLimit = 130 << 20
 
 // Templates in this app render their own POST forms. Injecting the token when
 // the HTML response is written protects every native mutation route, including
@@ -92,8 +93,18 @@ func csrfProtection(store *sessionStore, next http.Handler) http.Handler {
 				// reverse proxy rewrites Host or Origin differs from the
 				// upstream address. Strict Host/Origin equality incorrectly
 				// blocked legitimate SSH tunnels and reverse proxies.
-				if err := r.ParseForm(); err != nil {
-					http.Error(w, "invalid form", http.StatusBadRequest)
+				var parseErr error
+				if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data;") {
+					// Multipart uploads are parsed to disk with a strict total request
+					// limit. Clean up temporary parts on every response path.
+					r.Body = http.MaxBytesReader(w, r.Body, (fileUploadBodyLimit))
+					parseErr = r.ParseMultipartForm(8 << 20)
+					if r.MultipartForm != nil { defer r.MultipartForm.RemoveAll() }
+				} else {
+					parseErr = r.ParseForm()
+				}
+				if parseErr != nil {
+					http.Error(w, "invalid form or upload too large", http.StatusBadRequest)
 					return
 				}
 				supplied := r.PostForm.Get(csrfFormField)
