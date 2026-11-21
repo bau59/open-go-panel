@@ -55,6 +55,24 @@ To install additional PHP extensions, open **Software → PHP + PHP-FPM → Mana
 
 ionCube is a proprietary PHP Zend extension downloaded via HTTPS from the [official ionCube Linux Loaders](https://www.ioncube.com/loaders.php) for the panel's AMD64 or ARM64 architecture. The panel selects only the library matching the active PHP version, verifies its ELF architecture, checks that PHP can load it, and validates PHP-FPM before reload. It restores the previous managed configuration on test/reload failure. It does not bypass ionCube licensing or PHP-version compatibility: protected files must be compatible with the installed PHP runtime. If the official download stalls or its connection closes mid-transfer, the panel retries up to three times with a short backoff; partial archives are discarded and never installed. Network failures leave the PHP-FPM configuration unchanged.
 
+## PHP 7.4 for legacy ionCube sites (per application)
+
+PHP files encoded for PHP 7.4 cannot execute under PHP 8.3, even when the latest ionCube Loader is correctly installed. Open Go Panel can run such sites in **separate PHP 7.4 Docker containers** while leaving modern PHP-FPM sites unchanged.
+
+1. Install **Software → Docker Engine**, if it is not already installed.
+2. In **Software → PHP 7.4 (isolated / legacy)**, choose **Install** to build the local `open-go-panel/php74:local` image. This is an asynchronous Docker build using the archived official `php:7.4-fpm-bullseye` base image, with `mysqli`, `pdo_mysql`, `gd`, `zip`, `mbstring`, `intl`, `imagick` and other common extensions. Errors appear in the Software task status.
+3. Download the matching official Linux [ionCube Loader archive](https://www.ioncube.com/loaders.php) onto your computer. Upload that archive via **Software → PHP 7.4 → Upload PHP 7.4 Loader**. The panel extracts only the PHP 7.4 ELF library; **no direct ionCube download from the VPS is performed**.
+4. Open the PHP app under **Applications → PHP runtime**, choose **PHP 7.4 + ionCube (isolated Docker)** and click **Apply PHP version**. The panel checks the Loader inside the PHP 7.4 image, starts an app-owned container and switches only that domain's Caddy FastCGI upstream.
+5. Revisit the site and check **PHP errors** if the application still fails. To return to the current system PHP-FPM, choose **System PHP-FPM** in the same app settings.
+
+For an already copied ionCube archive on the host, the panel also accepts an admin-prepared loader at `/usr/local/lib/open-go-panel/ioncube/amd64/ioncube_loader_lin_7.4.so` (or corresponding ARM64 path); use only the official vendor archive.
+
+**Security and compatibility:** PHP 7.4 and the Bullseye base image have reached end-of-life. The Docker runtime runs as the site's unprivileged UID/GID, mounts only the site's files, its private PHP error log, the Loader and (when present) the host MySQL socket directory, and publishes its FastCGI listener **only to 127.0.0.1**. Containers have dropped Linux capabilities, read-only root filesystems and memory/CPU/PID limits. They still have bridge-network access for application HTTP requests, so this is not a security substitute for upgrading old code.
+
+When MySQL runs on the host via the default `/run/mysqld/mysqld.sock`, that socket is passed into the container for ordinary `localhost` MySQL connections. An application explicitly configured to use `127.0.0.1:3306` or other host-local TCP services must be reconfigured: inside a container, `127.0.0.1` is the container itself. The Docker host gateway is available as `host.docker.internal` if the host database allows bridge connections.
+
+The image build requires reachable Docker image/package registries. Unavailable old Debian repositories or incompatible legacy dependencies are reported as build errors; Open Go Panel does not downgrade or install PHP 7.4 into the host operating system.
+
 ## Application files
 
 Open **Applications → Files** (or **Files** in an application's header). Every filesystem operation runs in a short-lived process as the application's Linux user, using that user's normal filesystem permissions; the root-owned panel does not read or modify app files directly. The manager remains confined to the selected application's root. It supports:
