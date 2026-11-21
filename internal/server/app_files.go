@@ -1,6 +1,7 @@
 package server
 
 import (
+    "crypto/sha256"
     "fmt"
     "html"
     "io"
@@ -69,7 +70,17 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         case "create":
             err = files.Save(folder, name, r.FormValue("content"), true)
         case "save":
-            err = files.Save(folder, name, r.FormValue("content"), false)
+            current, readErr := files.ReadText(folder, name)
+            if readErr != nil {
+                err = readErr
+            } else {
+                digest := fmt.Sprintf("%x", sha256.Sum256([]byte(current)))
+                if r.FormValue("base_sha256") != digest {
+                    err = fmt.Errorf("file changed since it was opened; copy your edits before reloading")
+                } else {
+                    err = files.Save(folder, name, r.FormValue("content"), false)
+                }
+            }
         case "move":
             err = files.Move(folder, name, r.FormValue("destination"))
         case "copy":
@@ -94,7 +105,16 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             err = fmt.Errorf("unsupported file operation")
         }
         if err != nil {
-            page, renderErr := fileManagerPage(app, files, folder, "", false, err.Error(), "")
+            edit, newFile := "", false
+            if action == "save" { edit = name }
+            if action == "create" { edit, newFile = name, true }
+            var page string
+            var renderErr error
+            if action == "save" || action == "create" {
+                page, renderErr = fileManagerPage(app, files, folder, edit, newFile, err.Error(), "", r.FormValue("content"), r.FormValue("base_sha256"))
+            } else {
+                page, renderErr = fileManagerPage(app, files, folder, "", false, err.Error(), "")
+            }
             if renderErr != nil { http.Error(w, err.Error(), http.StatusBadRequest); return nil }
             writeHTML(w, cfg.Logger, http.StatusBadRequest, page)
             return nil
@@ -135,7 +155,7 @@ func fileHidden(action, folder, name string) string {
     return result
 }
 
-func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editName string, create bool, message, notice string) (string, error) {
+func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editName string, create bool, message, notice string, draft ...string) (string, error) {
     items, limited, err := files.List(folder)
     if err != nil { return "", err }
     base := appFilesURL(app.ID, folder)
@@ -157,30 +177,35 @@ func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editN
 
     var content strings.Builder
     if editName != "" || create {
-        source := ""
-        if editName != "" {
-            source, err = files.ReadText(folder, editName)
-            if err != nil { return "", err }
+        source, checksumField := "", ""
+        if editName != "" && !create {
+            original, readErr := files.ReadText(folder, editName)
+            if readErr != nil { return "", readErr }
+            source = original
+            digest := fmt.Sprintf("%x", sha256.Sum256([]byte(original)))
+            if len(draft) > 1 && draft[1] != "" { digest = draft[1] }
+            checksumField = `<input type="hidden" name="base_sha256" value="`+html.EscapeString(digest)+`">`
         }
+        if len(draft) > 0 { source = draft[0] }
         operation := "save"
         filenameField := `<input type="hidden" name="name" value="`+html.EscapeString(editName)+`">`
         title := "Edit " + editName
         if create {
             operation = "create"
-            filenameField = `<label>Filename</label><input name="name" maxlength="255" required placeholder="index.php">`
+            filenameField = `<label>Filename</label><input name="name" maxlength="255" required placeholder="index.php" value="`+html.EscapeString(editName)+`">`
             title = "New text file"
         }
         fmt.Fprintf(&content, `<section class="panel panel-pad fileman-panel">
             <h2>%s</h2>
             <form method="post" action="%s">
-                %s%s
+                %s%s%s
                 <textarea name="content" class="codearea fileman-editor" spellcheck="false" maxlength="%d">%s</textarea>
                 <div class="actions" style="justify-content:flex-start;margin-top:14px">
                     <button class="button" type="submit">Save file</button>
                     <a class="secondary" href="%s">Cancel</a>
                 </div>
             </form>
-        </section>`, html.EscapeString(title), actionURL, fileHidden(operation, folder, ""), filenameField, filemanager.MaxEditBytes, html.EscapeString(source), base)
+        </section>`, html.EscapeString(title), actionURL, fileHidden(operation, folder, ""), filenameField, checksumField, filemanager.MaxEditBytes, html.EscapeString(source), base)
     } else {
         var rows strings.Builder
         if folder != "" && folder != "." {
