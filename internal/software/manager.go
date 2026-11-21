@@ -42,6 +42,7 @@ func New() *Manager { return &Manager{} }
 func (m *Manager) Items(ctx context.Context) []Item {
 	return []Item{
 		dockerStatus(ctx),
+		php74Status(ctx),
 		nodeStatus(ctx),
 		phpStatus(ctx),
 		tailwindStatus(ctx),
@@ -96,7 +97,7 @@ func (m *Manager) Start(id, action string) error {
 
 func supportedID(id string) bool {
 	switch id {
-	case "docker", "node", "php", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
+	case "docker", "php74", "node", "php", "tailwind", "go", "air", "git", "build-tools", "cli-tools":
 		return true
 	default:
 		return false
@@ -107,6 +108,8 @@ func (m *Manager) run(ctx context.Context, id string) error {
 	switch id {
 	case "docker":
 		return installDocker(ctx)
+	case "php74":
+		return phpfpm.BuildLegacyImage(ctx)
 	case "node":
 		return installNode(ctx)
 	case "php":
@@ -142,6 +145,20 @@ func dockerStatus(ctx context.Context) Item {
 		}
 	}
 	return item
+}
+
+func php74Status(ctx context.Context) Item {
+    installed := phpfpm.LegacyImageInstalled(ctx)
+    version := "not installed"
+    if installed { version = "PHP-FPM 7.4 Docker image" }
+    return Item{
+        ID: "php74",
+        Name: "PHP 7.4 (isolated / legacy)",
+        Description: "Docker-only legacy PHP-FPM image with PDO MySQL, ZIP, Imagick, GD, OpenSSL, mbstring, cURL and other common extensions.",
+        Detail: "PHP 7.4 is end-of-life. Build once, then upload the official ionCube Linux Loader archive separately. The host PHP version is never replaced.",
+        Version: version,
+        Installed: installed,
+    }
 }
 
 func phpStatus(ctx context.Context) Item {

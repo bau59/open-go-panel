@@ -35,3 +35,16 @@ func TestPHPRespectsGlobalSettings(t *testing.T) {
 		if strings.Contains(value, unexpected) { t.Fatalf("unexpected %q in %s", unexpected, value) }
 	}
 }
+
+func TestLegacyPHP74FastCGIUsesDedicatedLoopbackPort(t *testing.T) {
+    site := Site{AppID: 42, Domain: "example.com", Root: "/home/site/apps/legacy/public", Kind: "php", Port: 9420}
+    rendered := renderSite(ManagedSiteTemplate(site, defaultGlobalSettings()), site)
+    for _, expected := range []string{
+        "php_fastcgi 127.0.0.1:9420",
+        "root * /home/site/apps/legacy/public",
+        "respond @ogp_hidden 404",
+    } {
+        if !strings.Contains(rendered, expected) { t.Errorf("missing %s in %s", expected, rendered) }
+    }
+    if strings.Contains(rendered, "unix//run/php") { t.Fatal("legacy PHP must not use system PHP-FPM socket") }
+}

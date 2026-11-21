@@ -1,0 +1,50 @@
+name: php74-runtime
+
+on:
+  pull_request:
+    paths:
+      - "internal/phpfpm/php74.Dockerfile"
+      - "internal/phpfpm/legacy.go"
+      - ".github/workflows/php74-runtime.yml"
+  workflow_dispatch:
+
+jobs:
+  legacy-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build isolated PHP 7.4 image
+        run: docker build -f internal/phpfpm/php74.Dockerfile -t open-go-panel/php74:test internal/phpfpm
+      - name: Verify required extensions
+        run: |
+          set -euo pipefail
+          docker run --rm open-go-panel/php74:test php -v | grep -q "PHP 7.4"
+          modules="$(docker run --rm open-go-panel/php74:test php -m | tr '[:upper:]' '[:lower:]')"
+          for module in curl gd imagick intl mbstring mysqli openssl pdo pdo_mysql zip; do
+            printf '%s\n' "$modules" | grep -qx "$module"
+          done
+      - name: Check PHP-FPM config
+        run: docker run --rm open-go-panel/php74:test php-fpm -t
+      - name: Smoke isolated PHP-FPM as nonroot
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f ogp-php74-smoke >/dev/null 2>&1 || true' EXIT
+          docker run --rm -d --name ogp-php74-smoke \
+            --user 12345:12345 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+            --tmpfs /usr/local/var/run:rw,nosuid,size=8m \
+            --memory 512m --pids-limit 128 --cpus 1 \
+            --publish 127.0.0.1:19474:9000 \
+            open-go-panel/php74:test php-fpm -F
+          sleep 3
+          if [ "$(docker inspect --format '{{.State.Status}}' ogp-php74-smoke)" != "running" ]; then
+            docker logs ogp-php74-smoke
+            exit 1
+          fi
+          timeout 5 bash -c 'echo >/dev/tcp/127.0.0.1/19474'

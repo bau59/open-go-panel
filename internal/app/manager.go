@@ -55,6 +55,7 @@ type ServiceConfig struct {
 	TasksMax         int    `json:"tasks_max,omitempty"`
 	LogRetentionDays int    `json:"log_retention_days,omitempty"`
 	LogDisabled      bool   `json:"log_disabled,omitempty"`
+	PHPVersion       string `json:"php_version,omitempty"`
 	AutoStart        bool   `json:"auto_start,omitempty"`
 	Environment      string `json:"environment,omitempty"`
 	RawUnit          string `json:"raw_unit,omitempty"`
@@ -841,6 +842,9 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	}
 
 	if app.Type == "php" {
+		if app.Service.PHPVersion == phpfpm.LegacyVersion {
+			if err := phpfpm.RemoveLegacy(ctx, id); err != nil { return err }
+		}
 		if err := phpfpm.Remove(ctx, id); err != nil { return err }
 	}
 	if app.Type != "static" && app.Type != "php" {
@@ -857,6 +861,55 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	return nil
+}
+
+// AvailablePHP74Port reserves a port from a dedicated, loopback-only FastCGI
+// range. Unlike normal Go/Node ports these never become public app listeners.
+func (m *Manager) AvailablePHP74Port() (int, error) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    apps, err := m.load()
+    if err != nil { return 0, err }
+    used := make(map[int]bool, len(apps))
+    for _, app := range apps { if app.Port > 0 { used[app.Port] = true } }
+    for port := 9400; port <= 9599; port++ {
+        if used[port] { continue }
+        listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+        if err != nil { continue }
+        _ = listener.Close()
+        return port, nil
+    }
+    return 0, errors.New("no available legacy PHP FastCGI ports (9400-9599)")
+}
+
+// SetPHPVersion only commits the already-provisioned runtime choice.
+// The HTTP handler provisions the new backend and applies Caddy first.
+func (m *Manager) SetPHPVersion(id int64, version string, port int) error {
+    if version != "" && version != phpfpm.LegacyVersion {
+        return errors.New("unsupported PHP version")
+    }
+    if (version == phpfpm.LegacyVersion && (port < 9400 || port > 9599)) ||
+       (version == "" && port != 0) {
+        return errors.New("invalid PHP runtime port")
+    }
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    apps, err := m.load()
+    if err != nil { return err }
+    for i := range apps {
+        if apps[i].ID == id {
+            if apps[i].Type != "php" { return errors.New("application is not PHP") }
+            for _, other := range apps {
+                if other.ID != id && other.Port != 0 && other.Port == port {
+                    return errors.New("PHP FastCGI port is already in use")
+                }
+            }
+            apps[i].Service.PHPVersion = version
+            apps[i].Port = port
+            return m.save(apps)
+        }
+    }
+    return fmt.Errorf("app %d not found", id)
 }
 
 func (m *Manager) SetPort(ctx context.Context, id int64, port int) error {
@@ -1239,7 +1292,10 @@ func (m *Manager) Status(ctx context.Context, id int64) string {
 	if err != nil || app.Type == "static" {
 		return "not configured"
 	}
-	if app.Type == "php" { return phpfpm.Status(ctx, id) }
+	if app.Type == "php" {
+		if app.Service.PHPVersion == phpfpm.LegacyVersion { return phpfpm.LegacyStatus(ctx, id) }
+		return phpfpm.Status(ctx, id)
+	}
 
 	if app.Service.Mode == "raw" {
 		if strings.TrimSpace(app.Service.RawUnit) == "" {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bau59/open-go-panel/internal/software"
+	"github.com/bau59/open-go-panel/internal/phpfpm"
 )
 
 func registerSoftwareRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
@@ -34,6 +35,28 @@ func registerSoftwareRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		http.Redirect(w, r, "/software", http.StatusSeeOther)
 	})))
+
+    mux.Handle("POST /software/php74/loader", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        task := cfg.Software.Task()
+        if task.Running {
+            http.Error(w, "software installation in progress", http.StatusConflict)
+            return
+        }
+        file, header, err := r.FormFile("archive")
+        if err != nil { http.Error(w, "upload official ionCube Linux archive", http.StatusBadRequest); return }
+        defer file.Close()
+        if header.Size == 0 || header.Size > 64<<20 {
+            http.Error(w, "ionCube archive must be at most 64 MiB", http.StatusBadRequest)
+            return
+        }
+        if err := phpfpm.InstallLegacyLoader(file); err != nil {
+            version, extensions := cfg.Software.PHPExtensions()
+            writeHTML(w, cfg.Logger, http.StatusBadRequest,
+                softwarePage(cfg.Software.Items(r.Context()), cfg.Software.Task(), version, extensions, err.Error()))
+            return
+        }
+        http.Redirect(w, r, "/software#php74-loader", http.StatusSeeOther)
+    })))
 }
 
 func softwarePage(items []software.Item, task software.Task, phpVersion string, extensions []software.PHPExtension, message string) string {
@@ -107,7 +130,19 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 				<div class="php-extension-grid">`+list.String()+`</div>
 			</details>`
 		}
-		cards.WriteString(`
+		if item.ID == "php74" {
+            loaderState := "Not uploaded"
+            if phpfpm.LegacyLoaderPresent() { loaderState = "Uploaded" }
+            phpExtra = `<div class="php-extensions" id="php74-loader">
+                <h3>ionCube Loader for PHP 7.4</h3>
+                <p class="note">Status: `+loaderState+`. Upload the official Linux ionCube archive (x86-64 or ARM64) from your computer. The panel extracts only ioncube_loader_lin_7.4.so and mounts it read-only into PHP containers. No download from the VPS is required.</p>
+                <form method="post" action="/software/php74/loader" enctype="multipart/form-data" style="display:grid;gap:10px;margin-top:12px">
+                    <input type="file" class="file-upload-input" name="archive" accept=".gz,.tgz" required>
+                    <button class="secondary" type="submit"`+disabled+`>Upload PHP 7.4 Loader</button>
+                </form>
+            </div>`
+        }
+        cards.WriteString(`
 			<article class="panel panel-pad software-card">
 				<div class="software-card-head">
 					<div>

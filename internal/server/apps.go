@@ -890,7 +890,11 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 	}
 
 	portFact := `<div><span>Port</span><code>` + port + `</code></div>`
-	if app.Type == "php" { portFact = `<div><span>Transport</span><code>PHP-FPM socket</code></div>` }
+	if app.Type == "php" {
+		transport := "PHP-FPM Unix socket"
+		if app.Service.PHPVersion == "7.4" { transport = "127.0.0.1:" + strconv.Itoa(app.Port) + " (Docker FastCGI)" }
+		portFact = `<div><span>Transport</span><code>` + html.EscapeString(transport) + `</code></div>`
+	}
 	if app.Type == "go" || app.Type == "node" {
 		portFact = `
 			<div class="runtime-port-fact">
@@ -946,6 +950,8 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				<div data-resource-app="` + fmt.Sprintf("%d", app.ID) + `"><span>Tasks</span><strong data-resource="tasks">—</strong></div>
 			</div>
 		</section>
+
+		` + phpRuntimeBlock(app) + `
 
 		<div class="app-dashboard-grid">
 			` + extraBlock + `

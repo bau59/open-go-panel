@@ -129,8 +129,8 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 		kind = "proxy"
 	}
 	if kind == "static" || kind == "php" {
-		if port != 0 {
-			return errors.New("document root sites must not use an app port")
+		if (kind == "static" && port != 0) || (kind == "php" && port != 0 && (port < 9400 || port > 9599)) {
+			return errors.New("invalid document root site backend port")
 		}
 		root = filepath.Clean(strings.TrimSpace(root))
 		if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n") {
@@ -172,6 +172,29 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 	}
 
 	return m.apply(ctx, sites)
+}
+
+// SetPHPBackend switches only the PHP-FPM upstream. The site root,
+// aliases, access logging, and Caddy overrides are preserved. Unlike
+// SetSite this does not recursively reapply ACLs to the site's files.
+func (m *Manager) SetPHPBackend(ctx context.Context, appID int64, port int) error {
+    if appID <= 0 || (port != 0 && (port < 9400 || port > 9599)) {
+        return errors.New("invalid PHP FastCGI backend port")
+    }
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    sites, err := m.load()
+    if err != nil { return err }
+    for i := range sites {
+        if sites[i].AppID != appID { continue }
+        if sites[i].Kind != "php" || strings.TrimSpace(sites[i].Template) != "" {
+            return errors.New("PHP backend switching requires a managed PHP site template")
+        }
+        if sites[i].Port == port { return nil }
+        sites[i].Port = port
+        return m.apply(ctx, sites)
+    }
+    return errors.New("PHP site not found")
 }
 
 // AddStandaloneDomain creates an unbound Caddy site. Negative IDs are reserved
@@ -271,7 +294,7 @@ func (m *Manager) AttachStandaloneDomain(ctx context.Context, standaloneID, appI
 		return err
 	}
 	if kind == "static" || kind == "php" {
-		if port != 0 || !filepath.IsAbs(root) {
+		if !filepath.IsAbs(root) || (kind == "static" && port != 0) || (kind == "php" && port != 0 && (port < 9400 || port > 9599)) {
 			return errors.New("invalid document root application target")
 		}
 		if err := prepareStaticRoot(ctx, root); err != nil {
@@ -590,7 +613,13 @@ func managedStaticTemplate(settings GlobalSettings) string {
 	return strings.Join(lines, "\n")
 }
 
-func managedPHPTemplate(settings GlobalSettings) string {
+// Port zero uses the system PHP-FPM pool. Nonzero is the private container.
+func phpFastCGITarget(port int) string {
+    if port != 0 { return "\tphp_fastcgi 127.0.0.1:{port}" }
+    return "\tphp_fastcgi unix//run/php/ogp-app-{app_id}.sock"
+}
+
+func managedPHPTemplate(settings GlobalSettings, port int) string {
 	address := "{domain}"
 	if !settings.HTTPS { address = "http://{domain}" }
 	lines := []string{address + " {"}
@@ -602,7 +631,7 @@ func managedPHPTemplate(settings GlobalSettings) string {
 		"\trespond @ogp_hidden 404",
 		"\t@ogp_private path /vendor/* /composer.json /composer.lock",
 		"\trespond @ogp_private 404",
-		"\tphp_fastcgi unix//run/php/ogp-app-{app_id}.sock",
+		phpFastCGITarget(port),
 		"\tfile_server",
 	)
 	if settings.AccessLog { lines = append(lines, "\tlog") }
@@ -629,7 +658,7 @@ func ManagedSiteTemplate(site Site, settings GlobalSettings) string {
 	case "static":
 		return managedStaticTemplate(settings)
 	case "php":
-		return managedPHPTemplate(settings)
+		return managedPHPTemplate(settings, site.Port)
 	default:
 		if site.Port == 0 {
 			return managedStaticTemplate(settings)
@@ -1236,6 +1265,7 @@ func (s Site) Target() string {
 	}
 	if s.Kind == "redirect" { return s.Root }
 	if s.Kind == "php" {
+		if s.Port != 0 { return "PHP 7.4 · 127.0.0.1:" + strconv.Itoa(s.Port) }
 		return "PHP-FPM · " + s.Root
 	}
 	if s.Kind == "static" || s.Port == 0 {

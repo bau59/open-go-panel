@@ -38,3 +38,25 @@ func TestPHPAppOption(t *testing.T) {
 		t.Fatal("PHP app type missing from the creation form")
 	}
 }
+
+func TestPHPVersionSelectorIsPerSite(t *testing.T) {
+    sys := panelapp.App{ID: 20, Type: "php", Name: "modern", Root: "/home/web/apps/modern", User: "web"}
+    legacy := panelapp.App{ID: 21, Type: "php", Name: "old", Root: "/home/web/apps/old", User: "web", Port: 9410}
+    legacy.Service.PHPVersion = "7.4"
+    normalPage := appPage(sys, "active", "", "")
+    legacyPage := appPage(legacy, "active", "", "")
+    for _, wanted := range []string{
+        "action=\"/apps/20/php-version\"", "PHP 7.4 + ionCube",
+        "System PHP-FPM (latest installed)",
+    } {
+        if !strings.Contains(normalPage, wanted) { t.Errorf("missing %s", wanted) }
+    }
+    for _, wanted := range []string{
+        "action=\"/apps/21/php-version\"",
+        "PHP 7.4 · isolated Docker",
+        "127.0.0.1:9410",
+        "value=\"7.4\" selected",
+    } {
+        if !strings.Contains(legacyPage, wanted) { t.Errorf("missing %s", wanted) }
+    }
+}
