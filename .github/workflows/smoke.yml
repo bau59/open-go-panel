@@ -149,7 +149,7 @@ jobs:
           # process, rather than changing MySQL auth or production DB code.
           test "$(sudo env MYSQL_PWD=root mysql --protocol=socket -uroot -N -e 'SELECT 1')" = "1"
           sudo mkdir -p /etc/systemd/system/open-go-panel.service.d
-          printf '[Service]\\nEnvironment=MYSQL_PWD=root\\n' | sudo tee /etc/systemd/system/open-go-panel.service.d/smoke-mysql.conf >/dev/null
+          { echo '[Service]'; echo 'Environment=MYSQL_PWD=root'; } | sudo tee /etc/systemd/system/open-go-panel.service.d/smoke-mysql.conf >/dev/null
           sudo systemctl daemon-reload
           sudo systemctl restart open-go-panel.service
           curl -fsS http://127.0.0.1:8443/health | grep -qx ok
