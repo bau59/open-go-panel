@@ -179,14 +179,19 @@ func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editN
     if editName != "" || create {
         source, checksumField := "", ""
         if editName != "" && !create {
-            original, readErr := files.ReadText(folder, editName)
-            if readErr != nil { return "", readErr }
-            source = original
-            digest := fmt.Sprintf("%x", sha256.Sum256([]byte(original)))
-            if len(draft) > 1 && draft[1] != "" { digest = draft[1] }
+            digest := ""
+            if len(draft) > 0 {
+                source = draft[0]
+                if len(draft) > 1 { digest = draft[1] }
+            } else {
+                original, readErr := files.ReadText(folder, editName)
+                if readErr != nil { return "", readErr }
+                source = original
+                digest = fmt.Sprintf("%x", sha256.Sum256([]byte(original)))
+            }
             checksumField = `<input type="hidden" name="base_sha256" value="`+html.EscapeString(digest)+`">`
         }
-        if len(draft) > 0 { source = draft[0] }
+        if create && len(draft) > 0 { source = draft[0] }
         operation := "save"
         filenameField := `<input type="hidden" name="name" value="`+html.EscapeString(editName)+`">`
         title := "Edit " + editName
