@@ -70,7 +70,7 @@ func TestFileEditorPreservesDraftAndRevision(t *testing.T) {
     root := t.TempDir()
     account, err := user.Current()
     if err != nil { t.Fatal(err) }
-    files, err := filemanager.Open(root, account.Username)
+    files, err := filemanager.Open(root)
     if err != nil { t.Fatal(err) }
     defer files.Close()
     if err := files.Save("", "index.php", "<?php echo 'old';", true); err != nil { t.Fatal(err) }
