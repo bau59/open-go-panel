@@ -52,7 +52,7 @@ For PHP websites, install **Software → PHP + PHP-FPM** first, create a **PHP w
 
 ## Application files
 
-Open **Applications → Files** (or **Files** in an application's header). The file manager operates only within the selected application's root, using the app's Linux ownership. It supports:
+Open **Applications → Files** (or **Files** in an application's header). Every filesystem operation runs in a short-lived process as the application's Linux user, using that user's normal filesystem permissions; the root-owned panel does not read or modify app files directly. The manager remains confined to the selected application's root. It supports:
 
 - browsing directories and editing UTF-8 text files (up to 2 MiB);
 - uploading a file (up to 128 MiB), downloading files, creating files or folders;
