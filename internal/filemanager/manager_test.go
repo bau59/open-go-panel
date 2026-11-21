@@ -7,7 +7,6 @@ import (
     "bytes"
     "io"
     "os"
-    "os/user"
     "path/filepath"
     "strings"
     "testing"
@@ -16,9 +15,7 @@ import (
 func openTestManager(t *testing.T) (*Manager, string) {
     t.Helper()
     root := t.TempDir()
-    account, err := user.Current()
-    if err != nil { t.Fatal(err) }
-    manager, err := Open(root, account.Username)
+    manager, err := Open(root)
     if err != nil { t.Fatal(err) }
     t.Cleanup(func(){ _ = manager.Close() })
     return manager, root
