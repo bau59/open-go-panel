@@ -4,7 +4,6 @@ import (
     "crypto/sha256"
     "fmt"
     "html"
-    "io"
     "mime"
     "net/http"
     "mime/multipart"
@@ -27,7 +26,6 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     mux.Handle("GET /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         app, files, ok := openAppFiles(w, r, cfg)
         if !ok { return }
-        defer files.Close()
         folder := r.URL.Query().Get("dir")
         page, err := fileManagerPage(app, files, folder, r.URL.Query().Get("edit"), r.URL.Query().Get("new") == "1", "", r.URL.Query().Get("notice"))
         if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
@@ -37,18 +35,17 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     mux.Handle("GET /apps/{id}/files/download", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         _, files, ok := openAppFiles(w, r, cfg)
         if !ok { return }
-        defer files.Close()
         name := r.URL.Query().Get("name")
-        file, info, err := files.Download(r.URL.Query().Get("dir"), name)
+        folder := r.URL.Query().Get("dir")
+        size, err := files.FileSize(folder, name)
         if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
-        defer file.Close()
         disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
         w.Header().Set("Content-Disposition", disposition)
         w.Header().Set("Content-Type", "application/octet-stream")
-        w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+        w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
         w.Header().Set("Cache-Control", "private, no-store")
         w.Header().Set("X-Content-Type-Options", "nosniff")
-        if _, err := io.Copy(w, file); err != nil {
+        if err := files.Download(folder, name, w); err != nil {
             cfg.Logger.Warn("app file download interrupted", "err", err)
         }
     })))
@@ -129,7 +126,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     })))
 }
 
-func openAppFiles(w http.ResponseWriter, r *http.Request, cfg Config) (panelapp.App, *filemanager.Manager, bool) {
+func openAppFiles(w http.ResponseWriter, r *http.Request, cfg Config) (panelapp.App, *filemanager.Client, bool) {
     id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
     if err != nil || id <= 0 {
         http.Error(w, "invalid application", http.StatusBadRequest)
@@ -140,7 +137,7 @@ func openAppFiles(w http.ResponseWriter, r *http.Request, cfg Config) (panelapp.
         http.Error(w, "application not found", http.StatusNotFound)
         return panelapp.App{}, nil, false
     }
-    files, err := filemanager.Open(app.Root, app.User)
+    files, err := filemanager.NewClient(r.Context(), app.Root, app.User)
     if err != nil {
         http.Error(w, err.Error(), http.StatusBadRequest)
         return panelapp.App{}, nil, false
@@ -155,7 +152,12 @@ func fileHidden(action, folder, name string) string {
     return result
 }
 
-func fileManagerPage(app panelapp.App, files *filemanager.Manager, folder, editName string, create bool, message, notice string, draft ...string) (string, error) {
+type fileBrowser interface {
+    List(folder string) ([]filemanager.Entry, bool, error)
+    ReadText(folder, name string) (string, error)
+}
+
+func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName string, create bool, message, notice string, draft ...string) (string, error) {
     items, limited, err := files.List(folder)
     if err != nil { return "", err }
     base := appFilesURL(app.ID, folder)
