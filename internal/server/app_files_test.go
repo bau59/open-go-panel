@@ -107,6 +107,8 @@ func TestFileManagerToolbarControlsStayAligned(t *testing.T) {
         `class="fileman-tools"`,
         `class="fileman-control-row"`,
         `class="file-upload-input"`,
+        `name="client_size" value=""`,
+        `onchange="this.form.elements.client_size.value`,
         `for="fileman-upload-file"`,
         `id="fileman-upload-file"`,
         `for="fileman-folder-name"`,
