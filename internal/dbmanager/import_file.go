@@ -147,12 +147,19 @@ func sqlFileCommand(ctx context.Context, target Database) (*exec.Cmd, error) {
     var cmd *exec.Cmd
     switch target.Engine {
     case "mysql":
-        cmd = exec.CommandContext(ctx, "mysql", "--protocol=socket", "-u", target.User, "--database="+target.Name)
-        cmd.Env = append(os.Environ(), "MYSQL_PWD="+target.Password)
+        // MySQL's binary mode disables client-side shell/source commands in
+        // noninteractive SQL input. Run with an unprivileged Linux identity
+        // even if the uploaded script contains other client directives.
+        cmd = exec.CommandContext(ctx, "runuser", "-u", "nobody", "--",
+            "mysql", "--binary-mode", "--protocol=socket", "-u", target.User, "--database="+target.Name)
+        cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "MYSQL_PWD="+target.Password}
     case "postgres":
-        cmd = exec.CommandContext(ctx, "psql", "-X", "-h", "127.0.0.1", "-U", target.User,
+        // psql supports client-side metacommands such as \\!; never execute
+        // uploaded SQL with panel's root OS privileges.
+        cmd = exec.CommandContext(ctx, "runuser", "-u", "nobody", "--",
+            "psql", "-X", "-h", "127.0.0.1", "-U", target.User,
             "-d", target.Name, "-v", "ON_ERROR_STOP=1")
-        cmd.Env = append(os.Environ(), "PGPASSWORD="+target.Password)
+        cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "PGPASSWORD="+target.Password}
     default:
         return nil, errors.New("unsupported database engine")
     }
