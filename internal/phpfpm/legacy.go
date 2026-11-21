@@ -247,7 +247,14 @@ func EnsureLegacy(ctx context.Context, id int64, username, root string, port int
             "-d", "mysqli.default_socket=/run/mysqld/mysqld.sock",
             "-d", "pdo_mysql.default_socket=/run/mysqld/mysqld.sock",
         )
-        if _, err := dockerOutput(ctx, args...); err != nil { return err }
+        if _, err := dockerOutput(ctx, args...); err != nil {
+            // docker run may leave a named container in "created" state when
+            // port binding fails. Remove only a matching panel-labeled container.
+            cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+            defer cancel()
+            _ = RemoveLegacy(cleanup, id)
+            return err
+        }
     } else {
         return fmt.Errorf("legacy PHP container in unexpected state %s", status)
     }
