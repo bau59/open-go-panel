@@ -252,7 +252,7 @@ func (m *Manager) Delete(folder, name string) error {
     fd, err := m.directory(folder)
     if err != nil { return err }
     defer unix.Close(fd)
-    remaining := 10000
+    remaining := MaxDeleteEntries
     return removeTree(fd, name, 0, &remaining)
 }
 
@@ -272,7 +272,7 @@ func removeTree(parent int, name string, depth int, remaining *int) error {
     dir := os.NewFile(uintptr(fd), name)
     names, readErr := dir.Readdirnames(*remaining+1)
     if readErr != nil && !errors.Is(readErr, io.EOF) { dir.Close(); return readErr }
-    if len(names) > *remaining { dir.Close(); return errors.New("directory exceeds 10000-item delete limit") }
+    if len(names) > *remaining { dir.Close(); return fmt.Errorf("directory exceeds the remaining %d-item delete limit", *remaining) }
     for _, child := range names {
         if err := removeTree(fd, child, depth+1, remaining); err != nil { dir.Close(); return err }
     }

@@ -132,3 +132,43 @@ func TestFileManagerToolbarControlsStayAligned(t *testing.T) {
         if !strings.Contains(page, path) { t.Errorf("existing file operation missing: %q", path) }
     }
 }
+
+func TestFileManagerBulkControlsAndFolderLift(t *testing.T) {
+    root := t.TempDir()
+    files, err := filemanager.Open(root)
+    if err != nil { t.Fatal(err) }
+    defer files.Close()
+    if err := files.Mkdir("", "kirbi.ru"); err != nil { t.Fatal(err) }
+    if err := files.Save("", "test.zip", "zip contents", true); err != nil { t.Fatal(err) }
+    app := panelapp.App{ID: 7, Name: "kirbi", Root: root}
+    page, err := fileManagerPage(app, files, "", "", false, "", "")
+    if err != nil { t.Fatal(err) }
+    for _, want := range []string{
+        `id="fileman-bulk-form"`,
+        `name="action" value="bulk_move"`,
+        `name="action" value="bulk_delete"`,
+        `class="fileman-select-item"`,
+        `form="fileman-bulk-form" name="selected" value="kirbi.ru"`,
+        `id="fileman-select-all"`,
+        `name="destination"`,
+        `Move contents here`,
+        `name="action" value="move_contents"`,
+        `Select all affects only displayed entries`,
+    } {
+        if !strings.Contains(page, want) {
+            t.Errorf("bulk file manager is missing %q", want)
+        }
+    }
+    if strings.Count(page, `id="fileman-bulk-form"`) != 1 {
+        t.Fatal("bulk form must exist exactly once")
+    }
+    if err := files.Save("kirbi.ru", "index.php", "<?php", true); err != nil { t.Fatal(err) }
+    nested, err := fileManagerPage(app, files, "kirbi.ru", "", false, "", "")
+    if err != nil { t.Fatal(err) }
+    if !strings.Contains(nested, "Move all contents up") {
+        t.Fatal("missing one-click promotion from inside extracted folder")
+    }
+    if !strings.Contains(nested, `name="destination" placeholder="public/assets or . for root" value="."`) {
+        t.Fatal("bulk destination must default to app root from top-level folder")
+    }
+}
