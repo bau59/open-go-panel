@@ -174,6 +174,29 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 	return m.apply(ctx, sites)
 }
 
+// SetPHPBackend switches only the PHP-FPM upstream. The site root,
+// aliases, access logging, and Caddy overrides are preserved. Unlike
+// SetSite this does not recursively reapply ACLs to the site's files.
+func (m *Manager) SetPHPBackend(ctx context.Context, appID int64, port int) error {
+    if appID <= 0 || (port != 0 && (port < 9400 || port > 9599)) {
+        return errors.New("invalid PHP FastCGI backend port")
+    }
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    sites, err := m.load()
+    if err != nil { return err }
+    for i := range sites {
+        if sites[i].AppID != appID { continue }
+        if sites[i].Kind != "php" || strings.TrimSpace(sites[i].Template) != "" {
+            return errors.New("PHP backend switching requires a managed PHP site template")
+        }
+        if sites[i].Port == port { return nil }
+        sites[i].Port = port
+        return m.apply(ctx, sites)
+    }
+    return errors.New("PHP site not found")
+}
+
 // AddStandaloneDomain creates an unbound Caddy site. Negative IDs are reserved
 // for standalone domains so existing app/domain associations remain unchanged.
 func (m *Manager) AddStandaloneDomain(ctx context.Context, domain string) error {
