@@ -54,7 +54,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
     })))
 
     mux.Handle("POST /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if r.FormValue("action") == "extract" {
+        if action := r.FormValue("action"); action == "extract" || action == "move_contents" || action == "bulk_move" || action == "bulk_delete" {
             // Archive extraction can write tens of thousands of PHP files.
             // The panel's normal 30s HTTP write deadline is far too short;
             // extend only this operation without changing other requests.
@@ -73,6 +73,9 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         name := r.FormValue("name")
         action := r.FormValue("action")
         var err error
+        count := 0
+        redirectFolder := folder
+        notice := action + " completed"
         switch action {
         case "mkdir":
             err = files.Mkdir(folder, name)
@@ -92,6 +95,21 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             }
         case "move":
             err = files.Move(folder, name, r.FormValue("destination"))
+        case "bulk_move":
+            count, err = files.MoveMany(folder, r.PostForm["selected"], r.FormValue("destination"))
+            if err == nil { notice = fmt.Sprintf("Moved %d selected items", count) }
+        case "bulk_delete":
+            count, err = files.DeleteMany(folder, r.PostForm["selected"])
+            if err == nil { notice = fmt.Sprintf("Deleted %d selected items", count) }
+        case "move_contents":
+            count, err = files.MoveContentsUp(folder, name)
+            if err == nil {
+                notice = fmt.Sprintf("Moved %d items to the parent folder; source folder is now empty", count)
+                if name == "" {
+                    redirectFolder = path.Dir(folder)
+                    if redirectFolder == "." { redirectFolder = "" }
+                }
+            }
         case "copy":
             err = files.Copy(folder, name, r.FormValue("destination"))
         case "delete":
@@ -141,10 +159,9 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             writeHTML(w, cfg.Logger, http.StatusBadRequest, page)
             return nil
         }
-        destination := appFilesURL(app.ID, folder)
+        destination := appFilesURL(app.ID, redirectFolder)
         delimiter := "?"
         if strings.Contains(destination, "?") { delimiter = "&" }
-        notice := action + " completed"
         if action == "upload" { notice = "Upload complete · SHA-256 verified" }
         http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(notice), http.StatusSeeOther)
         return nil
