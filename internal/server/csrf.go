@@ -4,16 +4,21 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
+    "errors"
 	"encoding/base64"
 	"net"
 	"net/http"
+    "time"
+
+    "github.com/bau59/open-go-panel/internal/uploadlimits"
 	"net/url"
 	"regexp"
 	"strings"
 )
 
 const csrfFormField = "ogp_csrf"
-const fileUploadBodyLimit = 130 << 20
+const fileUploadBodyLimit = uploadlimits.MultipartBodyBytes
+const uploadTimeout = time.Hour
 
 // Templates in this app render their own POST forms. Injecting the token when
 // the HTML response is written protects every native mutation route, including
@@ -95,16 +100,29 @@ func csrfProtection(store *sessionStore, next http.Handler) http.Handler {
 				// blocked legitimate SSH tunnels and reverse proxies.
 				var parseErr error
 				if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data;") {
-					// Multipart uploads are parsed to disk with a strict total request
-					// limit. Clean up temporary parts on every response path.
-					r.Body = http.MaxBytesReader(w, r.Body, (fileUploadBodyLimit))
+					// The HTTP server uses short deadlines for ordinary requests.
+					// Override them only for authenticated multipart uploads so
+					// 1 GiB uploads can complete over slower connections.
+					deadline := time.Now().Add(uploadTimeout)
+					controller := http.NewResponseController(w)
+					if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+						http.Error(w, "cannot set upload read deadline", http.StatusServiceUnavailable)
+						return
+					}
+					if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+						http.Error(w, "cannot set upload write deadline", http.StatusServiceUnavailable)
+						return
+					}
+					// ParseMultipartForm streams large parts to disk. Cap the
+					// entire body and clean up the temporary parts after use.
+					r.Body = http.MaxBytesReader(w, r.Body, fileUploadBodyLimit)
 					parseErr = r.ParseMultipartForm(8 << 20)
 					if r.MultipartForm != nil { defer r.MultipartForm.RemoveAll() }
 				} else {
 					parseErr = r.ParseForm()
 				}
 				if parseErr != nil {
-					http.Error(w, "invalid form or upload too large", http.StatusBadRequest)
+					http.Error(w, "invalid form or upload too large (max 1 GiB per file)", http.StatusBadRequest)
 					return
 				}
 				supplied := r.PostForm.Get(csrfFormField)
