@@ -165,3 +165,13 @@ func TestAdminerPostStillChecksOrigin(t *testing.T) {
 		})
 	}
 }
+
+
+func TestIonCubeMultipartUploadHasDedicatedLimit(t *testing.T) {
+    if got := multipartLimitForPath("/software/php/7.4/ioncube/upload"); got != (65<<20) {
+        t.Fatalf("ionCube multipart upload limit = %d", got)
+    }
+    if got := multipartLimitForPath("/apps/42/files"); got != fileUploadBodyLimit {
+        t.Fatalf("generic file upload limit unexpectedly changed: %d", got)
+    }
+}
