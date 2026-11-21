@@ -396,7 +396,15 @@ func databasesPage(data databasePageData) string {
 	if data.ImportTask.Running {
 		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>` + importKind + ` import into database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` · ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup is created before changes. Import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
 	} else if data.ImportTask.Error != "" {
-		importNotice = `<div class="alert import-status"><div><strong>` + importKind + ` import failed</strong><p>` + html.EscapeString(data.ImportTask.Error) + `</p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
+		failure := data.ImportTask.Error
+		guidance := ""
+		if data.ImportTask.SourceKind == "file" {
+			failure = strings.TrimPrefix(failure, "SQL file import failed: ")
+			if strings.Contains(failure, "ERROR 1064") {
+				guidance = `<p class="note">MySQL rejected the SQL syntax in the uploaded dump. Check the reported line in the source file; the panel does not rewrite SQL statements.</p>`
+			}
+		}
+		importNotice = `<div class="alert import-status"><div><strong>` + importKind + ` import failed</strong><p>` + html.EscapeString(failure) + `</p>` + guidance + `</div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	} else if !data.ImportTask.FinishedAt.IsZero() {
 		importNotice = `<div class="alert import-status success"><div><strong>` + importKind + ` import completed</strong><p>Safety backup: <code>` + html.EscapeString(filepath.Base(data.ImportTask.BackupPath)) + `</code></p></div><form method="post" action="/databases/import/dismiss"><button class="secondary">Dismiss</button></form></div>`
 	}
