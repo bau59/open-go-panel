@@ -1,7 +1,9 @@
 package filemanager
 
 import (
+    "archive/tar"
     "archive/zip"
+    "compress/gzip"
     "bytes"
     "io"
     "os"
@@ -113,9 +115,31 @@ func TestSafeArchiveExtraction(t *testing.T) {
 
 func TestTextEditorRejectsBinary(t *testing.T) {
     manager, _ := openTestManager(t)
-    if err := manager.Save("", "bad.bin", string([]byte{0,1,2}), true); err != nil {
-        // A new file can be binary only via upload, never via text editor.
-        return
+    if err := manager.Save("", "bad.bin", string([]byte{0,1,2}), true); err == nil {
+        t.Fatal("text editor accepted NUL bytes")
     }
-    t.Fatal("text editor accepted NUL bytes")
+}
+
+func TestTarGzExtraction(t *testing.T) {
+    manager, _ := openTestManager(t)
+    var encoded bytes.Buffer
+    compressed := gzip.NewWriter(&encoded)
+    archive := tar.NewWriter(compressed)
+    for _, entry := range []struct{ name, content string }{
+        {"./", ""},
+        {"./public/", ""},
+        {"./public/index.php", "<?php echo 'ok';"},
+    } {
+        typ := byte(tar.TypeReg)
+        if strings.HasSuffix(entry.name, "/") { typ = tar.TypeDir }
+        header := &tar.Header{Name: entry.name, Mode: 0644, Typeflag: typ, Size: int64(len(entry.content))}
+        if err := archive.WriteHeader(header); err != nil { t.Fatal(err) }
+        if _, err := io.WriteString(archive, entry.content); err != nil { t.Fatal(err) }
+    }
+    if err := archive.Close(); err != nil { t.Fatal(err) }
+    if err := compressed.Close(); err != nil { t.Fatal(err) }
+    if err := manager.Upload("", "site.tar.gz", bytes.NewReader(encoded.Bytes())); err != nil { t.Fatal(err) }
+    if _, err := manager.Extract("", "site.tar.gz"); err != nil { t.Fatal(err) }
+    content, err := manager.ReadText("public", "index.php")
+    if err != nil || content != "<?php echo 'ok';" { t.Fatalf("tar extract: %q, %v", content, err) }
 }
