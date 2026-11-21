@@ -11,21 +11,32 @@ import (
 
 func registerSoftwareRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	mux.Handle("GET /software", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeHTML(w, cfg.Logger, http.StatusOK, softwarePage(cfg.Software.Items(r.Context()), cfg.Software.Task(), ""))
+		version, extensions := cfg.Software.PHPExtensions()
+		writeHTML(w, cfg.Logger, http.StatusOK, softwarePage(cfg.Software.Items(r.Context()), cfg.Software.Task(), version, extensions, ""))
 	})))
 
 	mux.Handle("POST /software/{id}/{action}", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))
 		action := strings.TrimSpace(r.PathValue("action"))
 		if err := cfg.Software.Start(id, action); err != nil {
-			writeHTML(w, cfg.Logger, http.StatusBadRequest, softwarePage(cfg.Software.Items(r.Context()), cfg.Software.Task(), err.Error()))
+			version, extensions := cfg.Software.PHPExtensions()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, softwarePage(cfg.Software.Items(r.Context()), cfg.Software.Task(), version, extensions, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/software", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /software/php/extensions/{extension}", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := cfg.Software.StartPHPExtension(r.PathValue("extension")); err != nil {
+			version, extensions := cfg.Software.PHPExtensions()
+			writeHTML(w, cfg.Logger, http.StatusBadRequest, softwarePage(cfg.Software.Items(r.Context()), cfg.Software.Task(), version, extensions, err.Error()))
 			return
 		}
 		http.Redirect(w, r, "/software", http.StatusSeeOther)
 	})))
 }
 
-func softwarePage(items []software.Item, task software.Task, message string) string {
+func softwarePage(items []software.Item, task software.Task, phpVersion string, extensions []software.PHPExtension, message string) string {
 	alert := ""
 	if message != "" {
 		alert = `<div class="alert">` + html.EscapeString(message) + `</div>`
@@ -65,6 +76,37 @@ func softwarePage(items []software.Item, task software.Task, message string) str
 		if version == "" {
 			version = "—"
 		}
+		phpExtra := ""
+		if item.ID == "php" && item.Installed && phpVersion != "" {
+			var list strings.Builder
+			for _, ext := range extensions {
+				label := "Install"
+				status := "not installed"
+				state := "warn"
+				extDisabled := disabled
+				if ext.Installed {
+					label = "Installed"
+					status = "enabled"
+					state = "ok"
+					extDisabled = " disabled"
+					if ext.ID == "ioncube" {
+						label = "Update"
+						extDisabled = disabled
+					}
+				}
+				list.WriteString(`<div class="php-extension-row">
+					<div><strong>`+html.EscapeString(ext.Name)+`</strong><span class="state-text `+state+`"><i></i>`+status+`</span></div>
+					<form method="post" action="/software/php/extensions/`+html.EscapeString(ext.ID)+`">
+						<button type="submit" class="secondary"`+extDisabled+`>`+label+`</button>
+					</form>
+				</div>`)
+			}
+			phpExtra = `<details id="php-extensions" class="php-extensions">
+				<summary class="secondary">Manage PHP `+html.EscapeString(phpVersion)+` extensions</summary>
+				<p class="note">Extensions are shared by all applications using this PHP-FPM version. Installing a new extension reloads PHP-FPM.</p>
+				<div class="php-extension-grid">`+list.String()+`</div>
+			</details>`
+		}
 		cards.WriteString(`
 			<article class="panel panel-pad software-card">
 				<div class="software-card-head">
@@ -79,6 +121,7 @@ func softwarePage(items []software.Item, task software.Task, message string) str
 				<form method="post" action="/software/` + html.EscapeString(item.ID) + `/` + action + `">
 					<button class="` + func() string { if item.Installed { return "secondary" }; return "button" }() + `"` + disabled + `>` + button + `</button>
 				</form>
+				` + phpExtra + `
 			</article>`)
 	}
 
@@ -92,6 +135,18 @@ func softwarePage(items []software.Item, task software.Task, message string) str
 			</div>
 		</div>
 		` + alert + running + `
+		<style>
+		.php-extensions{margin-top:16px;padding-top:15px;border-top:1px solid var(--border)}
+		.php-extensions>summary{display:inline-flex;align-items:center;min-height:38px;padding:0 12px;font-size:12px;font-weight:700}
+		.php-extensions>.note{margin:12px 0;line-height:1.5}
+		.php-extension-grid{display:grid;gap:0}
+		.php-extension-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid rgba(146,184,235,.12)}
+		.php-extension-row>div{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
+		.php-extension-row strong{font-size:13px}
+		.php-extension-row .state-text{font-size:11px}
+		.php-extension-row form{flex:none;margin:0}
+		.php-extension-row button{min-height:34px;padding:0 12px;font-size:12px}
+		</style>
 		<section class="software-grid">` + cards.String() + `</section>
 
 		<section class="panel panel-pad" style="margin-top:16px">

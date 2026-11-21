@@ -418,7 +418,9 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         .fileman-actions{justify-content:flex-end;flex-wrap:nowrap}
         .fileman-more{position:relative}
         .fileman-more>summary{cursor:pointer;list-style:none;white-space:nowrap}
-        .fileman-popover{position:static;min-width:min(300px,80vw);margin-top:9px;padding:14px;border:1px solid #425a78;border-radius:12px;background:#172a43}
+        /* Fixed popovers never increase table row height or get clipped by
+           the horizontal table scroller. Position follows the trigger. */
+        .fileman-popover{position:fixed;z-index:1000;top:0;left:0;box-sizing:border-box;width:min(340px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow-y:auto;margin:0;padding:14px;border:1px solid #425a78;border-radius:12px;background:#172a43;box-shadow:0 16px 44px rgba(0,0,0,.45)}
         .fileman-popover form{display:grid;gap:8px;margin-bottom:14px}
         .fileman-popover form:last-child{margin-bottom:0}
         .fileman-popover input{min-width:0}
@@ -439,6 +441,52 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             .fileman-control-row button{width:100%}
         }
     </style>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        var menus = Array.from(document.querySelectorAll('.fileman-more'));
+        function positionMenu(details) {
+            if (!details.open) return;
+            var trigger = details.querySelector('summary');
+            var popup = details.querySelector('.fileman-popover');
+            if (!trigger || !popup) return;
+            var rect = trigger.getBoundingClientRect();
+            var gutter = 12;
+            var width = Math.min(340, window.innerWidth - gutter * 2);
+            popup.style.width = width + 'px';
+            var left = Math.max(gutter, Math.min(rect.right - width, window.innerWidth - width - gutter));
+            popup.style.left = left + 'px';
+            popup.style.top = gutter + 'px';
+            var height = popup.getBoundingClientRect().height;
+            var below = window.innerHeight - rect.bottom - gutter;
+            var above = rect.top - gutter;
+            var top = below >= Math.min(height, 300) || below >= above
+                ? Math.min(rect.bottom + 8, window.innerHeight - gutter - height)
+                : Math.max(gutter, rect.top - 8 - height);
+            popup.style.top = Math.max(gutter, top) + 'px';
+        }
+        menus.forEach(function (details) {
+            details.addEventListener('toggle', function () {
+                if (!details.open) return;
+                menus.forEach(function (other) { if (other !== details) other.open = false; });
+                positionMenu(details);
+            });
+        });
+        document.addEventListener('pointerdown', function (event) {
+            menus.forEach(function (details) {
+                if (details.open && !details.contains(event.target)) details.open = false;
+            });
+        });
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') menus.forEach(function (details) { details.open = false; });
+        });
+        window.addEventListener('scroll', function () {
+            menus.forEach(function (details) { if (details.open) positionMenu(details); });
+        }, true);
+        window.addEventListener('resize', function () {
+            menus.forEach(function (details) { if (details.open) positionMenu(details); });
+        });
+    });
+    </script>
     <main class="shell app-shell">
         <div class="app-page-head"><div>
             <a class="app-breadcrumb" href="/apps/`+strconv.FormatInt(app.ID,10)+`">`+html.EscapeString(app.Name)+`</a>

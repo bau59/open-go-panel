@@ -192,7 +192,7 @@ jobs:
           curl -fsS -b /tmp/ogp-cookies 'http://127.0.0.1:8443/apps/1/files/download?dir=assets&name=test.txt' | grep -qx 'updated-file'
 
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server redis-tools mysql-server
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server redis-tools mysql-server php-fpm php-cli
           sudo systemctl enable --now redis-server.service mysql.service
           # GitHub runner MySQL has a password-protected root account.
           # Supply the runner's disposable credential only to the test panel
@@ -210,6 +210,35 @@ jobs:
           CSRF="$(curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/ | grep -o 'name="ogp_csrf" value="[^"]*"' | head -n1 | cut -d '"' -f4)"
           test -n "$CSRF"
           curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/databases/redis | grep -q "<h1>Redis</h1>"
+
+          # Install an extension using the panel's PHP-version-aware route.
+          PHP_VERSION="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+          echo "PHP extensions smoke: detected PHP $PHP_VERSION"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software -o /tmp/ogp-software-php.html
+          grep -q "Manage PHP $PHP_VERSION extensions" /tmp/ogp-software-php.html
+          EXT_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" http://127.0.0.1:8443/software/php/extensions/bcmath)"
+          test "$EXT_CODE" = "303"
+          EXT_READY=""
+          for _ in $(seq 1 90); do
+            if test -e "/etc/php/$PHP_VERSION/fpm/conf.d/20-bcmath.ini"; then EXT_READY=yes; break; fi
+            sleep 2
+          done
+          test "$EXT_READY" = yes
+          php -m | grep -iq '^bcmath'
+          echo "PHP extensions smoke: BCMath package enabled"
+          curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software -o /tmp/ogp-software-php.html
+          grep -q "BCMath" /tmp/ogp-software-php.html
+          # Package symlinks appear before apt and FPM reload complete; wait
+          # for the Software task to release its installation lock.
+          for _ in $(seq 1 100); do
+            curl -fsS -b /tmp/ogp-cookies http://127.0.0.1:8443/software -o /tmp/ogp-software-php.html
+            if ! grep -q '<span class="status-badge warn">running</span>' /tmp/ogp-software-php.html; then break; fi
+            sleep 1
+          done
+          if grep -q 'install extension.*:' /tmp/ogp-software-php.html; then
+            echo "PHP extensions smoke: BCMath install failed" >&2
+            exit 1
+          fi
 
           # End-to-end SQL file import using the managed MySQL database user.
           echo "SQL smoke: creating managed MySQL database"
