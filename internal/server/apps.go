@@ -953,6 +953,8 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 
 		` + serviceBlock + `
 
+		` + phpVersionBlock(app) + `
+
 		<details class="panel panel-pad advanced-block danger-zone" style="margin-top:16px">
 			<summary class="section-title" style="margin:0;cursor:pointer">
 				<div><h2>Danger zone</h2><p class="note" style="margin:6px 0 0">Destructive panel actions are kept out of the normal workflow.</p></div>
