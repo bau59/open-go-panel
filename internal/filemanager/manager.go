@@ -282,8 +282,9 @@ func removeTree(parent int, name string, depth int, remaining *int) error {
     })
     if err != nil { return err }
     dir := os.NewFile(uintptr(fd), name)
-    names, readErr := dir.Readdirnames(-1)
-    if readErr != nil { dir.Close(); return readErr }
+    names, readErr := dir.Readdirnames(*remaining+1)
+    if readErr != nil && !errors.Is(readErr, io.EOF) { dir.Close(); return readErr }
+    if len(names) > *remaining { dir.Close(); return errors.New("directory exceeds 10000-item delete limit") }
     for _, child := range names {
         if err := removeTree(fd, child, depth+1, remaining); err != nil { dir.Close(); return err }
     }
@@ -301,6 +302,13 @@ func (m *Manager) makeDirectories(base, relative string) (string, error) {
         if errors.Is(err, unix.EEXIST) { err = nil } else if err == nil {
             err = unix.Fchownat(fd, name, m.uid, m.gid, unix.AT_SYMLINK_NOFOLLOW)
         }
+        if err == nil {
+            childFD, openErr := unix.Openat2(fd, name, &unix.OpenHow{
+                Flags: uint64(unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC),
+                Resolve: unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS|unix.RESOLVE_NO_XDEV,
+            })
+            if openErr != nil { err = openErr } else { unix.Close(childFD) }
+        }
         unix.Close(fd)
         if err != nil { return "", err }
         if current == "" || current == "." { current = name } else { current += "/" + name }
@@ -311,7 +319,7 @@ func (m *Manager) makeDirectories(base, relative string) (string, error) {
 func validateArchiveName(name string) (string, bool, error) {
     directory := strings.HasSuffix(name, "/")
     cleaned := strings.TrimSuffix(name, "/")
-    if !validPath(cleaned) || cleaned == "" || cleaned == "." {
+    if strings.Count(cleaned, "/") >= maxDepth || !validPath(cleaned) || cleaned == "" || cleaned == "." {
         return "", false, errors.New("archive contains invalid or escaping path")
     }
     return cleaned, directory, nil
