@@ -985,3 +985,6 @@ details[open]>summary.secondary{background:#edf2ff;border-color:#b7c9f5;color:#3
  .fileman-bulk>button{flex:1 1 auto}
  .fileman-table table{min-width:760px}
 }
+
+.fileman-modified{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+.fileman-table table{min-width:925px}
