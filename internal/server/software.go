@@ -76,7 +76,7 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 				<span class="status-badge warn">running</span>
 				<div><strong>` + html.EscapeString(strings.Title(task.Action+" "+task.SoftwareID)) + `</strong><p class="note">The operation continues in the background. This page refreshes automatically.</p></div>
 			</div>`
-		refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',select:'body',swap:'innerHTML'});}else{location.reload();}},3000);})()</script>`
+		refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},3000);})()</script>`
 	}
 
 	var cards strings.Builder
