@@ -265,11 +265,11 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     refresh := ""
     if installing {
         alert += `<div class="software-task"><span class="status-badge warn">installing</span><div><strong>Docker installation is running</strong><p class="note">The page refreshes automatically.</p></div></div>`
-        refresh = `<script>setTimeout(() => location.reload(), 3000)</script>`
+        refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},3000);})()</script>`
     }
 
     if build.Running {
-        refresh = `<script>setTimeout(() => location.reload(), 4000)</script>`
+        refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},4000);})()</script>`
     }
 
     if !status.Installed {
@@ -465,6 +465,8 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     ` + dockerLogsScript() + `
     <script>
     (function(){
+      let statsTimer;
+      let statsActive = true;
       function asBytes(s){
         const m=String(s||'').trim().match(/^([0-9.]+)\s*(B|KiB|MiB|GiB|TiB|kB|MB|GB|TB)?$/);
         if(!m)return 0;
@@ -472,6 +474,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
         return parseFloat(m[1])*(units[m[2]]||1);
       }
       async function pollStats(){
+        if (!statsActive) return;
         try{
           const res=await fetch('/docker/stats',{cache:'no-store'});
           if(!res.ok)throw new Error('stats unavailable');
@@ -493,8 +496,13 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
           document.getElementById('docker-total-cpu').textContent=cpu.toFixed(1)+'%';
           document.getElementById('docker-total-memory').textContent=(mem/1048576).toFixed(0)+' MiB';
         }catch(e){}
-        setTimeout(pollStats,10000);
+        if (statsActive) statsTimer = setTimeout(pollStats,10000);
       }
+      document.addEventListener('htmx:beforeSwap', (event) => {
+        if (event.detail.target !== document.body) return;
+        statsActive = false;
+        clearTimeout(statsTimer);
+      }, {once:true});
       pollStats();
     })();
     </script>` + refresh + `</body></html>`

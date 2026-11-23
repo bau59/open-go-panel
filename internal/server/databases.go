@@ -394,7 +394,7 @@ func databasesPage(data databasePageData) string {
 	importKind := "Remote database"
 	if data.ImportTask.SourceKind == "file" { importKind = "SQL file" }
 	if data.ImportTask.Running {
-		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>` + importKind + ` import into database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` · ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup is created before changes. Import runs in the background.</p></div></div><script>setTimeout(() => location.reload(), 4000)</script>`
+		importNotice = `<div class="software-task" style="margin-bottom:16px"><span class="status-badge warn">importing</span><div><strong>` + importKind + ` import into database #` + fmt.Sprintf("%d", data.ImportTask.DatabaseID) + ` · ` + html.EscapeString(data.ImportTask.SourceHost) + `</strong><p class="note">A safety backup is created before changes. Import runs in the background.</p></div></div><script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},4000);})()</script>`
 	} else if data.ImportTask.Error != "" {
 		failure := data.ImportTask.Error
 		guidance := ""

@@ -114,12 +114,14 @@ func TestFileManagerToolbarControlsStayAligned(t *testing.T) {
         `for="fileman-folder-name"`,
         `id="fileman-folder-name"`,
         `class="fileman-tool fileman-tool-new"`,
-        `file-upload-input::file-selector-button`,
         `Upload file <span>Max 1 GiB</span>`,
     } {
         if !strings.Contains(page, expected) {
             t.Errorf("toolbar is missing %q", expected)
         }
+    }
+    if !strings.Contains(baseStyles, "file-upload-input::file-selector-button") {
+        t.Fatal("file upload button styling missing from embedded stylesheet")
     }
     if strings.Count(page, `class="fileman-control-row"`) != 2 {
         t.Fatal("upload and folder-create forms must use the same input/button layout")
@@ -182,17 +184,23 @@ func TestFileManagerMoreMenuDoesNotExpandTable(t *testing.T) {
     app := panelapp.App{ID: 12, Name: "site", Root: root}
     page, err := fileManagerPage(app, files, "", "", false, "", "")
     if err != nil { t.Fatal(err) }
-    for _, expected := range []string{
+    if !strings.Contains(page, "Move contents here") {
+        t.Fatal("missing file manager action")
+    }
+    for _, selector := range []string{
         ".fileman-popover{position:fixed;",
         ".fileman-more>summary",
+    } {
+        if !strings.Contains(baseStyles, selector) { t.Errorf("missing floating menu CSS: %q", selector) }
+    }
+    for _, snippet := range []string{
         "details.addEventListener('toggle'",
         "positionMenu(details)",
         "event.key === 'Escape'",
-        "Move contents here",
     } {
-        if !strings.Contains(page, expected) { t.Errorf("missing floating menu behavior: %q", expected) }
+        if !strings.Contains(panelScript, snippet) { t.Errorf("missing floating menu JS: %q", snippet) }
     }
-    if strings.Contains(page, ".fileman-popover{position:static;") {
+    if strings.Contains(baseStyles, ".fileman-popover{position:static;") {
         t.Fatal("menu is still part of normal table row flow")
     }
 }

@@ -40,29 +40,7 @@ func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
   if len(users) == 0 {
    rows.WriteString(`<tr><td colspan="3" class="backup-empty">No managed users found.</td></tr>`)
   }
-  body := `<style>
-   .backup-page{display:grid;gap:20px;padding-bottom:28px}
-   .backup-page .page-head{margin-bottom:0}
-   .backup-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-   .backup-tile{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:22px;min-width:0}
-   .backup-tile h2{font-size:16px;line-height:1.3}
-   .backup-tile .sub{margin:7px 0 0}
-   .backup-tile .backup-action{margin-top:auto}
-   .backup-page a.button,.backup-page a.secondary{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;white-space:nowrap}
-   .backup-users{overflow:hidden}
-   .backup-users-head{padding:22px 22px 18px}
-   .backup-users-head h2{font-size:18px}
-   .backup-users-head .sub{margin-top:7px}
-   .backup-users td:first-child{font-weight:700}
-   .backup-users td:nth-child(2){color:var(--muted-2)}
-   .backup-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-   .backup-users .table-scroll{width:100%}
-   .backup-users table{min-width:580px}
-   .backup-users td:last-child{width:340px}
-   .backup-empty{color:var(--muted-2);text-align:center;padding:28px}
-   @media(max-width:1050px){.backup-overview{grid-template-columns:repeat(2,minmax(0,1fr))}}
-   @media(max-width:680px){.backup-overview{grid-template-columns:1fr}.backup-tile{padding:18px}.backup-users-head{padding:18px}.backup-actions{gap:6px}}
-  </style>
+  body := `
   <div class="backup-page">
    <section class="page-head"><div><h1>Backup &amp; export</h1><p class="sub">Export configuration, installed software and user data on demand.</p></div></section>
    <section class="backup-overview" aria-label="Server exports">
