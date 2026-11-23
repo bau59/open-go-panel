@@ -252,6 +252,23 @@ func fileManagerIcon(kind string) string {
     return `<svg class="fileman-icon fileman-icon-` + kind + `" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` + source + `</svg>`
 }
 
+func fileManagerEditable(name string, size int64) bool {
+    if size > filemanager.MaxEditBytes { return false }
+    switch strings.ToLower(path.Ext(name)) {
+    case ".go", ".js", ".ts", ".html", ".htm", ".css", ".json", ".php", ".yaml", ".yml",
+        ".txt", ".md", ".xml", ".svg", ".sql", ".sh", ".ini", ".toml", ".csv", ".env",
+        ".conf", ".log", ".py", ".rb", ".gitignore", ".dockerignore":
+        return true
+    }
+    if !strings.Contains(name, ".") {
+        switch strings.ToLower(name) {
+        case "dockerfile", "makefile", "caddyfile", "readme", "license":
+            return true
+        }
+    }
+    return strings.HasPrefix(name, ".env.")
+}
+
 func fileManagerSize(size int64) string {
     if size < 1024 { return fmt.Sprintf("%d B", size) }
     value := float64(size)
@@ -323,7 +340,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         if folder != "" && folder != "." {
             parent := path.Dir(folder)
             if parent == "." { parent = "" }
-            rows.WriteString(`<tr class="fileman-parent"><td></td><td><a class="fileman-entry" href="`+appFilesURL(app.ID, parent)+`">`+fileManagerIcon("folder")+`<span>..</span></a></td><td>Parent folder</td><td>—</td><td>—</td><td></td></tr>`)
+            rows.WriteString(`<tr class="fileman-parent"><td></td><td><a class="fileman-entry" href="`+appFilesURL(app.ID, parent)+`">`+fileManagerIcon("folder")+`<span>..</span></a></td><td>Parent folder</td><td>—</td><td>—</td><td>—</td><td></td></tr>`)
         }
         for _, item := range items {
             name := html.EscapeString(item.Name)
@@ -369,7 +386,9 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 }
                 query.Del("name")
                 query.Set("edit", item.Name)
-                actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
+                if fileManagerEditable(item.Name, item.Size) {
+                    actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
+                }
                 if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
                     actions.WriteString(`<form method="post" action="`+actionURL+`">`+fileHidden("extract", folder, item.Name)+`<button class="secondary compact-action" onclick="return confirm('Extract this archive here? Existing files will not be overwritten.')">Extract</button></form>`)
                 }
@@ -396,6 +415,13 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 modes := []string{"0600", "0640", "0644", "0700", "0750", "0755"}
                 if item.Directory { modes = []string{"0700", "0750", "0755"} }
                 var selectModes strings.Builder
+                known := false
+                for _, value := range modes {
+                    if value == mode { known = true; break }
+                }
+                if !known {
+                    fmt.Fprintf(&selectModes, `<option value="" selected disabled>Current %s (ACL)</option>`, html.EscapeString(mode))
+                }
                 for _, value := range modes {
                     selected := ""
                     if value == mode { selected = " selected" }
@@ -412,10 +438,12 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             }
             actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Delete this item permanently?')">
                 `+fileHidden("delete", folder, item.Name)+`<button class="danger compact-action">Delete</button></form></div></details>`)
-            fmt.Fprintf(&rows, `<tr class="fileman-row"><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td class="fileman-size">%s</td><td><code class="fileman-mode">%s</code></td><td><div class="actions fileman-actions">%s</div></td></tr>`,
-                name, name, entry, html.EscapeString(kind), html.EscapeString(size), html.EscapeString(mode), actions.String())
+            modified := "—"
+            if !item.ModifiedAt.IsZero() { modified = item.ModifiedAt.UTC().Format("2006-01-02 15:04") }
+            fmt.Fprintf(&rows, `<tr class="fileman-row"><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td class="fileman-size">%s</td><td><code class="fileman-mode">%s</code></td><td class="fileman-modified">%s</td><td><div class="actions fileman-actions">%s</div></td></tr>`,
+                name, name, entry, html.EscapeString(kind), html.EscapeString(size), html.EscapeString(mode), modified, actions.String())
         }
-        if len(items) == 0 { rows.WriteString(`<tr><td colspan="6" class="empty">This folder is empty.</td></tr>`) }
+        if len(items) == 0 { rows.WriteString(`<tr><td colspan="7" class="empty">This folder is empty.</td></tr>`) }
         if limited { alert += `<div class="alert">Only the first 400 entries are shown and selectable. "Move all contents up" moves the entire folder, including entries not displayed.</div>` }
         parentDestination := ""
         if folder != "" && folder != "." {
@@ -471,7 +499,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             </div>
             %s
             %s
-            <div class="fileman-table"><table><thead><tr><th class="fileman-check-column"><input id="fileman-select-all" type="checkbox" aria-label="Select all visible items"></th><th>Name</th><th>Type</th><th>Size</th><th>Permissions</th><th>Actions</th></tr></thead>
+            <div class="fileman-table"><table><thead><tr><th class="fileman-check-column"><input id="fileman-select-all" type="checkbox" aria-label="Select all visible items"></th><th>Name</th><th>Type</th><th>Size</th><th>Permissions</th><th>Modified (UTC)</th><th>Actions</th></tr></thead>
             <tbody>%s</tbody></table></div>
             <p class="note">Paths are relative to the application root. Existing files are never overwritten by moves; linked directories are not followed. Select all affects only displayed entries.</p>
             
