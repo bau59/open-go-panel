@@ -27,6 +27,7 @@ Default uninstall:
 --purge additionally removes:
   - /etc/open-go-panel
   - /var/lib/open-go-panel
+  - managed application cron timers and services
 
 Even --purge does NOT delete Linux users, app directories, databases,
 Caddy packages/certificates, CrowdSec, UFW, MySQL or PostgreSQL.
@@ -68,6 +69,19 @@ if [ "${PURGE}" = true ]; then
   echo "This removes only Open Go Panel configuration/state."
   echo "Linux users, app files, databases and infrastructure packages are preserved."
   echo
+
+  # Purging the task database must not leave orphaned systemd timers behind.
+  for timer in /etc/systemd/system/open-go-panel-cron-*.timer; do
+    [ -f "$timer" ] || continue
+    name="$(basename "$timer")"
+    if [[ "$name" =~ ^open-go-panel-cron-([0-9]+)\.timer$ ]]; then
+      job_id="${BASH_REMATCH[1]}"
+      systemctl disable --now "$name" >/dev/null 2>&1 || true
+      rm -f "/etc/systemd/system/open-go-panel-cron-${job_id}.timer"
+      rm -f "/etc/systemd/system/open-go-panel-cron-${job_id}.service"
+    fi
+  done
+  systemctl daemon-reload
 
   rm -rf "${CONFIG_DIR}"
   rm -rf "${STATE_DIR}"
