@@ -65,7 +65,9 @@ func (m *Manager) EnsureManagedFileAccess(ctx context.Context, appID int64, appR
     }
     // Grant read and inherited read only along the served file's path.
     dirs := []string{}
-    for dir := filepath.Dir(target); ; dir = filepath.Dir(dir) {
+    startDir := target
+    if entry.Mode().IsRegular() { startDir = filepath.Dir(target) }
+    for dir := startDir; ; dir = filepath.Dir(dir) {
         dirs = append(dirs, dir)
         if dir == root { break }
         if dir == "/" || dir == "." { return errors.New("web file path escaped its root") }
