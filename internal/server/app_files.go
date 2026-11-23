@@ -370,7 +370,6 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 query.Del("name")
                 query.Set("edit", item.Name)
                 actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
-                lower := strings.ToLower(item.Name)
                 if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
                     actions.WriteString(`<form method="post" action="`+actionURL+`">`+fileHidden("extract", folder, item.Name)+`<button class="secondary compact-action" onclick="return confirm('Extract this archive here? Existing files will not be overwritten.')">Extract</button></form>`)
                 }
@@ -441,6 +440,10 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 <input id="fileman-bulk-destination" name="destination" placeholder="public/assets or . for root" value="%s">
             </label>
             <button class="secondary" type="submit" name="action" value="bulk_move">Move selected</button>
+            <label for="fileman-bulk-archive-name" class="fileman-archive-target">ZIP filename
+                <input id="fileman-bulk-archive-name" name="archive_name" maxlength="255" value="selection.zip" required>
+            </label>
+            <button class="secondary" type="submit" name="action" value="archive">Compress ZIP</button>
             <button class="danger" type="submit" name="action" value="bulk_delete" onclick="return confirm('Delete all selected files and folders permanently?')">Delete selected</button>
         </form>`, actionURL, html.EscapeString(folder), html.EscapeString(defaultTarget))
 
@@ -468,28 +471,10 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             </div>
             %s
             %s
-            <div class="fileman-table"><table><thead><tr><th class="fileman-check-column"><input id="fileman-select-all" type="checkbox" aria-label="Select all visible items"></th><th>Name</th><th>Type</th><th>Size</th><th>Actions</th></tr></thead>
+            <div class="fileman-table"><table><thead><tr><th class="fileman-check-column"><input id="fileman-select-all" type="checkbox" aria-label="Select all visible items"></th><th>Name</th><th>Type</th><th>Size</th><th>Permissions</th><th>Actions</th></tr></thead>
             <tbody>%s</tbody></table></div>
             <p class="note">Paths are relative to the application root. Existing files are never overwritten by moves; linked directories are not followed. Select all affects only displayed entries.</p>
-            <script>
-            (function(){
-                var master=document.getElementById('fileman-select-all');
-                var items=Array.from(document.querySelectorAll('.fileman-select-item'));
-                var count=document.getElementById('fileman-selection-count');
-                function update(){
-                    var selected=items.filter(function(item){return item.checked}).length;
-                    count.textContent=selected+' selected';
-                    master.checked=items.length>0 && selected===items.length;
-                    master.indeterminate=selected>0 && selected<items.length;
-                }
-                master.addEventListener('change',function(){
-                    items.forEach(function(item){item.checked=master.checked});
-                    update();
-                });
-                items.forEach(function(item){item.addEventListener('change',update)});
-                update();
-            })();
-            </script>
+            
         </section>`, actionURL, fileHidden("upload", folder, ""), actionURL, fileHidden("mkdir", folder, ""), base+func()string{ if strings.Contains(base, "?") { return "&new=1" }; return "?new=1" }(), liftAction, bulkControls, rows.String())
     }
     return header + `
