@@ -131,8 +131,11 @@ func htmxPage(body string) string {
 	const enhanced = `<body hx-boost="true" hx-target="body" hx-select="body" hx-swap="innerHTML" hx-history="false">`
 	body = strings.Replace(body, old, enhanced, 1)
 	body = panelAnchorTag.ReplaceAllStringFunc(body, func(tag string) string {
-		if strings.Contains(tag, "hx-boost=") || strings.Contains(tag, " download") {
+		if strings.Contains(strings.ToLower(tag), "hx-boost=") {
 			return tag
+		}
+		if strings.Contains(strings.ToLower(tag), " download") {
+			return strings.TrimSuffix(tag, ">") + ` hx-boost="false">`
 		}
 		match := panelHref.FindStringSubmatch(tag)
 		if len(match) != 2 || !shouldKeepNativeLink(match[1]) {
