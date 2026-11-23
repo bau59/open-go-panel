@@ -388,13 +388,24 @@ func terminalPage(data terminalPageData) string {
 		});
 
 		let resizeTimer;
-		window.addEventListener('resize', () => {
+		const resize = () => {
 			clearTimeout(resizeTimer);
 			resizeTimer = setTimeout(() => {
 				fitAddon.fit();
 				sendResize();
 			}, 80);
-		});
+		};
+		window.addEventListener('resize', resize);
+		const cleanup = () => {
+			clearTimeout(resizeTimer);
+			window.removeEventListener('resize', resize);
+			if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+			term.dispose();
+		};
+		document.addEventListener('htmx:beforeSwap', (event) => {
+			if (event.detail.target === document.body) cleanup();
+		}, {once:true});
+		window.addEventListener('pagehide', cleanup, {once:true});
 	})();
 	</script>
 </body></html>`
