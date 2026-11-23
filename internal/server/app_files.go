@@ -394,52 +394,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         </section>`, actionURL, fileHidden("upload", folder, ""), actionURL, fileHidden("mkdir", folder, ""), base+func()string{ if strings.Contains(base, "?") { return "&new=1" }; return "?new=1" }(), liftAction, bulkControls, rows.String())
     }
     return header + `
-    <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        var menus = Array.from(document.querySelectorAll('.fileman-more'));
-        function positionMenu(details) {
-            if (!details.open) return;
-            var trigger = details.querySelector('summary');
-            var popup = details.querySelector('.fileman-popover');
-            if (!trigger || !popup) return;
-            var rect = trigger.getBoundingClientRect();
-            var gutter = 12;
-            var width = Math.min(340, window.innerWidth - gutter * 2);
-            popup.style.width = width + 'px';
-            var left = Math.max(gutter, Math.min(rect.right - width, window.innerWidth - width - gutter));
-            popup.style.left = left + 'px';
-            popup.style.top = gutter + 'px';
-            var height = popup.getBoundingClientRect().height;
-            var below = window.innerHeight - rect.bottom - gutter;
-            var above = rect.top - gutter;
-            var top = below >= Math.min(height, 300) || below >= above
-                ? Math.min(rect.bottom + 8, window.innerHeight - gutter - height)
-                : Math.max(gutter, rect.top - 8 - height);
-            popup.style.top = Math.max(gutter, top) + 'px';
-        }
-        menus.forEach(function (details) {
-            details.addEventListener('toggle', function () {
-                if (!details.open) return;
-                menus.forEach(function (other) { if (other !== details) other.open = false; });
-                positionMenu(details);
-            });
-        });
-        document.addEventListener('pointerdown', function (event) {
-            menus.forEach(function (details) {
-                if (details.open && !details.contains(event.target)) details.open = false;
-            });
-        });
-        document.addEventListener('keydown', function (event) {
-            if (event.key === 'Escape') menus.forEach(function (details) { details.open = false; });
-        });
-        window.addEventListener('scroll', function () {
-            menus.forEach(function (details) { if (details.open) positionMenu(details); });
-        }, true);
-        window.addEventListener('resize', function () {
-            menus.forEach(function (details) { if (details.open) positionMenu(details); });
-        });
-    });
-    </script>
+
     <main class="shell app-shell">
         <div class="app-page-head"><div>
             <a class="app-breadcrumb" href="/apps/`+strconv.FormatInt(app.ID,10)+`">`+html.EscapeString(app.Name)+`</a>
