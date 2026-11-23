@@ -99,17 +99,5 @@ func appHeader(active string) string {
 			<form method="post" action="/panel/close" onsubmit="return confirm('Stop and disable the panel service? To reopen it, use SSH: sudo systemctl start open-go-panel.service')"><button class="secondary compact-action" type="submit" title="Stop the panel service and close its port">Close panel</button></form>
 			<form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
 		</div>
-	</header></div></div>
-	<script>
-	(function(){
-		if (!window.matchMedia('(max-width:1050px)').matches) return;
-		const nav=document.querySelector('.nav');
-		if (!nav) return;
-		for (const group of nav.querySelectorAll('details.current')) group.open=false;
-		document.addEventListener('click',function(event){
-			if (nav.contains(event.target)) return;
-			for (const group of nav.querySelectorAll('details[open]')) group.open=false;
-		});
-	})();
-	</script>`
+	</header></div></div>`
 }
