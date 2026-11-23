@@ -20,7 +20,7 @@ func TestFilePermissionsAndPublicDefaults(t *testing.T) {
     publicFile := filepath.Join(root, "public", "picture.png")
     info, err := os.Stat(publicFile)
     if err != nil { t.Fatal(err) }
-    if info.Mode().Perm() != 0644 { t.Fatalf("public asset mode=%04o, want 0644", info.Mode().Perm()) }
+    if info.Mode().Perm() != 0640 { t.Fatalf("public asset mode=%04o, want 0640 before ACL grant", info.Mode().Perm()) }
     if err := files.Save("", "secrets.env", "secret", true); err != nil { t.Fatal(err) }
     privateInfo, err := os.Stat(filepath.Join(root, "secrets.env"))
     if err != nil { t.Fatal(err) }
