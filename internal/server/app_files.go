@@ -6,7 +6,6 @@ import (
     "time"
     "fmt"
     "html"
-    "io"
     "mime"
     "net/http"
     "mime/multipart"
