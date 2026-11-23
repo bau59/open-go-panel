@@ -1020,6 +1020,10 @@ func appLiveLogsPage(app panelapp.App) string {
 	<script>
 		const box = document.getElementById('logbox');
 		const source = new EventSource('/apps/` + fmt.Sprintf("%d", app.ID) + `/logs/stream');
+		document.addEventListener('htmx:beforeSwap', (event) => {
+			if (event.detail.target === document.body) source.close();
+		}, {once:true});
+		window.addEventListener('pagehide', () => source.close(), {once:true});
 		source.onmessage = (event) => {
 			const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 32;
 			if (box.textContent && !box.textContent.endsWith('\n')) box.textContent += '\n';
@@ -1376,10 +1380,16 @@ func appResourcesScript() string {
 		};
 		refresh();
 		const timer = setInterval(refresh, 5000);
-		document.addEventListener('visibilitychange', () => {
-			if (!document.hidden) refresh();
-		});
-		window.addEventListener('pagehide', () => clearInterval(timer), {once:true});
+		const onVisible = () => { if (!document.hidden) refresh(); };
+		document.addEventListener('visibilitychange', onVisible);
+		const cleanup = () => {
+			clearInterval(timer);
+			document.removeEventListener('visibilitychange', onVisible);
+			document.removeEventListener('htmx:beforeSwap', onNavigate);
+		};
+		const onNavigate = (event) => { if (event.detail.target === document.body) cleanup(); };
+		document.addEventListener('htmx:beforeSwap', onNavigate);
+		window.addEventListener('pagehide', cleanup, {once:true});
 	})();
 	</script>`
 }
