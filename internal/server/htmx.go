@@ -51,7 +51,6 @@ func htmxNavigation(next http.Handler) http.Handler {
 					payload, err := json.Marshal(map[string]string{
 						"path": location,
 						"target": "body",
-						"select": "body",
 						"swap": "innerHTML",
 					})
 					if err != nil {
@@ -128,7 +127,7 @@ func htmxPage(body string) string {
 		return body
 	}
 	const old = "<body>"
-	const enhanced = `<body hx-boost="true" hx-target="body" hx-select="body" hx-swap="innerHTML" hx-history="false">`
+	const enhanced = `<body hx-boost="true" hx-target="body" hx-swap="innerHTML" hx-history="false">`
 	body = strings.Replace(body, old, enhanced, 1)
 	body = panelAnchorTag.ReplaceAllStringFunc(body, func(tag string) string {
 		if strings.Contains(strings.ToLower(tag), "hx-boost=") {
