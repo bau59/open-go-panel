@@ -568,7 +568,8 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                     %s<label class="fileman-tool-label" for="fileman-upload-file">Upload file <span>Max 1 GiB</span></label>
                     <div class="fileman-control-row">
                         <input type="hidden" name="client_size" value="">
-                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required onchange="this.form.elements.client_size.value = this.files.length ? this.files[0].size : ''">
+                        <input type="hidden" name="client_sizes" value="">
+                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required multiple onchange="this.form.elements.client_size.value = this.files.length ? this.files[0].size : ''; this.form.elements.client_sizes.value = Array.from(this.files).map(function(f){return f.size}).join(',')">
                         <button class="button" type="submit">Upload</button>
                     </div>
                 </form>
