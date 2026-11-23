@@ -53,8 +53,37 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         }
     })))
 
+    // Only raster images are displayed inline. SVG is a download to prevent
+    // active same-origin content in the administrator's browser.
+    mux.Handle("GET /apps/{id}/files/preview", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        _, files, ok := openAppFiles(w, r, cfg)
+        if !ok { return }
+        name, folder := r.URL.Query().Get("name"), r.URL.Query().Get("dir")
+        contentType := ""
+        switch strings.ToLower(path.Ext(name)) {
+        case ".png": contentType = "image/png"
+        case ".jpg", ".jpeg": contentType = "image/jpeg"
+        case ".gif": contentType = "image/gif"
+        case ".webp": contentType = "image/webp"
+        default:
+            http.Error(w, "preview supports PNG, JPEG, GIF and WebP", http.StatusBadRequest)
+            return
+        }
+        size, err := files.FileSize(folder, name)
+        if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
+        w.Header().Set("Content-Type", contentType)
+        w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": name}))
+        w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+        w.Header().Set("Cache-Control", "private, no-store")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+        if err := files.Download(folder, name, w); err != nil {
+            cfg.Logger.Warn("app image preview interrupted", "err", err)
+        }
+    })))
+
     mux.Handle("POST /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if action := r.FormValue("action"); action == "extract" || action == "move_contents" || action == "bulk_move" || action == "bulk_delete" {
+        if action := r.FormValue("action"); action == "extract" || action == "move_contents" || action == "bulk_move" || action == "bulk_delete" || action == "archive" {
             // Archive extraction can write tens of thousands of PHP files.
             // The panel's normal 30s HTTP write deadline is far too short;
             // extend only this operation without changing other requests.
@@ -95,6 +124,12 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             }
         case "move":
             err = files.Move(folder, name, r.FormValue("destination"))
+        case "chmod":
+            err = files.Chmod(folder, name, r.FormValue("mode"))
+            if err == nil { notice = "Permissions updated" }
+        case "archive":
+            count, err = files.Archive(folder, r.PostForm["selected"], r.FormValue("archive_name"))
+            if err == nil { notice = fmt.Sprintf("Created ZIP archive with %d entries", count) }
         case "bulk_move":
             count, err = files.MoveMany(folder, r.PostForm["selected"], r.FormValue("destination"))
             if err == nil { notice = fmt.Sprintf("Moved %d selected items", count) }
