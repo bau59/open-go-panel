@@ -105,6 +105,10 @@ func switchPHPAppVersion(ctx context.Context, cfg Config, app panelapp.App, vers
         return err
     }
 
+    if err := cfg.Apps.RefreshCronRunners(ctx, app.ID); err != nil {
+        return fmt.Errorf("PHP runtime switched but scheduled tasks could not be refreshed: %w", err)
+    }
+
     // Stop only the runtime that is no longer selected.
     cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
     defer cancel()

@@ -841,6 +841,10 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("app %d not found", id)
 	}
 
+	if err := m.deleteCronForApp(ctx, id); err != nil {
+		return fmt.Errorf("remove scheduled tasks: %w", err)
+	}
+
 	if app.Type == "php" {
 		if app.Service.PHPVersion == phpfpm.LegacyVersion {
 			if err := phpfpm.RemoveLegacy(ctx, id); err != nil { return err }
