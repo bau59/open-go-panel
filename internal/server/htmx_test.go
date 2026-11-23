@@ -105,3 +105,30 @@ func TestHTMXDoesNotChangeUploadErrors(t *testing.T) {
 		}
 	}
 }
+
+
+func TestHTMXPreservesSensitiveNativeLinksAndForms(t *testing.T) {
+	html := "<body>" + appHeader("overview") +
+		"<a href=\"/apps/1/files/download?name=app.zip\">Download</a>" +
+		"<a href=\"/terminal\">Terminal</a>" +
+		"<a href=\"/apps\">Applications</a>" +
+		"<a href=\"/apps\" download>Save</a>" +
+		"<form method=\"post\" action=\"/logout\"><button>Logout</button></form>" +
+		"<form method=\"post\" enctype=\"multipart/form-data\" action=\"/apps/1/files\"><button>Upload</button></form>" +
+		"</body>"
+	result := htmxPage(html)
+	for _, required := range []string{
+		"href=\"/apps/1/files/download?name=app.zip\" hx-boost=\"false\"",
+		"href=\"/terminal\" hx-boost=\"false\"",
+		"href=\"/apps\" download hx-boost=\"false\"",
+		"action=\"/logout\" hx-boost=\"false\"",
+		"action=\"/apps/1/files\" hx-boost=\"false\"",
+	} {
+		if !strings.Contains(result, required) {
+			t.Errorf("native interaction was boosted: %q", required)
+		}
+	}
+	if strings.Contains(result, "href=\"/apps\" hx-boost=\"false\"") {
+		t.Fatal("normal app navigation must remain boosted")
+	}
+}
