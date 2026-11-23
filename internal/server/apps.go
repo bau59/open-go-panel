@@ -1162,7 +1162,7 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 		if status.Running {
 			state = `<div class="software-task"><span class="status-badge warn">building</span><div><strong>` +
 				html.EscapeString(status.Step) + `</strong><p class="note">The panel must stay running until promotion finishes.</p></div></div>
-				<script>setTimeout(() => location.reload(), 4000)</script>`
+				<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',select:'body',swap:'innerHTML'});}else{location.reload();}},4000);})()</script>`
 		} else if status.Error != "" {
 			state = `<div class="alert">Production build failed: ` + html.EscapeString(status.Error) + `</div>`
 		} else {
