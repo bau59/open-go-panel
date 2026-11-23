@@ -170,18 +170,7 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 			</div>
 		</div>
 		` + alert + running + `
-		<style>
-		.php-extensions{margin-top:16px;padding-top:15px;border-top:1px solid var(--border)}
-		.php-extensions>summary{display:inline-flex;align-items:center;min-height:38px;padding:0 12px;font-size:12px;font-weight:700}
-		.php-extensions>.note{margin:12px 0;line-height:1.5}
-		.php-extension-grid{display:grid;gap:0}
-		.php-extension-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid rgba(146,184,235,.12)}
-		.php-extension-row>div{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
-		.php-extension-row strong{font-size:13px}
-		.php-extension-row .state-text{font-size:11px}
-		.php-extension-row form{flex:none;margin:0}
-		.php-extension-row button{min-height:34px;padding:0 12px;font-size:12px}
-		</style>
+		
 		<section class="software-grid">` + cards.String() + `</section>
 
 		<section class="panel panel-pad" style="margin-top:16px">
