@@ -153,11 +153,11 @@ func registerAppCronRoutes(mux *http.ServeMux, session *sessionStore, cfg Config
 	})))
 }
 
-func cronBlock(cfg Config, app panelapp.App) string {
+func cronBlock(ctx context.Context, cfg Config, app panelapp.App) string {
 	if cfg.Apps == nil {
 		return ""
 	}
-	jobs, err := cfg.Apps.CronJobs(context.Background(), app.ID)
+	jobs, err := cfg.Apps.CronJobs(ctx, app.ID)
 	if err != nil {
 		return `<section class="panel panel-pad app-card-wide" id="cron-jobs" style="margin-top:16px"><h2>Scheduled tasks</h2><p class="alert">` +
 			html.EscapeString(err.Error()) + `</p></section>`
