@@ -309,3 +309,34 @@ func (m *Manager) CronLogs(ctx context.Context, appID, jobID int64) (string, err
 	}
 	return string(output), nil
 }
+
+
+func (m *Manager) SetCronEnabled(ctx context.Context, appID, jobID int64, enabled bool) error {
+	job, err := m.cronJob(ctx, appID, jobID)
+	if err != nil {
+		return err
+	}
+	_, err = m.SaveCronJob(ctx, appID, jobID, job.Name, job.Schedule, job.Command, enabled)
+	return err
+}
+
+// RefreshCronRunners updates only task commands after switching a PHP app's
+// runtime. Existing timers, their schedules and execution history are preserved.
+func (m *Manager) RefreshCronRunners(ctx context.Context, appID int64) error {
+	app, err := m.Get(appID)
+	if err != nil {
+		return err
+	}
+	jobs, err := m.cronJobsForApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, job := range jobs {
+		if err := atomicCronFile(cronRunnerPath(m.runnerDir, job.ID), cronRunner(app, job), 0700); err != nil {
+			return fmt.Errorf("update scheduled task %d after PHP version switch: %w", job.ID, err)
+		}
+	}
+	return nil
+}
