@@ -203,8 +203,8 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
                 uploadErr := files.Upload(folder, header.Filename, input, header.Size)
                 closeErr := input.Close()
                 if uploadErr != nil { err = uploadErr; break }
-                if closeErr != nil { err = closeErr; break }
                 uploadedNames = append(uploadedNames, header.Filename)
+                if closeErr != nil { err = closeErr; break }
             }
             if err != nil {
                 for i := len(uploadedNames)-1; i >= 0; i-- {
