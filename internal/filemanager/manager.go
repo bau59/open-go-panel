@@ -16,6 +16,7 @@ import (
     "path/filepath"
     "sort"
     "strings"
+    "time"
     "unicode/utf8"
 
     "golang.org/x/sys/unix"
@@ -40,6 +41,7 @@ type Entry struct {
     Symlink bool
     Size int64
     Mode os.FileMode
+    ModifiedAt time.Time
 }
 
 type Manager struct {
@@ -108,6 +110,7 @@ func (m *Manager) List(folder string) ([]Entry, bool, error) {
             Name: item.Name(), Directory: kind == unix.S_IFDIR,
             Symlink: kind == unix.S_IFLNK,
             Size: info.Size, Mode: os.FileMode(info.Mode & 0777),
+            ModifiedAt: time.Unix(info.Mtim.Sec, info.Mtim.Nsec).UTC(),
         })
     }
     sort.Slice(result, func(i, j int) bool {
