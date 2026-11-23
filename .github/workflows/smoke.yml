@@ -159,9 +159,12 @@ jobs:
             -H 'HX-Request: true' -H 'HX-Boosted: true' \
             -b /tmp/ogp-cookies --data-urlencode "ogp_csrf=$CSRF" \
             -d 'enabled=0' "http://127.0.0.1:8443/apps/$APP_ID/cron/$TASK_ID/toggle")"
+          echo "HTMX smoke: POST status=$HX_CODE"
+          grep -iE '^HTTP/|^HX-Location:|^HX-Redirect:' /tmp/ogp-hx-headers || true
+          echo "HTMX smoke: timer enabled state=$(sudo systemctl is-enabled "open-go-panel-cron-$TASK_ID.timer" || true)"
           test "$HX_CODE" = "204"
           grep -qi '^HX-Location:' /tmp/ogp-hx-headers
-          sudo systemctl is-enabled "open-go-panel-cron-$TASK_ID.timer" | grep -qx disabled
+          test "$(sudo systemctl is-enabled "open-go-panel-cron-$TASK_ID.timer")" = "disabled"
           DELETE_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies \
             --data-urlencode "ogp_csrf=$CSRF" "http://127.0.0.1:8443/apps/$APP_ID/cron/$TASK_ID/delete")"
           test "$DELETE_CODE" = "303"
