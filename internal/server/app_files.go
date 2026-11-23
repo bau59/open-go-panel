@@ -469,7 +469,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             </label>
             <button class="secondary" type="submit" name="action" value="bulk_move">Move selected</button>
             <label for="fileman-bulk-archive-name" class="fileman-archive-target">ZIP filename
-                <input id="fileman-bulk-archive-name" name="archive_name" maxlength="255" value="selection.zip" required>
+                <input id="fileman-bulk-archive-name" name="archive_name" maxlength="255" value="selection.zip">
             </label>
             <button class="secondary" type="submit" name="action" value="archive">Compress ZIP</button>
             <button class="danger" type="submit" name="action" value="bulk_delete" onclick="return confirm('Delete all selected files and folders permanently?')">Delete selected</button>
