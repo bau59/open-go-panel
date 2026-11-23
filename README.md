@@ -468,3 +468,30 @@ Release builds are gated by Go tests/vet plus an Ubuntu 24.04 production smoke t
 - richer deployment history;
 - optional file manager;
 - broader real-server integration coverage for MySQL/PostgreSQL/CrowdSec/Docker.
+
+
+## Application scheduled tasks (cron)
+
+Open an application and expand **Scheduled tasks**. Each application may have
+multiple jobs with a name, command, five-field cron schedule and enable switch.
+Presets such as `@hourly`, `@daily`, `@weekly` and `@monthly` are supported.
+Examples:
+
+- `*/5 * * * *` — every five minutes;
+- `0 3 * * *` — every day at 03:00 server-local time;
+- `0 9 * * 1-5` — weekdays at 09:00.
+
+The panel translates cron syntax (including cron's day-of-month/weekday OR
+semantics) into a managed systemd `.timer` and `.service` for each job. Timers
+continue working while the panel is closed and after reboot. Jobs of the same
+ID do not overlap. There is no Go polling loop, no crontab modification and no
+missed-run catch-up after downtime (`Persistent=false`). Jobs time out after
+15 minutes; use the page's **Run now** and **Logs** actions for inspection.
+Each task runs in its application's root directory with the application's
+Linux user and inherited managed service environment where available.
+Disabled jobs can still be run manually. Deleting an app removes its timers.
+
+PHP 7.4 jobs run using `docker exec` inside the app's *existing* isolated PHP
+container; the runner first checks the panel-specific Docker labels. PHP 8.x
+and other app types execute as the managed Linux user on the host. Switching
+the PHP runtime refreshes scheduled command runners.
