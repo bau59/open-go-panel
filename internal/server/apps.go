@@ -958,6 +958,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		</div>
 
 		` + serviceBlock + `
+		` + cronBlock(cfg, app) + `
 
 		<details class="panel panel-pad advanced-block danger-zone" style="margin-top:16px">
 			<summary class="section-title" style="margin:0;cursor:pointer">
