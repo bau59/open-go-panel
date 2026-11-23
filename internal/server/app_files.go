@@ -236,6 +236,32 @@ type fileBrowser interface {
     ReadText(folder, name string) (string, error)
 }
 
+// fileManagerIcon renders local, inline Lucide-style SVGs. No icon CDN or
+// emoji fallback is required.
+func fileManagerIcon(kind string) string {
+    paths := map[string]string{
+        "folder": `<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
+        "file": `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>`,
+        "image": `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>`,
+        "archive": `<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 2v4m0 3v3m0 3v3m-3 0h6"/>`,
+        "code": `<path d="m8 8-4 4 4 4m8-8 4 4-4 4m-3-11-2 14"/>`,
+        "link": `<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>`,
+    }
+    source, ok := paths[kind]
+    if !ok { source = paths["file"] }
+    return `<svg class="fileman-icon fileman-icon-` + kind + `" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` + source + `</svg>`
+}
+
+func fileManagerSize(size int64) string {
+    if size < 1024 { return fmt.Sprintf("%d B", size) }
+    value := float64(size)
+    for _, unit := range []string{"KiB", "MiB", "GiB", "TiB"} {
+        value /= 1024
+        if value < 1024 { return fmt.Sprintf("%.1f %s", value, unit) }
+    }
+    return fmt.Sprintf("%.1f PiB", value/1024)
+}
+
 func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName string, create bool, message, notice string, draft ...string) (string, error) {
     items, limited, err := files.List(folder)
     if err != nil { return "", err }
@@ -297,30 +323,50 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         if folder != "" && folder != "." {
             parent := path.Dir(folder)
             if parent == "." { parent = "" }
-            rows.WriteString(`<tr><td></td><td><a href="`+appFilesURL(app.ID, parent)+`">📁 ..</a></td><td>Parent folder</td><td>—</td><td></td></tr>`)
+            rows.WriteString(`<tr class="fileman-parent"><td></td><td><a class="fileman-entry" href="`+appFilesURL(app.ID, parent)+`">`+fileManagerIcon("folder")+`<span>..</span></a></td><td>Parent folder</td><td>—</td><td>—</td><td></td></tr>`)
         }
         for _, item := range items {
             name := html.EscapeString(item.Name)
-            entry := `<strong>`+name+`</strong>`
             kind := "File"
-            size := fmt.Sprintf("%d B", item.Size)
+            size := fileManagerSize(item.Size)
+            mode := fmt.Sprintf("%04o", item.Mode.Perm())
+            icon := "file"
             if item.Directory {
                 kind = "Directory"
                 size = "—"
-                next := item.Name
-                if folder != "" && folder != "." { next = folder + "/" + item.Name }
-                entry = `<a href="`+appFilesURL(app.ID, next)+`">📁 `+name+`</a>`
+                icon = "folder"
             } else if item.Symlink {
                 kind = "Symlink (not followed)"
                 size = "—"
-                entry = `🔗 `+name
+                mode = "—"
+                icon = "link"
+            } else {
+                lower := strings.ToLower(item.Name)
+                switch {
+                case strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+                    icon = "archive"
+                case strings.HasSuffix(lower, ".png"), strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"), strings.HasSuffix(lower, ".gif"), strings.HasSuffix(lower, ".webp"), strings.HasSuffix(lower, ".svg"):
+                    icon = "image"
+                case strings.HasSuffix(lower, ".go"), strings.HasSuffix(lower, ".js"), strings.HasSuffix(lower, ".ts"), strings.HasSuffix(lower, ".html"), strings.HasSuffix(lower, ".css"), strings.HasSuffix(lower, ".json"), strings.HasSuffix(lower, ".php"), strings.HasSuffix(lower, ".yaml"), strings.HasSuffix(lower, ".yml"), strings.HasSuffix(lower, ".sh"):
+                    icon = "code"
+                }
+            }
+            entry := `<span class="fileman-entry">`+fileManagerIcon(icon)+`<strong>`+name+`</strong></span>`
+            if item.Directory {
+                next := item.Name
+                if folder != "" && folder != "." { next = folder + "/" + item.Name }
+                entry = `<a class="fileman-entry" href="`+appFilesURL(app.ID, next)+`">`+fileManagerIcon(icon)+`<strong>`+name+`</strong></a>`
             }
             var actions strings.Builder
             if !item.Directory && !item.Symlink {
                 query := url.Values{}
                 query.Set("dir", folder)
                 query.Set("name", item.Name)
-                actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`/download?`+html.EscapeString(query.Encode())+`">Download</a>`)
+                actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`/download?`+html.EscapeString(query.Encode())+`" hx-boost="false">Download</a>`)
+                lower := strings.ToLower(item.Name)
+                if strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") || strings.HasSuffix(lower, ".webp") {
+                    actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`/preview?`+html.EscapeString(query.Encode())+`" target="_blank" rel="noopener" hx-boost="false">Preview</a>`)
+                }
                 query.Del("name")
                 query.Set("edit", item.Name)
                 actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
@@ -328,6 +374,11 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
                     actions.WriteString(`<form method="post" action="`+actionURL+`">`+fileHidden("extract", folder, item.Name)+`<button class="secondary compact-action" onclick="return confirm('Extract this archive here? Existing files will not be overwritten.')">Extract</button></form>`)
                 }
+            }
+            if !item.Symlink {
+                archiveName := item.Name + ".zip"
+                actions.WriteString(`<form method="post" action="`+actionURL+`" class="fileman-archive-action">`+fileHidden("archive", folder, "")+
+                    `<input type="hidden" name="selected" value="`+name+`"><input type="hidden" name="archive_name" value="`+html.EscapeString(archiveName)+`"><button class="secondary compact-action" type="submit" title="Compress as ZIP">ZIP</button></form>`)
             }
             actions.WriteString(`<details class="fileman-more"><summary class="secondary compact-action">More</summary>
                 <div class="fileman-popover">
@@ -342,6 +393,19 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                     <label>Copy to</label><input name="destination" required placeholder="folder/copy-name">
                     <button class="secondary compact-action">Copy</button></form>`)
             }
+            if !item.Symlink {
+                modes := []string{"0600", "0640", "0644", "0700", "0750", "0755"}
+                if item.Directory { modes = []string{"0700", "0750", "0755"} }
+                var selectModes strings.Builder
+                for _, value := range modes {
+                    selected := ""
+                    if value == mode { selected = " selected" }
+                    fmt.Fprintf(&selectModes, `<option value="%s"%s>%s</option>`, value, selected, value)
+                }
+                actions.WriteString(`<form method="post" action="`+actionURL+`">`+
+                    fileHidden("chmod", folder, item.Name)+
+                    `<label>Permissions (octal)</label><div class="fileman-mode-row"><select name="mode" aria-label="File permissions">`+selectModes.String()+`</select><button class="secondary compact-action">Apply</button></div></form>`)
+            }
             if item.Directory {
                 actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Move all contents of this folder here? Existing names will not be replaced.')">
                     `+fileHidden("move_contents", folder, item.Name)+`
@@ -349,10 +413,10 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             }
             actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Delete this item permanently?')">
                 `+fileHidden("delete", folder, item.Name)+`<button class="danger compact-action">Delete</button></form></div></details>`)
-            fmt.Fprintf(&rows, `<tr><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td>%s</td><td><div class="actions fileman-actions">%s</div></td></tr>`,
-                name, name, entry, html.EscapeString(kind), html.EscapeString(size), actions.String())
+            fmt.Fprintf(&rows, `<tr class="fileman-row"><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td class="fileman-size">%s</td><td><code class="fileman-mode">%s</code></td><td><div class="actions fileman-actions">%s</div></td></tr>`,
+                name, name, entry, html.EscapeString(kind), html.EscapeString(size), html.EscapeString(mode), actions.String())
         }
-        if len(items) == 0 { rows.WriteString(`<tr><td colspan="5" class="empty">This folder is empty.</td></tr>`) }
+        if len(items) == 0 { rows.WriteString(`<tr><td colspan="6" class="empty">This folder is empty.</td></tr>`) }
         if limited { alert += `<div class="alert">Only the first 400 entries are shown and selectable. "Move all contents up" moves the entire folder, including entries not displayed.</div>` }
         parentDestination := ""
         if folder != "" && folder != "." {
