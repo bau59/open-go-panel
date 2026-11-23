@@ -1018,6 +1018,7 @@ func appLiveLogsPage(app panelapp.App) string {
 		<pre class="logbox" id="logbox"></pre>
 	</main>
 	<script>
+	(() => {
 		const box = document.getElementById('logbox');
 		const source = new EventSource('/apps/` + fmt.Sprintf("%d", app.ID) + `/logs/stream');
 		document.addEventListener('htmx:beforeSwap', (event) => {
@@ -1030,6 +1031,7 @@ func appLiveLogsPage(app panelapp.App) string {
 			box.textContent += event.data + '\n';
 			if (stick) box.scrollTop = box.scrollHeight;
 		};
+	})();
 	</script>
 </body></html>`
 }
