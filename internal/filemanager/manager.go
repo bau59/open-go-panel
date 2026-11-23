@@ -179,9 +179,6 @@ func (m *Manager) write(folder, name string, source io.Reader, limit int64, over
     written, copyErr := io.Copy(output, io.LimitReader(source, limit+1))
     if copyErr == nil && written > limit { copyErr = fmt.Errorf("file exceeds %d MiB limit", limit>>20) }
     mode := uint32(0640)
-    // Public web assets use conventional readable file permissions. Private
-    // files outside public/ retain the existing 0640 default.
-    if folder == "public" || strings.HasPrefix(folder, "public/") { mode = 0644 }
     if overwrite { mode = uint32(stat.Mode & 0777) }
     if copyErr == nil { copyErr = unix.Fchmod(temporaryFD, mode) }
     if copyErr == nil { copyErr = output.Sync() }
