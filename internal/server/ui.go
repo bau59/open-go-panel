@@ -12,7 +12,10 @@ func pageHead(title string) string {
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>` + html.EscapeString(title) + ` · Open Go Panel</title>
-	<style>` + baseStyles + `</style>` + tablePagerScript + `
+	<meta name="htmx-config" content='{"historyCacheSize":0,"refreshOnHistoryMiss":true,"selfRequestsOnly":true}'>
+	<link rel="stylesheet" href="/assets/panel.css">
+	<script defer src="/assets/htmx.min.js"></script>
+	<script defer src="/assets/panel.js"></script>
 </head>`
 }
 
