@@ -339,23 +339,6 @@ func fileManagerIcon(kind string) string {
     return `<svg class="fileman-icon fileman-icon-` + kind + `" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` + source + `</svg>`
 }
 
-func fileManagerEditable(name string, size int64) bool {
-    if size > filemanager.MaxEditBytes { return false }
-    switch strings.ToLower(path.Ext(name)) {
-    case ".go", ".js", ".ts", ".html", ".htm", ".css", ".json", ".php", ".yaml", ".yml",
-        ".txt", ".md", ".xml", ".svg", ".sql", ".sh", ".ini", ".toml", ".csv", ".env",
-        ".conf", ".log", ".py", ".rb", ".gitignore", ".dockerignore":
-        return true
-    }
-    if !strings.Contains(name, ".") {
-        switch strings.ToLower(name) {
-        case "dockerfile", "makefile", "caddyfile", "readme", "license":
-            return true
-        }
-    }
-    return strings.HasPrefix(name, ".env.")
-}
-
 func fileManagerSize(size int64) string {
     if size < 1024 { return fmt.Sprintf("%d B", size) }
     value := float64(size)
@@ -473,9 +456,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 }
                 query.Del("name")
                 query.Set("edit", item.Name)
-                if fileManagerEditable(item.Name, item.Size) {
-                    actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
-                }
+                actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
                 if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
                     actions.WriteString(`<form method="post" action="`+actionURL+`">`+fileHidden("extract", folder, item.Name)+`<button class="secondary compact-action" onclick="return confirm('Extract this archive here? Existing files will not be overwritten.')">Extract</button></form>`)
                 }
