@@ -472,7 +472,7 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 }
                 actions.WriteString(`<form method="post" action="`+actionURL+`">`+
                     fileHidden("chmod", folder, item.Name)+
-                    `<label>Permissions (octal)</label><div class="fileman-mode-row"><select name="mode" aria-label="File permissions">`+selectModes.String()+`</select><button class="secondary compact-action">Apply</button></div></form>`)
+                    `<label>Permissions (octal)</label><div class="fileman-mode-row"><select name="mode" aria-label="File permissions" required>`+selectModes.String()+`</select><button class="secondary compact-action">Apply</button></div></form>`)
             }
             if item.Directory {
                 actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Move all contents of this folder here? Existing names will not be replaced.')">
