@@ -74,6 +74,7 @@ func New(cfg Config) http.Handler {
 	limiter := &loginLimiter{attempts: make(map[string]loginAttempt)}
 
 	mux := http.NewServeMux()
+	registerUIAssets(mux)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -435,23 +436,7 @@ func loginPage(message string) string {
 		messageHTML = `<div class="alert">` + html.EscapeString(message) + `</div>`
 	}
 
-	return `<!doctype html>
-<html lang="en">
-<head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Login · Open Go Panel</title>
-	<style>` + baseStyles + `
-		.login-screen{min-height:100vh;display:grid;place-items:center;padding:24px}
-		.login-card{width:min(430px,100%);padding:32px;border:1px solid rgba(172,211,255,.3);border-radius:24px;background:linear-gradient(145deg,rgba(34,64,104,.92),rgba(15,31,57,.96));box-shadow:0 30px 80px rgba(2,10,28,.4),inset 0 1px 0 rgba(221,240,255,.1);backdrop-filter:blur(18px)}
-		.login-brand{display:flex;align-items:center;gap:11px;margin-bottom:26px;font-weight:780}
-		.login-card h1{font-size:29px}
-		.login-card .sub{margin-bottom:24px}
-		.login-card label{margin-top:15px}
-		.login-card .button{width:100%;margin-top:20px}
-	</style>
-</head>
-<body>
+	return pageHead("Login") + `<body>
 	<div class="login-screen">
 		<main class="login-card">
 			<div class="login-brand"><span class="brand-mark">OG</span><span>Open Go Panel</span></div>
