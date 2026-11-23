@@ -176,6 +176,9 @@ func (m *Manager) write(folder, name string, source io.Reader, limit int64, over
     written, copyErr := io.Copy(output, io.LimitReader(source, limit+1))
     if copyErr == nil && written > limit { copyErr = fmt.Errorf("file exceeds %d MiB limit", limit>>20) }
     mode := uint32(0640)
+    // Public web assets use conventional readable file permissions. Private
+    // files outside public/ retain the existing 0640 default.
+    if folder == "public" || strings.HasPrefix(folder, "public/") { mode = 0644 }
     if overwrite { mode = uint32(stat.Mode & 0777) }
     if copyErr == nil { copyErr = unix.Fchmod(temporaryFD, mode) }
     if copyErr == nil { copyErr = output.Sync() }
@@ -208,6 +211,33 @@ func (m *Manager) Mkdir(folder, name string) error {
     if err != nil { return err }
     defer unix.Close(fd)
     return unix.Mkdirat(fd, name, 0750)
+}
+
+// Chmod changes only the selected entry. It never follows a symlink,
+// touches another app, or enables world-writable / privileged modes.
+func (m *Manager) Chmod(folder, name string, mode os.FileMode) error {
+    if !validName(name) { return errors.New("invalid entry name") }
+    switch mode {
+    case 0600, 0640, 0644, 0700, 0750, 0755:
+    default:
+        return errors.New("unsupported permissions; use 0600, 0640, 0644, 0700, 0750 or 0755")
+    }
+    fd, err := m.directory(folder)
+    if err != nil { return err }
+    defer unix.Close(fd)
+    entryFD, err := unix.Openat2(fd, name, &unix.OpenHow{
+        Flags: uint64(unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK),
+        Resolve: unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS|unix.RESOLVE_NO_XDEV,
+    })
+    if err != nil { return fmt.Errorf("open entry for chmod: %w", err) }
+    defer unix.Close(entryFD)
+    var info unix.Stat_t
+    if err := unix.Fstat(entryFD, &info); err != nil { return err }
+    kind := info.Mode & unix.S_IFMT
+    if kind != unix.S_IFREG && kind != unix.S_IFDIR { return errors.New("only regular files or directories support chmod") }
+    if kind == unix.S_IFDIR && mode&0100 == 0 { return errors.New("directories require owner traversal permission") }
+    if err := unix.Fchmod(entryFD, uint32(mode)); err != nil { return fmt.Errorf("change permissions: %w", err) }
+    return nil
 }
 
 func splitTarget(destination string) (string, string, error) {
