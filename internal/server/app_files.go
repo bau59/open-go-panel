@@ -179,6 +179,47 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         default:
             err = fmt.Errorf("unsupported file operation")
         }
+
+        // File-manager writes and moves can bypass a directory's default ACL,
+        // especially when public/ is created after the domain was attached.
+        // Refresh only the affected served path. PHP remains untouched.
+        if err == nil && cfg.Caddy != nil && app.Type != "php" {
+            rel := ""
+            syncAccess := false
+            switch action {
+            case "upload":
+                // Use the actual uploaded filename rather than the empty
+                // "name" field from the multipart form.
+                if header != nil { rel = path.Join(folder, header.Filename); syncAccess = true }
+            case "create", "save", "mkdir", "chmod":
+                if action != "chmod" || (r.FormValue("mode") != "0600" && r.FormValue("mode") != "0700") {
+                    rel = path.Join(folder, name)
+                    syncAccess = true
+                }
+            case "move", "copy":
+                rel = r.FormValue("destination")
+                syncAccess = true
+            case "archive":
+                rel = path.Join(folder, r.FormValue("archive_name"))
+                syncAccess = true
+            case "bulk_move":
+                rel = r.FormValue("destination")
+                syncAccess = true
+            case "move_contents":
+                rel = folder
+                if name == "" { rel = path.Dir(folder) }
+                syncAccess = true
+            case "extract":
+                rel = folder
+                if rel == "" && app.Type != "static" { rel = "public" }
+                syncAccess = true
+            }
+            if syncAccess {
+                if accessErr := cfg.Caddy.EnsureManagedFileAccess(r.Context(), app.ID, app.Root, rel); accessErr != nil {
+                    err = fmt.Errorf("file operation completed, but Caddy read-access ACL failed: %w", accessErr)
+                }
+            }
+        }
         if err != nil {
             edit, newFile := "", false
             if action == "save" { edit = name }
