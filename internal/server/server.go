@@ -239,9 +239,9 @@ func New(cfg Config) http.Handler {
 	}
 
 	if cfg.State != nil {
-		return csrfProtection(store, auditMutations(cfg.State, mux))
+		return htmxNavigation(csrfProtection(store, auditMutations(cfg.State, mux)))
 	}
-	return csrfProtection(store, mux)
+	return htmxNavigation(csrfProtection(store, mux))
 }
 
 
@@ -415,7 +415,7 @@ func secureEqual(got, want string) bool {
 }
 
 func writeHTML(w http.ResponseWriter, logger *slog.Logger, status int, body string) {
-	body = injectCSRFForms(body, csrfTokenForWriter(w))
+	body = injectCSRFForms(htmxPage(body), csrfTokenForWriter(w))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
