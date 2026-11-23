@@ -33,7 +33,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app), cronBlock(cfg, app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -958,7 +958,6 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		</div>
 
 		` + serviceBlock + `
-		` + cronBlock(cfg, app) + `
 
 		<details class="panel panel-pad advanced-block danger-zone" style="margin-top:16px">
 			<summary class="section-title" style="margin:0;cursor:pointer">
