@@ -103,7 +103,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         action := r.FormValue("action")
         var err error
         count := 0
-        uploadedName := ""
+        uploadedNames := []string{}
         redirectFolder := folder
         notice := action + " completed"
         switch action {
@@ -153,30 +153,69 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         case "extract":
             _, err = files.Extract(folder, name)
         case "upload":
-            var input io.ReadCloser
-            var header *multipart.FileHeader
-            input, header, err = r.FormFile("file")
-            if err == nil {
-                uploadedName = header.Filename
-                defer input.Close()
-                if header.Size > filemanager.MaxUploadBytes {
-                    err = fmt.Errorf("upload exceeds 1 GiB limit")
-                } else {
-                    // Browser-selected file size is recorded before transfer.
-                    // A mismatch means the HTTP multipart body is incomplete.
-                    clientSize := r.FormValue("client_size")
-                    if clientSize != "" {
-                        selected, sizeErr := strconv.ParseInt(clientSize, 10, 64)
-                        if sizeErr != nil || selected != header.Size {
-                            err = fmt.Errorf("incomplete upload: browser selected %s bytes, server received %d", clientSize, header.Size)
-                        }
-                    }
-                    if err == nil {
-                        // SHA-256 is verified across the helper pipe against
-                        // the saved file read back from disk.
-                        err = files.Upload(folder, header.Filename, input, header.Size)
+            // Parse all selected files while preserving the original single
+            // file form and SHA-256 verification. Batch failures roll back
+            // only files successfully created by this request.
+            if r.MultipartForm == nil {
+                err = errors.New("missing multipart file upload")
+                break
+            }
+            headers := r.MultipartForm.File["file"]
+            if len(headers) == 0 || len(headers) > 20 {
+                err = errors.New("select between 1 and 20 files")
+                break
+            }
+            sizeList := strings.TrimSpace(r.FormValue("client_sizes"))
+            var selectedSizes []string
+            if sizeList != "" { selectedSizes = strings.Split(sizeList, ",") }
+            if len(selectedSizes) > 0 && len(selectedSizes) != len(headers) {
+                err = errors.New("incomplete upload: selected file count changed")
+                break
+            }
+            seen := make(map[string]bool, len(headers))
+            var total int64
+            for i, header := range headers {
+                if seen[header.Filename] {
+                    err = fmt.Errorf("duplicate upload filename %q", header.Filename)
+                    break
+                }
+                seen[header.Filename] = true
+                if header.Size < 0 || header.Size > filemanager.MaxUploadBytes || total > filemanager.MaxUploadBytes-header.Size {
+                    err = errors.New("batch upload exceeds the 1 GiB limit")
+                    break
+                }
+                total += header.Size
+                expected := ""
+                if len(selectedSizes) > 0 { expected = selectedSizes[i] }
+                if len(headers) == 1 && expected == "" { expected = r.FormValue("client_size") }
+                if expected != "" {
+                    selected, parseErr := strconv.ParseInt(expected, 10, 64)
+                    if parseErr != nil || selected != header.Size {
+                        err = fmt.Errorf("incomplete upload: browser selected %s bytes, server received %d", expected, header.Size)
+                        break
                     }
                 }
+            }
+            if err != nil { break }
+            for _, header := range headers {
+                var input multipart.File
+                input, err = header.Open()
+                if err != nil { break }
+                uploadErr := files.Upload(folder, header.Filename, input, header.Size)
+                closeErr := input.Close()
+                if uploadErr != nil { err = uploadErr; break }
+                if closeErr != nil { err = closeErr; break }
+                uploadedNames = append(uploadedNames, header.Filename)
+            }
+            if err != nil {
+                for i := len(uploadedNames)-1; i >= 0; i-- {
+                    if rollbackErr := files.Delete(folder, uploadedNames[i]); rollbackErr != nil {
+                        err = fmt.Errorf("%w; rollback %q failed: %v", err, uploadedNames[i], rollbackErr)
+                    }
+                }
+                uploadedNames = nil
+            } else {
+                notice = fmt.Sprintf("Uploaded %d file(s) · SHA-256 verified", len(uploadedNames))
             }
         default:
             err = fmt.Errorf("unsupported file operation")
@@ -190,9 +229,8 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             syncAccess := false
             switch action {
             case "upload":
-                // Use the actual uploaded filename rather than the empty
-                // "name" field from the multipart form.
-                if uploadedName != "" { rel = path.Join(folder, uploadedName); syncAccess = true }
+                // A batch may include several files. Sync each one below.
+                syncAccess = len(uploadedNames) > 0
             case "create", "save", "mkdir", "chmod":
                 if action != "chmod" || (r.FormValue("mode") != "0600" && r.FormValue("mode") != "0700") {
                     rel = path.Join(folder, name)
@@ -217,8 +255,16 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
                 syncAccess = true
             }
             if syncAccess {
-                if accessErr := cfg.Caddy.EnsureManagedFileAccess(r.Context(), app.ID, app.Root, rel); accessErr != nil {
-                    err = fmt.Errorf("file operation completed, but Caddy read-access ACL failed: %w", accessErr)
+                targets := []string{rel}
+                if action == "upload" {
+                    targets = make([]string, 0, len(uploadedNames))
+                    for _, filename := range uploadedNames { targets = append(targets, path.Join(folder, filename)) }
+                }
+                for _, target := range targets {
+                    if accessErr := cfg.Caddy.EnsureManagedFileAccess(r.Context(), app.ID, app.Root, target); accessErr != nil {
+                        err = fmt.Errorf("file operation completed, but Caddy read-access ACL failed: %w", accessErr)
+                        break
+                    }
                 }
             }
         }
@@ -240,8 +286,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         destination := appFilesURL(app.ID, redirectFolder)
         delimiter := "?"
         if strings.Contains(destination, "?") { delimiter = "&" }
-        if action == "upload" { notice = "Upload complete · SHA-256 verified" }
-        http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(notice), http.StatusSeeOther)
+         http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(notice), http.StatusSeeOther)
         return nil
         })
         if lockErr != nil { http.Error(w, lockErr.Error(), http.StatusRequestTimeout) }
