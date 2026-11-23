@@ -103,6 +103,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         action := r.FormValue("action")
         var err error
         count := 0
+        uploadedName := ""
         redirectFolder := folder
         notice := action + " completed"
         switch action {
@@ -156,6 +157,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             var header *multipart.FileHeader
             input, header, err = r.FormFile("file")
             if err == nil {
+                uploadedName = header.Filename
                 defer input.Close()
                 if header.Size > filemanager.MaxUploadBytes {
                     err = fmt.Errorf("upload exceeds 1 GiB limit")
@@ -190,7 +192,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             case "upload":
                 // Use the actual uploaded filename rather than the empty
                 // "name" field from the multipart form.
-                if header != nil { rel = path.Join(folder, header.Filename); syncAccess = true }
+                if uploadedName != "" { rel = path.Join(folder, uploadedName); syncAccess = true }
             case "create", "save", "mkdir", "chmod":
                 if action != "chmod" || (r.FormValue("mode") != "0600" && r.FormValue("mode") != "0700") {
                     rel = path.Join(folder, name)
