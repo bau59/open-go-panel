@@ -265,11 +265,11 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     refresh := ""
     if installing {
         alert += `<div class="software-task"><span class="status-badge warn">installing</span><div><strong>Docker installation is running</strong><p class="note">The page refreshes automatically.</p></div></div>`
-        refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',select:'body',swap:'innerHTML'});}else{location.reload();}},3000);})()</script>`
+        refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},3000);})()</script>`
     }
 
     if build.Running {
-        refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',select:'body',swap:'innerHTML'});}else{location.reload();}},4000);})()</script>`
+        refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},4000);})()</script>`
     }
 
     if !status.Installed {
