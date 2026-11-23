@@ -279,10 +279,17 @@ jobs:
             echo "Caddy gained directory listing access to app root" >&2
             exit 1
           fi
+          echo "Caddy ACL smoke: private-file and root-listing isolation verified"
           # Default directory ACLs must cover newly created static assets.
           sudo -u ogpsmoke sh -c "printf 'new-asset\n' > '$PROXY_ROOT/public/assets/new.css'"
           sudo -u ogpsmoke chmod 0640 "$PROXY_ROOT/public/assets/new.css"
+          echo "Caddy ACL smoke: default ACL on parent:"
+          sudo getfacl -p "$PROXY_ROOT/public/assets" | grep -E '(user:caddy|mask::)' || true
+          echo "Caddy ACL smoke: ACL on new file:"
+          sudo getfacl -p "$PROXY_ROOT/public/assets/new.css" | grep -E '(user:caddy|mask::)' || true
           sudo -u caddy cat "$PROXY_ROOT/public/assets/new.css" | grep -qx 'new-asset'
+          echo "Caddy ACL smoke: new asset readable"
+          echo "Caddy ACL smoke: stat on old asset $(stat -c '%a' "$PROXY_ROOT/public/assets/app.css")"
           test "$(stat -c '%a' "$PROXY_ROOT/public/assets/app.css")" = "640"
           echo "Caddy ACL smoke: private files inaccessible, inherited ACL verified"
 
