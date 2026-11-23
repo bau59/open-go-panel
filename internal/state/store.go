@@ -137,6 +137,18 @@ CREATE TABLE IF NOT EXISTS deployments (
 	FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS app_cron_jobs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	app_id INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	schedule TEXT NOT NULL,
+	command TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_app_cron_jobs_app_id ON app_cron_jobs(app_id);
+
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
