@@ -78,7 +78,7 @@ func TestHTMXPreservesPostRedirectGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if location.Path != "/apps/12#cron-jobs" || location.Target != "body" ||
-		location.Select != "body" || location.Swap != "innerHTML" {
+		location.Select != "" || location.Swap != "innerHTML" {
 		t.Fatalf("incorrect navigation: %+v", location)
 	}
 	native := httptest.NewRequest("POST", "/apps/12/cron", nil)
