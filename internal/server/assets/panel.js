@@ -204,7 +204,6 @@
   document.addEventListener('htmx:afterSwap', (event) => {
     if (event.detail.target === document.body) {
       initUI(document);
-      scrollTo({top:0,behavior:'instant'});
     } else {
       initUI(event.detail.target);
     }
