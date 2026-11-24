@@ -23,11 +23,16 @@ func TestOffsiteConnectionAndIndependentSchedules(t *testing.T) {
     t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
     if err := manager.SetBackupSchedule(true, 2, 5); err != nil { t.Fatal(err) }
+    if err := manager.SetBackupRemote("legacy:bucket/sql"); err != nil { t.Fatal(err) }
+    if !manager.OffsiteSchedule().Enabled {
+        t.Fatal("legacy automatic off-site uploads were silently disabled")
+    }
     if err := manager.SaveOffsiteConnection(OffsiteConnection{
         Provider: "r2", Destination: "mybucket/sql", Endpoint: "https://abc.r2.cloudflarestorage.com",
         AccessKey: "ACCESS", SecretKey: "SECRET",
     }); err != nil { t.Fatal(err) }
     if got := manager.BackupRemote(); got != "ogpdb:mybucket/sql" { t.Fatalf("remote=%q", got) }
+    if manager.OffsiteSchedule().Enabled { t.Fatal("new managed connection unexpectedly enabled scheduled uploads") }
     raw, err := os.ReadFile(manager.offsiteConfigFile)
     if err != nil { t.Fatal(err) }
     if !strings.Contains(string(raw), "secret_access_key = SECRET") { t.Fatal("secret missing from root-only config") }
