@@ -484,24 +484,31 @@ func (m *Manager) SetBackupSchedule(enabled bool, hourUTC, keep int) error {
 }
 
 func (m *Manager) BackupAll(ctx context.Context, keep int) error {
-	items, err := m.List()
-	if err != nil {
-		return err
-	}
-	var errs []string
-	for _, item := range items {
-		if _, err := m.Backup(ctx, item.ID); err != nil {
-			errs = append(errs, item.Name+": "+err.Error())
-			continue
-		}
-		if err := m.PruneBackups(item.ID, keep); err != nil {
-			errs = append(errs, item.Name+" prune: "+err.Error())
-		}
-	}
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "; "))
-	}
-	return nil
+    items, err := m.List()
+    if err != nil { return err }
+    // A failed database must not force repeated multi-gigabyte dumps of
+    // databases already backed up successfully earlier on the same day.
+    today := time.Now().UTC().Format("2006-01-02")
+    var errs []string
+    for _, item := range items {
+        key := fmt.Sprintf("db.backup_done.%d", item.ID)
+        if last, _, readErr := m.store.Setting(key); readErr == nil && last == today {
+            continue
+        }
+        if _, err := m.Backup(ctx, item.ID); err != nil {
+            errs = append(errs, item.Name+": "+err.Error())
+            continue
+        }
+        if err := m.PruneBackups(item.ID, keep); err != nil {
+            errs = append(errs, item.Name+" prune: "+err.Error())
+            continue
+        }
+        if err := m.store.SetSetting(key, today); err != nil {
+            errs = append(errs, item.Name+" mark completed: "+err.Error())
+        }
+    }
+    if len(errs) > 0 { return errors.New(strings.Join(errs, "; ")) }
+    return nil
 }
 func (m *Manager) RunScheduledBackupIfDue(ctx context.Context, now time.Time) (bool, error) {
 	schedule := m.BackupSchedule()
