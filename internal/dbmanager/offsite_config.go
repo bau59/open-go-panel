@@ -62,7 +62,14 @@ func (m *Manager) OffsiteConnection() OffsiteConnection {
 
 func (m *Manager) OffsiteSchedule() OffsiteSchedule {
     result := OffsiteSchedule{HourUTC: 3}
-    if value, _, _ := m.store.Setting("db.offsite_enabled"); value == "1" { result.Enabled = true }
+    value, exists, _ := m.store.Setting("db.offsite_enabled")
+    result.Enabled = value == "1"
+    if !exists {
+        // Preserve previously configured automatic remote backups on upgrade.
+        // Newly created connections still require explicit schedule opt-in.
+        _, migrated, _ := m.store.Setting("db.offsite_provider")
+        if !migrated && m.BackupRemote() != "" { result.Enabled = true }
+    }
     if value, _, _ := m.store.Setting("db.offsite_hour_utc"); value != "" {
         if hour, err := strconv.Atoi(value); err == nil && hour >= 0 && hour <= 23 {
             result.HourUTC = hour
