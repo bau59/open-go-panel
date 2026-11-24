@@ -6,6 +6,7 @@
   const unsafePath = (path) =>
     path.startsWith('/db-admin') ||
     path === '/terminal' ||
+    path.startsWith('/terminal/background') ||
     path.startsWith('/assets/') ||
     /\/download(?:\/|$)/.test(path) ||
     path === '/backup/panel.json' ||
@@ -34,7 +35,7 @@
     root.querySelectorAll('form').forEach((form) => {
       const path = new URL(form.action, document.baseURI).pathname;
       if (path === '/logout' || path === '/login' || path === '/panel/close' ||
-          form.enctype === 'multipart/form-data' || path.startsWith('/db-admin/') ||
+          form.enctype === 'multipart/form-data' || path.startsWith('/db-admin/') || path.startsWith('/terminal/background/') ||
           path.endsWith('/files') || form.querySelector('input[type="file"]')) {
         form.setAttribute('hx-boost', 'false');
       }
