@@ -521,7 +521,9 @@ func (m *Manager) RunScheduledBackupIfDue(ctx context.Context, now time.Time) (b
 	if last == today {
 		return false, nil
 	}
-	if err := m.BackupAll(ctx, schedule.Keep); err != nil {
+	if err := m.runScheduledTask(ctx, "local", "Scheduled local SQL backups", func(ctx context.Context) error {
+        return m.BackupAll(ctx, schedule.Keep)
+    }); err != nil {
 		return false, err
 	}
 	if _, err := m.store.DB().Exec(`
