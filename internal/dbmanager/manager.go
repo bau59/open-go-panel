@@ -104,6 +104,9 @@ type Manager struct {
 	store           *state.Store
 	legacyStateFile string
 	mysqlConfigFile string
+	offsiteConfigFile string
+	backupTaskMu sync.Mutex
+	backupTask BackupTask
 }
 
 func New(store *state.Store, legacyStateFile string) *Manager {
@@ -111,6 +114,7 @@ func New(store *state.Store, legacyStateFile string) *Manager {
 		store:           store,
 		legacyStateFile: legacyStateFile,
 		mysqlConfigFile: "/etc/mysql/mysql.conf.d/99-open-go-panel.cnf",
+		offsiteConfigFile: "/var/lib/open-go-panel/secrets/db-rclone.conf",
 	}
 }
 
@@ -649,14 +653,7 @@ func (m *Manager) Backup(ctx context.Context, id int64) (Backup, error) {
 		return Backup{}, errOperationInProgress
 	}
 	defer m.operationMu.Unlock()
-	backup, err := m.backupUnlocked(ctx, id)
-	if err != nil {
-		return Backup{}, err
-	}
-	if err := m.UploadBackup(ctx, backup); err != nil {
-		return backup, err
-	}
-	return backup, nil
+	return m.backupUnlocked(ctx, id)
 }
 
 func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) {
@@ -672,7 +669,7 @@ func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) 
 	var cmd *exec.Cmd
 	switch item.Engine {
 	case "mysql":
-		cmd = exec.CommandContext(ctx, "mysqldump", "--protocol=socket", "-uroot", "--single-transaction", "--routines", "--triggers", "--events", item.Name)
+		cmd = exec.CommandContext(ctx, "mysqldump", "--protocol=socket", "-uroot", "--single-transaction", "--quick", "--routines", "--triggers", "--events", item.Name)
 	case "postgres":
 		cmd = exec.CommandContext(ctx, "runuser", "-u", "postgres", "--", "pg_dump", "--clean", "--if-exists", "--no-owner", "--no-privileges", item.Name)
 	default:
