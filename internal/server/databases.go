@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"errors"
 	"html"
 	"net/http"
 	"net/url"
@@ -31,8 +32,15 @@ type databasePageData struct {
 	Backups          map[int64][]dbmanager.Backup
 	Schedule         dbmanager.BackupSchedule
 	BackupRemote     string
+	Offsite          dbmanager.OffsiteConnection
+	OffsiteSchedule  dbmanager.OffsiteSchedule
+	BackupTask       dbmanager.BackupTask
+	LastLocalDate    string
+	LastOffsiteDate  string
+	OffsiteSuccess   string
 	ImportTask       dbmanager.RemoteImportTask
 	Message          string
+    Notice           string
 }
 
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
@@ -137,12 +145,69 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 
+
+	mux.Handle("GET /databases/backups/task", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeHTML(w, cfg.Logger, http.StatusOK, databaseBackupTaskHTML(cfg.Databases.CurrentBackupTask()))
+	})))
+
+	mux.Handle("POST /databases/backups/offsite/connection", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
+		port, err := strconv.Atoi(r.FormValue("port"))
+		if err != nil { port = 22 }
+		conn := dbmanager.OffsiteConnection{
+			Provider: r.FormValue("provider"), Destination: r.FormValue("destination"),
+			Endpoint: r.FormValue("endpoint"), Region: r.FormValue("region"),
+			AccessKey: r.FormValue("access_key"), SecretKey: r.FormValue("secret_key"),
+			Host: r.FormValue("host"), Port: port, User: r.FormValue("user"),
+			KeyFile: r.FormValue("key_file"), KnownHostsFile: r.FormValue("known_hosts_file"),
+		}
+		if err := cfg.Databases.SaveOffsiteConnection(conn); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+		}
+		http.Redirect(w, r, "/databases?notice=External+destination+saved", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/backups/offsite/schedule", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
+		hour, err := strconv.Atoi(r.FormValue("hour_utc"))
+		if err != nil { writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "invalid external upload hour"); return }
+		if err := cfg.Databases.SetOffsiteSchedule(r.FormValue("enabled") == "1", hour); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+		}
+		http.Redirect(w, r, "/databases?notice=External+schedule+saved", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/backups/offsite/test", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := cfg.Databases.StartOffsiteConnectionTest(); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/backups/offsite/run", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := cfg.Databases.StartOffsiteUploadLatest(); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /databases/{id}/backup/export", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 { http.Error(w, "invalid database id", http.StatusBadRequest); return }
+		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
+		if err := cfg.Databases.StartOffsiteUploadOne(id, r.FormValue("path")); err != nil {
+			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+		}
+		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+	})))
+
 	mux.Handle("POST /databases/backups/remote", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Databases.SetBackupRemote(r.FormValue("remote")); err != nil {
+		if err := cfg.Databases.SaveOffsiteConnection(dbmanager.OffsiteConnection{Provider: "existing", Destination: r.FormValue("remote")}); err != nil {
 			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -155,12 +220,11 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			http.Error(w, "invalid database id", http.StatusBadRequest)
 			return
 		}
-		if _, err := cfg.Databases.Backup(r.Context(), id); err != nil {
+		schedule := cfg.Databases.BackupSchedule()
+		if err := cfg.Databases.StartLocalBackup(id, schedule.Keep); err != nil {
 			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
 			return
 		}
-		schedule := cfg.Databases.BackupSchedule()
-		_ = cfg.Databases.PruneBackups(id, schedule.Keep)
 		http.Redirect(w, r, "/databases", http.StatusSeeOther)
 	})))
 
@@ -174,6 +238,9 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			http.Error(w, "cannot extend backup download deadline", http.StatusServiceUnavailable); return
 		}
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filepath.Base(path)+`"`)
 		w.Header().Set("Content-Type", "application/gzip")
@@ -307,8 +374,15 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 		Backups:       make(map[int64][]dbmanager.Backup),
 		Schedule:   cfg.Databases.BackupSchedule(),
 		BackupRemote: cfg.Databases.BackupRemote(),
+		Offsite: cfg.Databases.OffsiteConnection(),
+		OffsiteSchedule: cfg.Databases.OffsiteSchedule(),
+		BackupTask: cfg.Databases.CurrentBackupTask(),
+		LastLocalDate: cfg.Databases.LastBackupDate(),
+		LastOffsiteDate: cfg.Databases.LastOffsiteDate(),
+		OffsiteSuccess: cfg.Databases.OffsiteCompletedAt(),
 		ImportTask: cfg.Databases.ImportTask(),
 		Message:    message,
+        Notice: r.URL.Query().Get("notice"),
 	}
 	data.Items, _ = cfg.Databases.List()
 	data.MySQLConfig, _ = cfg.Databases.MySQLConfig()
@@ -343,6 +417,9 @@ func databasesPage(data databasePageData) string {
 	if data.Message != "" {
 		alert = `<div class="alert">` + html.EscapeString(data.Message) + `</div>`
 	}
+    if data.Notice != "" {
+        alert += `<p class="note db-backup-notice">` + html.EscapeString(data.Notice) + `</p>`
+    }
 
 	stateText := func(ok bool) string {
 		if ok {
@@ -496,6 +573,10 @@ func databasesPage(data databasePageData) string {
 					<div class="db-backup-file"><strong>%s</strong><div class="note">%s</div></div>
 					<div class="actions db-backup-actions">
 						<a class="secondary" href="/databases/%d/backup/download?path=%s">Download</a>
+                        <form method="post" action="/databases/%d/backup/export">
+                            <input type="hidden" name="path" value="%s">
+                            <button class="secondary">Send off-site</button>
+                        </form>
 						<form method="post" action="/databases/%d/restore" onsubmit="return confirm('Restore this backup over the current database?')">
 							<input type="hidden" name="path" value="%s">
 							<button class="secondary">Restore</button>
@@ -510,6 +591,8 @@ func databasesPage(data databasePageData) string {
 				html.EscapeString(formatBytes(uint64(backup.Size))),
 				item.ID,
 				url.QueryEscape(backup.Path),
+                item.ID,
+                html.EscapeString(backup.Path),
 				item.ID,
 				html.EscapeString(backup.Path),
 				item.ID,
@@ -676,26 +759,8 @@ func databasesPage(data databasePageData) string {
 			</div>
 		</section>
 
-		<section class="panel panel-pad" style="margin-bottom:16px">
-			<div class="section-title">
-				<div><h2>Automatic backups</h2><p class="note" style="margin:6px 0 0">Runs once per day after the selected UTC hour. Old copies are pruned per database.</p></div>
-			</div>
-			<form method="post" action="/databases/backups/schedule" class="backup-settings-grid">
-				<label class="check-row backup-enabled"><input type="checkbox" name="enabled" value="1"` + checked(data.Schedule.Enabled) + `><span>Enabled</span></label>
-				<div><label>Hour UTC</label><input type="number" name="hour_utc" min="0" max="23" value="` + fmt.Sprintf("%d", data.Schedule.HourUTC) + `"></div>
-				<div><label>Keep copies</label><input type="number" name="keep" min="1" max="100" value="` + fmt.Sprintf("%d", data.Schedule.Keep) + `"></div>
-				<div class="backup-save"><button class="button">Save schedule</button></div>
-			</form>
-			<div style="margin-top:18px">
-				<h3>Off-site database backups</h3>
-				<p class="note" style="margin:6px 0 12px">Optional: configure rclone on this server to use an external S3, B2, R2 or SFTP account. The panel stores only the destination name, not access keys. Each new backup is uploaded before local retention is pruned. A failed upload keeps the local copy and reports an error.</p>
-				<form method="post" action="/databases/backups/remote" class="backup-settings-grid">
-					<div style="grid-column:1/-1"><label>rclone destination (remote:bucket/prefix)</label><input name="remote" value="` + html.EscapeString(data.BackupRemote) + `" placeholder="s3:my-backup-bucket/open-go-panel" autocomplete="off"></div>
-					<div class="backup-save"><button class="button">Save destination</button></div>
-				</form>
-				<p class="note" style="margin-top:8px">Empty destination = local copies only. Keep the rclone config under root and restore-test your snapshots regularly.</p>
-			</div>
-		</section>
+		` + databaseBackupSections(data) + `
+
 
 		` + mysqlSettings + `
 

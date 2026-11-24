@@ -97,6 +97,15 @@ if ! command -v setfacl >/dev/null 2>&1; then
   apt-get install -y acl
 fi
 
+# Off-site SQL backups use the Ubuntu rclone package. A temporary APT outage
+# must never block installation or updates of the core control panel.
+if ! command -v rclone >/dev/null 2>&1; then
+  echo "Installing optional rclone for external database backups..."
+  if ! apt-get install -y rclone; then
+    echo "Warning: rclone is not available yet. Local backups still work; install rclone before configuring external storage." >&2
+  fi
+fi
+
 
 ARCH="$(uname -m)"
 case "${ARCH}" in

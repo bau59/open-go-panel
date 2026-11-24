@@ -172,12 +172,38 @@
     });
   }
 
+  function initDatabaseOffsiteForm(root) {
+    root.querySelectorAll('#db-offsite-provider').forEach((select) => {
+      if (select.dataset.ogpReady === '1') return;
+      select.dataset.ogpReady = '1';
+      const form = select.closest('form');
+      if (!form) return;
+      const update = () => {
+        const provider = select.value;
+        const s3 = ['s3', 'r2', 'b2'].includes(provider);
+        const sftp = provider === 'sftp';
+        const groups = [
+          [form.querySelector('[data-offsite-s3]'), s3],
+          [form.querySelector('[data-offsite-sftp]'), sftp]
+        ];
+        groups.forEach(([group, visible]) => {
+          if (!group) return;
+          group.hidden = !visible;
+          group.querySelectorAll('input,select').forEach((input) => { input.disabled = !visible; });
+        });
+      };
+      select.addEventListener('change', update);
+      update();
+    });
+  }
+
   function initUI(root = document) {
     enhanceLinks(root);
     initTables(root);
     initSidebar();
     initFileMenus(root);
     initFileSelection(root);
+    initDatabaseOffsiteForm(root);
   }
 
   document.addEventListener('click', (event) => {
