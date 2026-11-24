@@ -40,6 +40,7 @@ type databasePageData struct {
 	OffsiteSuccess   string
 	ImportTask       dbmanager.RemoteImportTask
 	Message          string
+    Notice           string
 }
 
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
@@ -381,6 +382,7 @@ func loadDatabasePageData(r *http.Request, cfg Config, message string) databaseP
 		OffsiteSuccess: cfg.Databases.OffsiteCompletedAt(),
 		ImportTask: cfg.Databases.ImportTask(),
 		Message:    message,
+        Notice: r.URL.Query().Get("notice"),
 	}
 	data.Items, _ = cfg.Databases.List()
 	data.MySQLConfig, _ = cfg.Databases.MySQLConfig()
@@ -415,6 +417,9 @@ func databasesPage(data databasePageData) string {
 	if data.Message != "" {
 		alert = `<div class="alert">` + html.EscapeString(data.Message) + `</div>`
 	}
+    if data.Notice != "" {
+        alert += `<p class="note db-backup-notice">` + html.EscapeString(data.Notice) + `</p>`
+    }
 
 	stateText := func(ok bool) string {
 		if ok {
