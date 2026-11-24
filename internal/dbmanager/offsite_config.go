@@ -96,7 +96,9 @@ func (m *Manager) RunScheduledOffsiteIfDue(ctx context.Context, now time.Time) (
     if last, _, err := m.store.Setting("db.offsite_last_date"); err == nil && last == today {
         return false, nil
     }
-    if err := m.UploadLatestAll(ctx); err != nil { return false, err }
+    if err := m.runScheduledTask(ctx, "offsite", "Scheduled external SQL backup upload", func(ctx context.Context) error {
+        return m.UploadLatestAll(ctx)
+    }); err != nil { return false, err }
     if err := m.SetOffsiteCompletedAt(time.Now()); err != nil { return true, err }
     if err := m.store.SetSetting("db.offsite_last_date", today); err != nil { return true, err }
     return true, nil
