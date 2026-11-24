@@ -71,6 +71,7 @@
         const start = (page - 1) * perPage;
         const visible = new Set(filtered.slice(start, start + perPage));
         allRows.forEach((row) => { row.hidden = !visible.has(row); });
+        table.dispatchEvent(new Event('ogp:table-render'));
         info.textContent = filtered.length + ' items · page ' + page + ' of ' + pages;
         prev.disabled = page <= 1;
         next.disabled = page >= pages;
@@ -139,11 +140,44 @@
     });
   }
 
+  function initFileSelection(root) {
+    root.querySelectorAll('.fileman-panel').forEach((panel) => {
+      const master = panel.querySelector('#fileman-select-all');
+      if (!master || master.dataset.ogpSelectionReady === '1') return;
+      master.dataset.ogpSelectionReady = '1';
+      const items = Array.from(panel.querySelectorAll('.fileman-select-item'));
+      const count = panel.querySelector('#fileman-selection-count');
+      const form = panel.querySelector('#fileman-bulk-form');
+      const table = panel.querySelector('.fileman-table table');
+      if (!count || !form || !table) return;
+      const buttons = Array.from(form.querySelectorAll('button[name="action"]'));
+      const update = () => {
+        const visible = items.filter((item) => !item.closest('tr').hidden);
+        const selected = items.filter((item) => item.checked).length;
+        const visibleSelected = visible.filter((item) => item.checked).length;
+        count.textContent = selected + ' selected';
+        master.checked = visible.length > 0 && visibleSelected === visible.length;
+        master.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
+        buttons.forEach((button) => { button.disabled = selected === 0; });
+      };
+      master.addEventListener('change', () => {
+        items.forEach((item) => {
+          if (!item.closest('tr').hidden) item.checked = master.checked;
+        });
+        update();
+      });
+      items.forEach((item) => item.addEventListener('change', update));
+      table.addEventListener('ogp:table-render', update);
+      update();
+    });
+  }
+
   function initUI(root = document) {
     enhanceLinks(root);
     initTables(root);
     initSidebar();
     initFileMenus(root);
+    initFileSelection(root);
   }
 
   document.addEventListener('click', (event) => {

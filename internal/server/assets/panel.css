@@ -950,3 +950,41 @@ details[open]>summary.secondary{background:#edf2ff;border-color:#b7c9f5;color:#3
  h1{font-size:26px}
  #panel-notice{right:12px;bottom:12px}
 }
+
+
+/* File manager: restrained SVG file types, aligned actions and permissions. */
+.fileman-table{border:1px solid var(--border);border-radius:12px;overflow-x:auto}
+.fileman-table table{min-width:790px}
+.fileman-table th:first-child,.fileman-table td:first-child{width:42px;text-align:center}
+.fileman-table td{vertical-align:middle;padding:11px 12px}
+.fileman-table td:nth-child(2){min-width:200px}
+.fileman-table td:nth-child(5){white-space:nowrap}
+.fileman-entry{display:inline-flex;align-items:center;gap:11px;min-width:0;text-decoration:none;color:var(--text)}
+.fileman-entry strong{font-weight:600;overflow-wrap:anywhere}
+.fileman-entry:hover strong{color:#315ef3}
+.fileman-icon{flex:0 0 20px;color:#8493ac}
+.fileman-icon-folder{color:#467bbd;fill:#eaf2ff}
+.fileman-icon-image{color:#8269bc}
+.fileman-icon-archive{color:#b88136}
+.fileman-icon-code{color:#338877}
+.fileman-icon-link{color:#9a9fb1}
+.fileman-parent td{background:#fafcff}
+.fileman-mode{display:inline-block;padding:4px 7px;border:1px solid #e3e9f2;border-radius:6px;background:#f6f8fc;font-size:12px;font-variant-numeric:tabular-nums}
+.fileman-size{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--muted)}
+.fileman-popover select{width:100%}
+.fileman-mode-row{display:flex;align-items:center;gap:8px}
+.fileman-mode-row select{flex:1 1 auto;min-width:0}
+.fileman-mode-row button{flex:0 0 auto}
+.fileman-archive-target{display:flex;flex:0 1 170px;flex-direction:column;gap:5px;margin:0;font-size:12px;color:var(--muted)}
+.fileman-archive-target input{width:100%;min-width:0;height:39px}
+.fileman-archive-action{margin:0;display:inline-flex}
+.fileman-bulk button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:720px){
+ .fileman-archive-target{flex:1 1 100%;max-width:none}
+ .fileman-bulk{align-items:stretch}
+ .fileman-bulk>button{flex:1 1 auto}
+ .fileman-table table{min-width:760px}
+}
+
+.fileman-modified{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+.fileman-table table{min-width:925px}
