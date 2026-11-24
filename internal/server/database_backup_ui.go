@@ -4,7 +4,6 @@ import (
     "fmt"
     "html"
     "strings"
-    "time"
 
     "github.com/bau59/open-go-panel/internal/dbmanager"
 )
@@ -178,5 +177,3 @@ func databaseBackupSections(data databasePageData) string {
         </section>`
 }
 
-// Suppress unused import warning if the backup task is rendered without dates.
-var _ = time.Time{}
