@@ -112,8 +112,10 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
     conn.User = strings.TrimSpace(conn.User)
     conn.KeyFile = strings.TrimSpace(conn.KeyFile)
     conn.KnownHostsFile = strings.TrimSpace(conn.KnownHostsFile)
-    if _, err := exec.LookPath("rclone"); err != nil {
-        return errors.New("rclone is not installed; install it before configuring off-site storage")
+    if conn.Destination != "" {
+        if _, err := exec.LookPath("rclone"); err != nil {
+            return errors.New("rclone is not installed; install it before configuring off-site storage")
+        }
     }
 
     remote := conn.Destination
@@ -134,6 +136,14 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
         remote = managedOffsiteRemote + ":" + conn.Destination
         switch conn.Provider {
         case "s3", "r2", "b2":
+            // Leaving credentials blank retains saved root-only keys for the
+            // same provider. Secrets never round-trip through the HTML form.
+            if conn.Provider == m.OffsiteConnection().Provider &&
+                (conn.AccessKey == "" || conn.SecretKey == "") {
+                access, secret := m.savedS3Credentials()
+                if conn.AccessKey == "" { conn.AccessKey = access }
+                if conn.SecretKey == "" { conn.SecretKey = secret }
+            }
             if conn.AccessKey == "" || conn.SecretKey == "" ||
                 strings.ContainsAny(conn.AccessKey, "\r\n") || strings.ContainsAny(conn.SecretKey, "\r\n") {
                 return errors.New("S3-compatible storage requires an access key and secret key")
@@ -196,6 +206,7 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
         "db.offsite_key_file": conn.KeyFile,
         "db.offsite_known_hosts": conn.KnownHostsFile,
     }
+    if remote == "" { values["db.offsite_enabled"] = "0" }
     tx, err := m.store.DB().Begin()
     if err != nil { return err }
     defer tx.Rollback()
@@ -316,4 +327,19 @@ func (m *Manager) SetOffsiteCompletedAt(t time.Time) error {
 func (m *Manager) OffsiteCompletedAt() string {
     value, _, _ := m.store.Setting("db.offsite_last_success")
     return value
+}
+
+// Saved secrets are read internally only to support editing a connection
+// without asking the administrator to re-enter an unchanged access key.
+func (m *Manager) savedS3Credentials() (string, string) {
+    info, err := os.Lstat(m.offsiteConfigFile)
+    if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 { return "", "" }
+    data, err := os.ReadFile(m.offsiteConfigFile)
+    if err != nil { return "", "" }
+    var access, secret string
+    for _, line := range strings.Split(string(data), "\n") {
+        if value, ok := strings.CutPrefix(line, "access_key_id = "); ok { access = value }
+        if value, ok := strings.CutPrefix(line, "secret_access_key = "); ok { secret = value }
+    }
+    return access, secret
 }
