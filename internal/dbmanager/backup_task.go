@@ -60,6 +60,29 @@ func (m *Manager) startBackupTask(kind, description string, fn func(context.Cont
     return nil
 }
 
+// Scheduled jobs publish the same status as manual operations without
+// detaching from the scheduler's lifetime or overlapping a manual job.
+func (m *Manager) runScheduledTask(ctx context.Context, kind, description string, fn func(context.Context) error) error {
+    m.backupTaskMu.Lock()
+    if m.backupTask.State == "running" {
+        m.backupTaskMu.Unlock()
+        return errOperationInProgress
+    }
+    m.backupTask = BackupTask{Kind: kind, State: "running", Description: description, StartedAt: time.Now().UTC()}
+    m.backupTaskMu.Unlock()
+    err := fn(ctx)
+    m.backupTaskMu.Lock()
+    m.backupTask.FinishedAt = time.Now().UTC()
+    if err != nil {
+        m.backupTask.State = "failed"
+        m.backupTask.Error = err.Error()
+    } else {
+        m.backupTask.State = "success"
+    }
+    m.backupTaskMu.Unlock()
+    return err
+}
+
 func (m *Manager) StartLocalBackup(id int64, keep int) error {
     database, err := m.Get(id)
     if err != nil { return err }
