@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -69,10 +70,35 @@ func (m *Manager) UploadBackup(ctx context.Context, backup Backup) error {
 		return err
 	}
 	dst := backupRemotePath(remote, backup)
-	cmd := exec.CommandContext(ctx, "rclone", "copyto", backup.Path, dst)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("off-site backup upload failed (local copy preserved): %w: %s", err, strings.TrimSpace(string(out)))
+	// A connection can be slow for hours on a multi-gigabyte SQL archive.
+	// Idle timeout protects hung connections; there is no total-duration cap.
+	args := []string{"copyto", backup.Path, dst,
+		"--timeout", "30m", "--contimeout", "1m",
+		"--retries", "6", "--low-level-retries", "10",
+		"--transfers", "1", "--checkers", "1"}
+	if m.OffsiteConnection().Provider != "existing" {
+		args = append([]string{"--config", m.offsiteConfigFile}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "rclone", args...)
+	var stderr limitedOutput
+	cmd.Stderr = &stderr
+	cmd.Stdout = io.Discard
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("off-site backup upload failed (local copy preserved): %w: %s", err, stderr.String())
 	}
 	return nil
 }
+
+// limitedOutput avoids retaining unbounded third-party command logs in RAM.
+type limitedOutput struct { text strings.Builder }
+func (b *limitedOutput) Write(p []byte) (int, error) {
+    n := len(p)
+    const limit = 8192
+    if b.text.Len() < limit {
+        remain := limit - b.text.Len()
+        if len(p) > remain { p = p[:remain] }
+        _, _ = b.text.Write(p)
+    }
+    return n, nil
+}
+func (b *limitedOutput) String() string { return strings.TrimSpace(b.text.String()) }
