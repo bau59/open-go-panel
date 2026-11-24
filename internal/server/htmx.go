@@ -93,7 +93,7 @@ func shouldKeepNativeLink(href string) bool {
 		return true
 	}
 	path := parsed.Path
-	return path == "/terminal" ||
+	return path == "/terminal" || strings.HasPrefix(path, "/terminal/background") ||
 		strings.HasPrefix(path, "/db-admin/") || path == "/db-admin" ||
 		strings.HasPrefix(path, "/assets/") ||
 		strings.HasPrefix(path, "/backup/users/") ||
@@ -116,6 +116,7 @@ func shouldKeepNativeForm(tag string) bool {
 	}
 	path := parsed.Path
 	return path == "/logout" || path == "/panel/close" || path == "/login" ||
+		strings.HasPrefix(path, "/terminal/background/") ||
 		strings.HasPrefix(path, "/db-admin/") ||
 		strings.HasSuffix(path, "/files")
 }
