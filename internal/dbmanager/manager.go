@@ -107,6 +107,7 @@ type Manager struct {
 	offsiteConfigFile string
 	backupTaskMu sync.Mutex
 	backupTask BackupTask
+	backupWorkerCtx context.Context
 }
 
 func New(store *state.Store, legacyStateFile string) *Manager {
