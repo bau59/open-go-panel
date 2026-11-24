@@ -104,19 +104,34 @@ func main() {
 
 	// Backups and Git deployment checks run independently. A long backup
 	// must not delay the 30-second interval configured for an application.
+	backupWorkCtx, stopBackupWork := context.WithCancel(context.Background())
+	defer stopBackupWork()
+	databaseManager.SetBackupWorkerContext(backupWorkCtx)
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {
-			backupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
-			ran, err := databaseManager.RunScheduledBackupIfDue(backupCtx, time.Now())
-			cancel()
+			if backupWorkCtx.Err() != nil { return }
+			// Local retention and off-site transfer have independent schedules.
+			// Neither a 30-second HTTP deadline nor a two-hour global cap can
+			// cancel a multi-gigabyte dump or a slow upload.
+			ran, err := databaseManager.RunScheduledBackupIfDue(backupWorkCtx, time.Now())
 			if err != nil {
-				logger.Error("scheduled database backup failed", "err", err)
+				logger.Error("scheduled local database backup failed", "err", err)
 			} else if ran {
-				logger.Info("scheduled database backup completed")
+				logger.Info("scheduled local database backup completed")
 			}
-			<-ticker.C
+			if backupWorkCtx.Err() != nil { return }
+			sent, err := databaseManager.RunScheduledOffsiteIfDue(backupWorkCtx, time.Now())
+			if err != nil {
+				logger.Error("scheduled off-site database upload failed", "err", err)
+			} else if sent {
+				logger.Info("scheduled off-site database upload completed")
+			}
+			select {
+			case <-backupWorkCtx.Done(): return
+			case <-ticker.C:
+			}
 		}
 	}()
 
