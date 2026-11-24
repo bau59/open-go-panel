@@ -136,15 +136,11 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 		if !filepath.IsAbs(root) || strings.ContainsAny(root, "\r\n") {
 			return errors.New("site document root must be an absolute path")
 		}
-		if err := prepareStaticRoot(ctx, root); err != nil {
-			return err
-		}
 	} else {
 		kind = "proxy"
 		if port < 1 || port > 65535 {
 			return errors.New("invalid app port")
 		}
-		root = ""
 	}
 
 	sites, err := m.load()
@@ -154,6 +150,21 @@ func (m *Manager) SetSite(ctx context.Context, appID int64, domain string, port 
 		if site.Domain == domain && site.AppID != appID {
 			return fmt.Errorf("domain %q is already assigned", domain)
 		}
+	}
+
+	// Prepare ACLs only after validating the domain association. For proxy
+	// apps grant read access to public/ only, never the application root.
+	if kind == "static" || kind == "php" {
+		if err := prepareStaticRoot(ctx, root); err != nil {
+			return err
+		}
+	} else {
+		if strings.TrimSpace(root) != "" {
+			if err := prepareProxyPublicRoot(ctx, root); err != nil {
+				return err
+			}
+		}
+		root = ""
 	}
 
 	found := false
@@ -297,9 +308,6 @@ func (m *Manager) AttachStandaloneDomain(ctx context.Context, standaloneID, appI
 		if !filepath.IsAbs(root) || (kind == "static" && port != 0) || (kind == "php" && port != 0 && (port < 9400 || port > 9599)) {
 			return errors.New("invalid document root application target")
 		}
-		if err := prepareStaticRoot(ctx, root); err != nil {
-			return err
-		}
 	} else if port < 1 || port > 65535 {
 		return errors.New("invalid application port")
 	}
@@ -314,6 +322,15 @@ func (m *Manager) AttachStandaloneDomain(ctx context.Context, standaloneID, appI
 		}
 		if strings.TrimSpace(sites[i].Template) != "" {
 			return errors.New("remove the custom Caddy override before attaching this domain to an app")
+		}
+		if kind == "static" || kind == "php" {
+			if err := prepareStaticRoot(ctx, root); err != nil {
+				return err
+			}
+		} else if strings.TrimSpace(root) != "" {
+			if err := prepareProxyPublicRoot(ctx, root); err != nil {
+				return err
+			}
 		}
 		sites[i].AppID = appID
 		sites[i].Port = port
@@ -877,6 +894,37 @@ func (m *Manager) restoreConfig(oldManaged []byte, hadManaged bool, oldRoot []by
 	} else {
 		_ = os.Remove(m.configFile)
 	}
+}
+
+// prepareProxyPublicRoot grants Caddy read-only access to the public directory
+// when a proxy app is bound to a domain. The proxy remains the HTTP backend;
+// only the directory permissions are prepared for static routes.
+func prepareProxyPublicRoot(ctx context.Context, appRoot string) error {
+	if !filepath.IsAbs(appRoot) || filepath.Clean(appRoot) == "/" || strings.ContainsAny(appRoot, "\r\n") {
+		return errors.New("invalid application root")
+	}
+	public := filepath.Join(filepath.Clean(appRoot), "public")
+	info, err := os.Lstat(public)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // Proxy applications need not have a public directory.
+	}
+	if err != nil {
+		return fmt.Errorf("inspect public directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("public directory must not be a symlink")
+	}
+	if !info.IsDir() {
+		return nil // A file named public is not a static document root.
+	}
+	resolved, err := filepath.EvalSymlinks(public)
+	if err != nil {
+		return fmt.Errorf("resolve public directory: %w", err)
+	}
+	if resolved != public {
+		return errors.New("public directory must not contain symlinks in its path")
+	}
+	return prepareStaticRoot(ctx, public)
 }
 
 func prepareStaticRoot(ctx context.Context, root string) error {

@@ -246,6 +246,75 @@ jobs:
           test "$STALE_CODE" = "400"
           curl -fsS -b /tmp/ogp-cookies 'http://127.0.0.1:8443/apps/1/files/download?dir=assets&name=test.txt' | grep -qx 'updated-file'
 
+          echo "Caddy ACL smoke: file-manager checks completed"
+          # Caddy must be able to read public/ immediately after binding a
+          # proxy app's domain, without gaining access to the private app tree.
+          PROXY_APP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies \
+            --data-urlencode "ogp_csrf=$CSRF" -d 'user=ogpsmoke&name=proxyacl&type=go' http://127.0.0.1:8443/apps)"
+          echo "Caddy ACL smoke: proxy app create HTTP=$PROXY_APP_CODE"
+          test "$PROXY_APP_CODE" = "303"
+          PROXY_APP_ID="$((APP_ID + 1))"
+          PROXY_ROOT="/home/ogpsmoke/apps/proxyacl"
+          sudo -u ogpsmoke mkdir -p "$PROXY_ROOT/public/assets"
+          sudo -u ogpsmoke sh -c "printf 'asset-ready\n' > '$PROXY_ROOT/public/assets/app.css'"
+          sudo -u ogpsmoke sh -c "printf 'private-data\n' > '$PROXY_ROOT/private.key'"
+          sudo -u ogpsmoke chmod 0750 "$PROXY_ROOT/public" "$PROXY_ROOT/public/assets"
+          sudo -u ogpsmoke chmod 0640 "$PROXY_ROOT/public/assets/app.css" "$PROXY_ROOT/private.key"
+          if sudo -u caddy cat "$PROXY_ROOT/public/assets/app.css" >/dev/null 2>&1; then
+            echo "Caddy unexpectedly had public/ access before domain binding" >&2
+            exit 1
+          fi
+          DOMAIN_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies \
+            --data-urlencode "ogp_csrf=$CSRF" -d 'domain=proxyacl.example.test' \
+            "http://127.0.0.1:8443/apps/$PROXY_APP_ID/domain")"
+          echo "Caddy ACL smoke: bind proxy domain HTTP=$DOMAIN_CODE"
+          test "$DOMAIN_CODE" = "303"
+          sudo -u caddy cat "$PROXY_ROOT/public/assets/app.css" | grep -qx 'asset-ready'
+          echo "Caddy ACL smoke: proxy asset readable"
+          if sudo -u caddy cat "$PROXY_ROOT/private.key" >/dev/null 2>&1; then
+            echo "Caddy gained access to private application files" >&2
+            exit 1
+          fi
+          if sudo -u caddy ls "$PROXY_ROOT" >/dev/null 2>&1; then
+            echo "Caddy gained directory listing access to app root" >&2
+            exit 1
+          fi
+          echo "Caddy ACL smoke: private-file and root-listing isolation verified"
+          # Default directory ACLs must cover newly created static assets.
+          sudo -u ogpsmoke sh -c "printf 'new-asset\n' > '$PROXY_ROOT/public/assets/new.css'"
+          sudo -u ogpsmoke chmod 0640 "$PROXY_ROOT/public/assets/new.css"
+          # Readability is checked as the actual Caddy Linux identity.
+          # POSIX ACL named entries and their masks need not match chmod bits.
+          sudo -u caddy cat "$PROXY_ROOT/public/assets/new.css" | grep -qx 'new-asset'
+          echo "Caddy ACL smoke: private files inaccessible, inherited ACL verified"
+
+          # Also cover the standalone domain -> app attachment route.
+          ATTACH_APP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies \
+            --data-urlencode "ogp_csrf=$CSRF" -d 'user=ogpsmoke&name=parkacl&type=go' http://127.0.0.1:8443/apps)"
+          echo "Caddy ACL smoke: standalone target app create HTTP=$ATTACH_APP_CODE"
+          test "$ATTACH_APP_CODE" = "303"
+          ATTACH_APP_ID="$((PROXY_APP_ID + 1))"
+          ATTACH_ROOT="/home/ogpsmoke/apps/parkacl"
+          sudo -u ogpsmoke mkdir -p "$ATTACH_ROOT/public"
+          sudo -u ogpsmoke sh -c "printf 'parked-asset\n' > '$ATTACH_ROOT/public/style.css'"
+          sudo -u ogpsmoke chmod 0750 "$ATTACH_ROOT/public"
+          sudo -u ogpsmoke chmod 0640 "$ATTACH_ROOT/public/style.css"
+          PARK_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies \
+            --data-urlencode "ogp_csrf=$CSRF" -d 'domain=parkacl.example.test' http://127.0.0.1:8443/caddy/domain)"
+          echo "Caddy ACL smoke: park standalone domain HTTP=$PARK_CODE"
+          test "$PARK_CODE" = "303"
+          if sudo -u caddy cat "$ATTACH_ROOT/public/style.css" >/dev/null 2>&1; then
+            echo "Parked domain unexpectedly granted ACL before attachment" >&2
+            exit 1
+          fi
+          ATTACH_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b /tmp/ogp-cookies \
+            --data-urlencode "ogp_csrf=$CSRF" -d "app_id=$ATTACH_APP_ID" \
+            http://127.0.0.1:8443/caddy/site/-1/attach)"
+          echo "Caddy ACL smoke: attach parked domain HTTP=$ATTACH_CODE"
+          test "$ATTACH_CODE" = "303"
+          sudo -u caddy cat "$ATTACH_ROOT/public/style.css" | grep -qx 'parked-asset'
+          echo "Caddy ACL smoke: both binding routes passed"
+
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server redis-tools mysql-server php-fpm php-cli
           sudo systemctl enable --now redis-server.service mysql.service
