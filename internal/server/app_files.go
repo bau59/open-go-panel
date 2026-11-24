@@ -6,7 +6,6 @@ import (
     "time"
     "fmt"
     "html"
-    "io"
     "mime"
     "net/http"
     "mime/multipart"
@@ -53,8 +52,37 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         }
     })))
 
+    // Only raster images are displayed inline. SVG is a download to prevent
+    // active same-origin content in the administrator's browser.
+    mux.Handle("GET /apps/{id}/files/preview", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        _, files, ok := openAppFiles(w, r, cfg)
+        if !ok { return }
+        name, folder := r.URL.Query().Get("name"), r.URL.Query().Get("dir")
+        contentType := ""
+        switch strings.ToLower(path.Ext(name)) {
+        case ".png": contentType = "image/png"
+        case ".jpg", ".jpeg": contentType = "image/jpeg"
+        case ".gif": contentType = "image/gif"
+        case ".webp": contentType = "image/webp"
+        default:
+            http.Error(w, "preview supports PNG, JPEG, GIF and WebP", http.StatusBadRequest)
+            return
+        }
+        size, err := files.FileSize(folder, name)
+        if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
+        w.Header().Set("Content-Type", contentType)
+        w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": name}))
+        w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+        w.Header().Set("Cache-Control", "private, no-store")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+        if err := files.Download(folder, name, w); err != nil {
+            cfg.Logger.Warn("app image preview interrupted", "err", err)
+        }
+    })))
+
     mux.Handle("POST /apps/{id}/files", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if action := r.FormValue("action"); action == "extract" || action == "move_contents" || action == "bulk_move" || action == "bulk_delete" {
+        if action := r.FormValue("action"); action == "extract" || action == "move_contents" || action == "bulk_move" || action == "bulk_delete" || action == "archive" {
             // Archive extraction can write tens of thousands of PHP files.
             // The panel's normal 30s HTTP write deadline is far too short;
             // extend only this operation without changing other requests.
@@ -74,6 +102,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         action := r.FormValue("action")
         var err error
         count := 0
+        uploadedNames := []string{}
         redirectFolder := folder
         notice := action + " completed"
         switch action {
@@ -95,6 +124,12 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             }
         case "move":
             err = files.Move(folder, name, r.FormValue("destination"))
+        case "chmod":
+            err = files.Chmod(folder, name, r.FormValue("mode"))
+            if err == nil { notice = "Permissions updated" }
+        case "archive":
+            count, err = files.Archive(folder, r.PostForm["selected"], r.FormValue("archive_name"))
+            if err == nil { notice = fmt.Sprintf("Created ZIP archive with %d entries", count) }
         case "bulk_move":
             count, err = files.MoveMany(folder, r.PostForm["selected"], r.FormValue("destination"))
             if err == nil { notice = fmt.Sprintf("Moved %d selected items", count) }
@@ -117,32 +152,120 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         case "extract":
             _, err = files.Extract(folder, name)
         case "upload":
-            var input io.ReadCloser
-            var header *multipart.FileHeader
-            input, header, err = r.FormFile("file")
-            if err == nil {
-                defer input.Close()
-                if header.Size > filemanager.MaxUploadBytes {
-                    err = fmt.Errorf("upload exceeds 1 GiB limit")
-                } else {
-                    // Browser-selected file size is recorded before transfer.
-                    // A mismatch means the HTTP multipart body is incomplete.
-                    clientSize := r.FormValue("client_size")
-                    if clientSize != "" {
-                        selected, sizeErr := strconv.ParseInt(clientSize, 10, 64)
-                        if sizeErr != nil || selected != header.Size {
-                            err = fmt.Errorf("incomplete upload: browser selected %s bytes, server received %d", clientSize, header.Size)
-                        }
-                    }
-                    if err == nil {
-                        // SHA-256 is verified across the helper pipe against
-                        // the saved file read back from disk.
-                        err = files.Upload(folder, header.Filename, input, header.Size)
+            // Parse all selected files while preserving the original single
+            // file form and SHA-256 verification. Batch failures roll back
+            // only files successfully created by this request.
+            if r.MultipartForm == nil {
+                err = errors.New("missing multipart file upload")
+                break
+            }
+            headers := r.MultipartForm.File["file"]
+            if len(headers) == 0 || len(headers) > 20 {
+                err = errors.New("select between 1 and 20 files")
+                break
+            }
+            sizeList := strings.TrimSpace(r.FormValue("client_sizes"))
+            var selectedSizes []string
+            if sizeList != "" { selectedSizes = strings.Split(sizeList, ",") }
+            if len(selectedSizes) > 0 && len(selectedSizes) != len(headers) {
+                err = errors.New("incomplete upload: selected file count changed")
+                break
+            }
+            seen := make(map[string]bool, len(headers))
+            var total int64
+            for i, header := range headers {
+                if seen[header.Filename] {
+                    err = fmt.Errorf("duplicate upload filename %q", header.Filename)
+                    break
+                }
+                seen[header.Filename] = true
+                if header.Size < 0 || header.Size > filemanager.MaxUploadBytes || total > filemanager.MaxUploadBytes-header.Size {
+                    err = errors.New("batch upload exceeds the 1 GiB limit")
+                    break
+                }
+                total += header.Size
+                expected := ""
+                if len(selectedSizes) > 0 { expected = selectedSizes[i] }
+                if len(headers) == 1 && expected == "" { expected = r.FormValue("client_size") }
+                if expected != "" {
+                    selected, parseErr := strconv.ParseInt(expected, 10, 64)
+                    if parseErr != nil || selected != header.Size {
+                        err = fmt.Errorf("incomplete upload: browser selected %s bytes, server received %d", expected, header.Size)
+                        break
                     }
                 }
             }
+            if err != nil { break }
+            for _, header := range headers {
+                var input multipart.File
+                input, err = header.Open()
+                if err != nil { break }
+                uploadErr := files.Upload(folder, header.Filename, input, header.Size)
+                closeErr := input.Close()
+                if uploadErr != nil { err = uploadErr; break }
+                uploadedNames = append(uploadedNames, header.Filename)
+                if closeErr != nil { err = closeErr; break }
+            }
+            if err != nil {
+                for i := len(uploadedNames)-1; i >= 0; i-- {
+                    if rollbackErr := files.Delete(folder, uploadedNames[i]); rollbackErr != nil {
+                        err = fmt.Errorf("%w; rollback %q failed: %v", err, uploadedNames[i], rollbackErr)
+                    }
+                }
+                uploadedNames = nil
+            } else {
+                notice = fmt.Sprintf("Uploaded %d file(s) · SHA-256 verified", len(uploadedNames))
+            }
         default:
             err = fmt.Errorf("unsupported file operation")
+        }
+
+        // File-manager writes and moves can bypass a directory's default ACL,
+        // especially when public/ is created after the domain was attached.
+        // Refresh only the affected served path. PHP remains untouched.
+        if err == nil && cfg.Caddy != nil && app.Type != "php" {
+            rel := ""
+            syncAccess := false
+            switch action {
+            case "upload":
+                // A batch may include several files. Sync each one below.
+                syncAccess = len(uploadedNames) > 0
+            case "create", "save", "mkdir", "chmod":
+                if action != "chmod" || (r.FormValue("mode") != "0600" && r.FormValue("mode") != "0700") {
+                    rel = path.Join(folder, name)
+                    syncAccess = true
+                }
+            case "move", "copy":
+                rel = r.FormValue("destination")
+                syncAccess = true
+            case "archive":
+                rel = path.Join(folder, r.FormValue("archive_name"))
+                syncAccess = true
+            case "bulk_move":
+                rel = r.FormValue("destination")
+                syncAccess = true
+            case "move_contents":
+                rel = folder
+                if name == "" { rel = path.Dir(folder) }
+                syncAccess = true
+            case "extract":
+                rel = folder
+                if rel == "" && app.Type != "static" { rel = "public" }
+                syncAccess = true
+            }
+            if syncAccess {
+                targets := []string{rel}
+                if action == "upload" {
+                    targets = make([]string, 0, len(uploadedNames))
+                    for _, filename := range uploadedNames { targets = append(targets, path.Join(folder, filename)) }
+                }
+                for _, target := range targets {
+                    if accessErr := cfg.Caddy.EnsureManagedFileAccess(r.Context(), app.ID, app.Root, target); accessErr != nil {
+                        err = fmt.Errorf("file operation completed, but Caddy read-access ACL failed: %w", accessErr)
+                        break
+                    }
+                }
+            }
         }
         if err != nil {
             edit, newFile := "", false
@@ -162,8 +285,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         destination := appFilesURL(app.ID, redirectFolder)
         delimiter := "?"
         if strings.Contains(destination, "?") { delimiter = "&" }
-        if action == "upload" { notice = "Upload complete · SHA-256 verified" }
-        http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(notice), http.StatusSeeOther)
+         http.Redirect(w, r, destination+delimiter+"notice="+url.QueryEscape(notice), http.StatusSeeOther)
         return nil
         })
         if lockErr != nil { http.Error(w, lockErr.Error(), http.StatusRequestTimeout) }
@@ -199,6 +321,32 @@ func fileHidden(action, folder, name string) string {
 type fileBrowser interface {
     List(folder string) ([]filemanager.Entry, bool, error)
     ReadText(folder, name string) (string, error)
+}
+
+// fileManagerIcon renders local, inline Lucide-style SVGs. No icon CDN or
+// emoji fallback is required.
+func fileManagerIcon(kind string) string {
+    paths := map[string]string{
+        "folder": `<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
+        "file": `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>`,
+        "image": `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>`,
+        "archive": `<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 2v4m0 3v3m0 3v3m-3 0h6"/>`,
+        "code": `<path d="m8 8-4 4 4 4m8-8 4 4-4 4m-3-11-2 14"/>`,
+        "link": `<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>`,
+    }
+    source, ok := paths[kind]
+    if !ok { source = paths["file"] }
+    return `<svg class="fileman-icon fileman-icon-` + kind + `" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` + source + `</svg>`
+}
+
+func fileManagerSize(size int64) string {
+    if size < 1024 { return fmt.Sprintf("%d B", size) }
+    value := float64(size)
+    for _, unit := range []string{"KiB", "MiB", "GiB", "TiB"} {
+        value /= 1024
+        if value < 1024 { return fmt.Sprintf("%.1f %s", value, unit) }
+    }
+    return fmt.Sprintf("%.1f PiB", value/1024)
 }
 
 func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName string, create bool, message, notice string, draft ...string) (string, error) {
@@ -262,37 +410,61 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
         if folder != "" && folder != "." {
             parent := path.Dir(folder)
             if parent == "." { parent = "" }
-            rows.WriteString(`<tr><td></td><td><a href="`+appFilesURL(app.ID, parent)+`">📁 ..</a></td><td>Parent folder</td><td>—</td><td></td></tr>`)
+            rows.WriteString(`<tr class="fileman-parent"><td></td><td><a class="fileman-entry" href="`+appFilesURL(app.ID, parent)+`">`+fileManagerIcon("folder")+`<span>..</span></a></td><td>Parent folder</td><td>—</td><td>—</td><td>—</td><td></td></tr>`)
         }
         for _, item := range items {
             name := html.EscapeString(item.Name)
-            entry := `<strong>`+name+`</strong>`
             kind := "File"
-            size := fmt.Sprintf("%d B", item.Size)
+            size := fileManagerSize(item.Size)
+            mode := fmt.Sprintf("%04o", item.Mode.Perm())
+            icon := "file"
             if item.Directory {
                 kind = "Directory"
                 size = "—"
-                next := item.Name
-                if folder != "" && folder != "." { next = folder + "/" + item.Name }
-                entry = `<a href="`+appFilesURL(app.ID, next)+`">📁 `+name+`</a>`
+                icon = "folder"
             } else if item.Symlink {
                 kind = "Symlink (not followed)"
                 size = "—"
-                entry = `🔗 `+name
+                mode = "—"
+                icon = "link"
+            } else {
+                lower := strings.ToLower(item.Name)
+                switch {
+                case strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+                    icon = "archive"
+                case strings.HasSuffix(lower, ".png"), strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"), strings.HasSuffix(lower, ".gif"), strings.HasSuffix(lower, ".webp"), strings.HasSuffix(lower, ".svg"):
+                    icon = "image"
+                case strings.HasSuffix(lower, ".go"), strings.HasSuffix(lower, ".js"), strings.HasSuffix(lower, ".ts"), strings.HasSuffix(lower, ".html"), strings.HasSuffix(lower, ".css"), strings.HasSuffix(lower, ".json"), strings.HasSuffix(lower, ".php"), strings.HasSuffix(lower, ".yaml"), strings.HasSuffix(lower, ".yml"), strings.HasSuffix(lower, ".sh"):
+                    icon = "code"
+                }
+            }
+            entry := `<span class="fileman-entry">`+fileManagerIcon(icon)+`<strong>`+name+`</strong></span>`
+            if item.Directory {
+                next := item.Name
+                if folder != "" && folder != "." { next = folder + "/" + item.Name }
+                entry = `<a class="fileman-entry" href="`+appFilesURL(app.ID, next)+`">`+fileManagerIcon(icon)+`<strong>`+name+`</strong></a>`
             }
             var actions strings.Builder
             if !item.Directory && !item.Symlink {
                 query := url.Values{}
                 query.Set("dir", folder)
                 query.Set("name", item.Name)
-                actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`/download?`+html.EscapeString(query.Encode())+`">Download</a>`)
+                actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`/download?`+html.EscapeString(query.Encode())+`" hx-boost="false">Download</a>`)
+                lower := strings.ToLower(item.Name)
+                if strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") || strings.HasSuffix(lower, ".webp") {
+                    actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`/preview?`+html.EscapeString(query.Encode())+`" target="_blank" rel="noopener" hx-boost="false">Preview</a>`)
+                }
                 query.Del("name")
                 query.Set("edit", item.Name)
                 actions.WriteString(`<a class="secondary compact-action" href="`+actionURL+`?`+html.EscapeString(query.Encode())+`">Edit</a>`)
-                lower := strings.ToLower(item.Name)
                 if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
                     actions.WriteString(`<form method="post" action="`+actionURL+`">`+fileHidden("extract", folder, item.Name)+`<button class="secondary compact-action" onclick="return confirm('Extract this archive here? Existing files will not be overwritten.')">Extract</button></form>`)
                 }
+            }
+            if !item.Symlink {
+                archiveName := item.Name + ".zip"
+                actions.WriteString(`<form method="post" action="`+actionURL+`" class="fileman-archive-action">`+fileHidden("archive", folder, "")+
+                    `<input type="hidden" name="selected" value="`+name+`"><input type="hidden" name="archive_name" value="`+html.EscapeString(archiveName)+`"><button class="secondary compact-action" type="submit" title="Compress as ZIP">ZIP</button></form>`)
             }
             actions.WriteString(`<details class="fileman-more"><summary class="secondary compact-action">More</summary>
                 <div class="fileman-popover">
@@ -307,6 +479,26 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                     <label>Copy to</label><input name="destination" required placeholder="folder/copy-name">
                     <button class="secondary compact-action">Copy</button></form>`)
             }
+            if !item.Symlink {
+                modes := []string{"0600", "0640", "0644", "0700", "0750", "0755"}
+                if item.Directory { modes = []string{"0700", "0750", "0755"} }
+                var selectModes strings.Builder
+                known := false
+                for _, value := range modes {
+                    if value == mode { known = true; break }
+                }
+                if !known {
+                    fmt.Fprintf(&selectModes, `<option value="" selected disabled>Current %s (ACL)</option>`, html.EscapeString(mode))
+                }
+                for _, value := range modes {
+                    selected := ""
+                    if value == mode { selected = " selected" }
+                    fmt.Fprintf(&selectModes, `<option value="%s"%s>%s</option>`, value, selected, value)
+                }
+                actions.WriteString(`<form method="post" action="`+actionURL+`">`+
+                    fileHidden("chmod", folder, item.Name)+
+                    `<label>Permissions (octal)</label><div class="fileman-mode-row"><select name="mode" aria-label="File permissions" required>`+selectModes.String()+`</select><button class="secondary compact-action">Apply</button></div></form>`)
+            }
             if item.Directory {
                 actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Move all contents of this folder here? Existing names will not be replaced.')">
                     `+fileHidden("move_contents", folder, item.Name)+`
@@ -314,10 +506,12 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             }
             actions.WriteString(`<form method="post" action="`+actionURL+`" onsubmit="return confirm('Delete this item permanently?')">
                 `+fileHidden("delete", folder, item.Name)+`<button class="danger compact-action">Delete</button></form></div></details>`)
-            fmt.Fprintf(&rows, `<tr><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td>%s</td><td><div class="actions fileman-actions">%s</div></td></tr>`,
-                name, name, entry, html.EscapeString(kind), html.EscapeString(size), actions.String())
+            modified := "—"
+            if !item.ModifiedAt.IsZero() { modified = item.ModifiedAt.UTC().Format("2006-01-02 15:04") }
+            fmt.Fprintf(&rows, `<tr class="fileman-row"><td><input class="fileman-select-item" type="checkbox" form="fileman-bulk-form" name="selected" value="%s" aria-label="Select %s"></td><td>%s</td><td>%s</td><td class="fileman-size">%s</td><td><code class="fileman-mode">%s</code></td><td class="fileman-modified">%s</td><td><div class="actions fileman-actions">%s</div></td></tr>`,
+                name, name, entry, html.EscapeString(kind), html.EscapeString(size), html.EscapeString(mode), modified, actions.String())
         }
-        if len(items) == 0 { rows.WriteString(`<tr><td colspan="5" class="empty">This folder is empty.</td></tr>`) }
+        if len(items) == 0 { rows.WriteString(`<tr><td colspan="7" class="empty">This folder is empty.</td></tr>`) }
         if limited { alert += `<div class="alert">Only the first 400 entries are shown and selectable. "Move all contents up" moves the entire folder, including entries not displayed.</div>` }
         parentDestination := ""
         if folder != "" && folder != "." {
@@ -342,6 +536,10 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                 <input id="fileman-bulk-destination" name="destination" placeholder="public/assets or . for root" value="%s">
             </label>
             <button class="secondary" type="submit" name="action" value="bulk_move">Move selected</button>
+            <label for="fileman-bulk-archive-name" class="fileman-archive-target">ZIP filename
+                <input id="fileman-bulk-archive-name" name="archive_name" maxlength="255" value="selection.zip">
+            </label>
+            <button class="secondary" type="submit" name="action" value="archive">Compress ZIP</button>
             <button class="danger" type="submit" name="action" value="bulk_delete" onclick="return confirm('Delete all selected files and folders permanently?')">Delete selected</button>
         </form>`, actionURL, html.EscapeString(folder), html.EscapeString(defaultTarget))
 
@@ -351,7 +549,8 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
                     %s<label class="fileman-tool-label" for="fileman-upload-file">Upload file <span>Max 1 GiB</span></label>
                     <div class="fileman-control-row">
                         <input type="hidden" name="client_size" value="">
-                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required onchange="this.form.elements.client_size.value = this.files.length ? this.files[0].size : ''">
+                        <input type="hidden" name="client_sizes" value="">
+                        <input id="fileman-upload-file" class="file-upload-input" type="file" name="file" required multiple onchange="this.form.elements.client_size.value = this.files.length ? this.files[0].size : ''; this.form.elements.client_sizes.value = Array.from(this.files).map(function(f){return f.size}).join(',')">
                         <button class="button" type="submit">Upload</button>
                     </div>
                 </form>
@@ -369,28 +568,10 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             </div>
             %s
             %s
-            <div class="fileman-table"><table><thead><tr><th class="fileman-check-column"><input id="fileman-select-all" type="checkbox" aria-label="Select all visible items"></th><th>Name</th><th>Type</th><th>Size</th><th>Actions</th></tr></thead>
+            <div class="fileman-table"><table><thead><tr><th class="fileman-check-column"><input id="fileman-select-all" type="checkbox" aria-label="Select all visible items"></th><th>Name</th><th>Type</th><th>Size</th><th>Permissions</th><th>Modified (UTC)</th><th>Actions</th></tr></thead>
             <tbody>%s</tbody></table></div>
             <p class="note">Paths are relative to the application root. Existing files are never overwritten by moves; linked directories are not followed. Select all affects only displayed entries.</p>
-            <script>
-            (function(){
-                var master=document.getElementById('fileman-select-all');
-                var items=Array.from(document.querySelectorAll('.fileman-select-item'));
-                var count=document.getElementById('fileman-selection-count');
-                function update(){
-                    var selected=items.filter(function(item){return item.checked}).length;
-                    count.textContent=selected+' selected';
-                    master.checked=items.length>0 && selected===items.length;
-                    master.indeterminate=selected>0 && selected<items.length;
-                }
-                master.addEventListener('change',function(){
-                    items.forEach(function(item){item.checked=master.checked});
-                    update();
-                });
-                items.forEach(function(item){item.addEventListener('change',update)});
-                update();
-            })();
-            </script>
+            
         </section>`, actionURL, fileHidden("upload", folder, ""), actionURL, fileHidden("mkdir", folder, ""), base+func()string{ if strings.Contains(base, "?") { return "&new=1" }; return "?new=1" }(), liftAction, bulkControls, rows.String())
     }
     return header + `

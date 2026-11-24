@@ -203,6 +203,22 @@ func (c *Client) Mkdir(folder, name string) error {
     return err
 }
 
+func (c *Client) Chmod(folder, name, mode string) error {
+    _, err := c.call("chmod", folder, name, mode, nil)
+    return err
+}
+
+// Archive performs compression in the unprivileged app-owner helper.
+func (c *Client) Archive(folder string, names []string, outputName string) (int, error) {
+    if err := checkSelectedNames(names, MaxBulkSelection); err != nil { return 0, err }
+    if !validName(outputName) { return 0, errors.New("invalid archive filename") }
+    data, err := json.Marshal(names)
+    if err != nil { return 0, err }
+    result, err := c.call("archive", folder, "", outputName, strings.NewReader(string(data)))
+    if err != nil { return 0, err }
+    return strconv.Atoi(strings.TrimSpace(string(result)))
+}
+
 func (c *Client) Move(folder, name, destination string) error {
     _, err := c.call("move", folder, name, destination, nil)
     return err
@@ -308,6 +324,17 @@ func RunHelper(args []string) error {
         return manager.Save(folder, name, string(data), operation == "create")
     case "mkdir":
         return manager.Mkdir(folder, name)
+    case "chmod":
+        bits, err := strconv.ParseUint(destination, 8, 32)
+        if err != nil { return errors.New("invalid octal permissions") }
+        return manager.Chmod(folder, name, os.FileMode(bits))
+    case "archive":
+        names, err := readBulkNames(os.Stdin)
+        if err != nil { return err }
+        count, err := manager.Archive(folder, names, destination)
+        if err != nil { return err }
+        _, err = fmt.Fprintln(os.Stdout, count)
+        return err
     case "move":
         return manager.Move(folder, name, destination)
     case "bulk-move", "bulk-delete":
