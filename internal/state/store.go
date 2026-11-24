@@ -149,6 +149,18 @@ CREATE TABLE IF NOT EXISTS app_cron_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_app_cron_jobs_app_id ON app_cron_jobs(app_id);
 
+CREATE TABLE IF NOT EXISTS background_commands (
+	id TEXT PRIMARY KEY,
+	username TEXT NOT NULL,
+	app_id INTEGER NOT NULL DEFAULT 0,
+	workdir TEXT NOT NULL,
+	command TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	stopped_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_background_commands_created_at
+	ON background_commands(created_at);
+
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL

@@ -41,7 +41,7 @@ func appHeader(active string) string {
 			shape = `<path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/>`
 		case "software":
 			shape = `<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>`
-		case "terminal":
+		case "terminal", "terminal-background":
 			shape = `<rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 4 3-4 3M12 16h5"/>`
 		case "performance":
 			shape = `<path d="M3 19V5M3 19h18M6 15l5-6 4 3 5-7"/>`
@@ -84,6 +84,7 @@ func appHeader(active string) string {
 		menuItem{"software", "/software", "Software"},
 		menuItem{"backup", "/backup", "Backup"},
 		menuItem{"terminal", "/terminal", "Terminal"},
+		menuItem{"terminal-background", "/terminal/background", "Background commands"},
 	))
 	nav.WriteString(group("Observability",
 		menuItem{"performance", "/performance", "Performance"},

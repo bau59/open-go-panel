@@ -39,6 +39,7 @@ type terminalClientMessage struct {
 const terminalAssetsDir = "/var/lib/open-go-panel/web-assets/xterm"
 
 func registerTerminalRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+	registerBackgroundTerminalRoutes(mux, store, cfg)
 	for path, asset := range map[string]struct {
 		File        string
 		ContentType string
@@ -194,8 +195,19 @@ func timeNowPlusSecond() time.Time {
 }
 
 func resolveTerminalTarget(r *http.Request, users []linuxuser.User, apps []panelapp.App) (string, string, int64, error) {
-	username := strings.TrimSpace(r.URL.Query().Get("user"))
-	appID, _ := strconv.ParseInt(r.URL.Query().Get("app"), 10, 64)
+	return resolveTerminalTargetValues(r.URL.Query().Get("user"), r.URL.Query().Get("app"), users, apps)
+}
+
+func resolveTerminalTargetValues(rawUser, rawApp string, users []linuxuser.User, apps []panelapp.App) (string, string, int64, error) {
+	username := strings.TrimSpace(rawUser)
+	var appID int64
+	if rawApp != "" {
+		parsed, err := strconv.ParseInt(rawApp, 10, 64)
+		if err != nil || parsed <= 0 {
+			return "", "", 0, errors.New("invalid application ID")
+		}
+		appID = parsed
+	}
 
 	var selectedApp *panelapp.App
 	if appID > 0 {
