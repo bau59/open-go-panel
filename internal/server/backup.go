@@ -91,6 +91,11 @@ func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
   home:="/home/"+user
   info,err:=os.Lstat(home)
   if err!=nil||!info.IsDir(){http.Error(w,"user home directory unavailable",400);return}
+  // User archives can include several 3-5 GiB database dumps.
+  // Disable only this response's 30-second write deadline.
+  if err:=http.NewResponseController(w).SetWriteDeadline(time.Time{});err!=nil&&!errors.Is(err,http.ErrNotSupported){
+   http.Error(w,"cannot extend archive download deadline",http.StatusServiceUnavailable);return
+  }
   w.Header().Set("Content-Type","application/gzip")
   w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename=\"%s-backup.tar.gz\"",user))
   w.Header().Set("Cache-Control","no-store")
