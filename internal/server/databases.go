@@ -206,7 +206,7 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := cfg.Databases.SetBackupRemote(r.FormValue("remote")); err != nil {
+		if err := cfg.Databases.SaveOffsiteConnection(dbmanager.OffsiteConnection{Provider: "existing", Destination: r.FormValue("remote")}); err != nil {
 			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -568,6 +568,10 @@ func databasesPage(data databasePageData) string {
 					<div class="db-backup-file"><strong>%s</strong><div class="note">%s</div></div>
 					<div class="actions db-backup-actions">
 						<a class="secondary" href="/databases/%d/backup/download?path=%s">Download</a>
+                        <form method="post" action="/databases/%d/backup/export">
+                            <input type="hidden" name="path" value="%s">
+                            <button class="secondary">Send off-site</button>
+                        </form>
 						<form method="post" action="/databases/%d/restore" onsubmit="return confirm('Restore this backup over the current database?')">
 							<input type="hidden" name="path" value="%s">
 							<button class="secondary">Restore</button>
@@ -582,6 +586,8 @@ func databasesPage(data databasePageData) string {
 				html.EscapeString(formatBytes(uint64(backup.Size))),
 				item.ID,
 				url.QueryEscape(backup.Path),
+                item.ID,
+                html.EscapeString(backup.Path),
 				item.ID,
 				html.EscapeString(backup.Path),
 				item.ID,
