@@ -97,6 +97,7 @@ func (m *Manager) RunScheduledOffsiteIfDue(ctx context.Context, now time.Time) (
         return false, nil
     }
     if err := m.UploadLatestAll(ctx); err != nil { return false, err }
+    if err := m.SetOffsiteCompletedAt(time.Now()); err != nil { return true, err }
     if err := m.store.SetSetting("db.offsite_last_date", today); err != nil { return true, err }
     return true, nil
 }
@@ -104,6 +105,8 @@ func (m *Manager) RunScheduledOffsiteIfDue(ctx context.Context, now time.Time) (
 // SaveOffsiteConnection stores credentials only in a root-owned rclone config.
 // SQLite contains destination, provider and non-secret connection metadata.
 func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
+    if !m.operationMu.TryLock() { return errOperationInProgress }
+    defer m.operationMu.Unlock()
     conn.Provider = strings.ToLower(strings.TrimSpace(conn.Provider))
     conn.Destination = strings.TrimSpace(conn.Destination)
     conn.Endpoint = strings.TrimSpace(conn.Endpoint)
