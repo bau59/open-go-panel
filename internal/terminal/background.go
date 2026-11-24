@@ -208,6 +208,8 @@ func parseBackgroundUnits(output string) map[string]string {
 			units[parts[0]] = "running"
 		case "activating":
 			units[parts[0]] = "starting"
+		case "deactivating":
+			units[parts[0]] = "stopping"
 		case "failed":
 			units[parts[0]] = "failed"
 		default:
@@ -223,9 +225,9 @@ func (m *BackgroundManager) Stop(ctx context.Context, id string) error {
 		return err
 	}
 	unit, _ := backgroundUnitName(job.ID)
-	stopCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(stopCtx, "systemctl", "stop", unit).CombinedOutput()
+	out, err := exec.CommandContext(stopCtx, "systemctl", "--no-block", "stop", unit).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("stop background command: %w: %s", err, strings.TrimSpace(string(out)))
 	}
