@@ -2,6 +2,8 @@ package yandexdisk
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +31,9 @@ func (d *fakeDisk) RoundTrip(r *http.Request) (*http.Response,error) {
 		case "/v1/disk/resources":
 			if r.Method=="PUT" { d.dirs[remote]=true;status=201
 			} else if d.dirs[remote] {body=[]byte(`{"type":"dir"}`)
+			} else if data,ok:=d.files[remote];ok{
+				h:=sha256.Sum256(data)
+				body,_=json.Marshal(map[string]any{"type":"file","size":len(data),"sha256":hex.EncodeToString(h[:])})
 			} else {status=404}
 		case "/v1/disk/resources/upload","/v1/disk/resources/download":
 			body,_=json.Marshal(map[string]string{"href":"https://transfer.example/file?"+r.URL.Query().Encode()})
