@@ -19,6 +19,7 @@ import (
 
 	"github.com/bau59/open-go-panel/internal/journal"
 	"github.com/bau59/open-go-panel/internal/state"
+	"github.com/bau59/open-go-panel/internal/mcpaccess"
 )
 
 const recommendedSiteTemplate = `{domain} {
@@ -837,6 +838,10 @@ func (m *Manager) applyLocked(ctx context.Context, sites []Site, template string
 			b.WriteString("\n\n")
 		}
 	}
+	if domain,_,err:=m.store.Setting(mcpaccess.DomainSetting);err!=nil{return err}else if domain!=""{
+		if !domainRE.MatchString(domain){return errors.New("invalid MCP domain")}
+		b.WriteString(renderMCPDomain(domain))
+	}
 	managedContent := b.String()
 	if err := m.validateRendered(ctx, managedContent); err != nil {
 		return err
@@ -1320,4 +1325,32 @@ func (s Site) Target() string {
 		return s.Root
 	}
 	return "127.0.0.1:" + strconv.Itoa(s.Port)
+}
+
+
+func renderMCPDomain(domain string)string{
+    return fmt.Sprintf("https://%s {\n\t@ogp_mcp path /health /mcp/* /oauth/* /.well-known/oauth-protected-resource/mcp/* /.well-known/oauth-authorization-server/oauth/*\n\thandle @ogp_mcp {\n\t\treverse_proxy %s\n\t}\n\thandle {\n\t\trespond 404\n\t}\n}\n",domain,mcpaccess.ListenAddr)
+}
+
+// SetMCPDomain shares the panel's existing Caddy validation and rollback.
+// Changing the origin invalidates OAuth audiences, so require revocation first.
+func (m *Manager) SetMCPDomain(ctx context.Context,domain string)error{
+    m.mu.Lock();defer m.mu.Unlock()
+    domain=strings.ToLower(strings.TrimSpace(domain))
+    if domain!=""{if !domainRE.MatchString(domain){return errors.New("invalid MCP domain")};if _,err:=mcpaccess.Origin(domain);err!=nil{return err}}
+    old,_,err:=m.store.Setting(mcpaccess.DomainSetting);if err!=nil{return err}
+    if old!=domain{
+        var active int
+        if err:=m.store.DB().QueryRowContext(ctx,"SELECT COUNT(*) FROM mcp_connections WHERE revoked_at=0").Scan(&active);err!=nil{return err}
+        if active>0{return errors.New("revoke active ChatGPT connections before changing the domain")}
+    }
+    sites,err:=m.load();if err!=nil{return err}
+    for _,site:=range sites{if site.Domain==domain&&domain!=""{return errors.New("domain is already assigned to an application")}}
+    template,err:=m.Template();if err!=nil{return err}
+    if err:=m.store.SetSetting(mcpaccess.DomainSetting,domain);err!=nil{return err}
+    if err:=m.applyLocked(ctx,sites,template);err!=nil{
+        if restoreErr:=m.store.SetSetting(mcpaccess.DomainSetting,old);restoreErr!=nil{return errors.Join(err,restoreErr)}
+        return err
+    }
+    return nil
 }

@@ -85,6 +85,56 @@ CREATE TABLE IF NOT EXISTS apps (
 	UNIQUE(owner, name)
 );
 
+
+-- ChatGPT access belongs to one application and one random connection ID.
+-- Deleting the application removes every client, request and token even if
+-- its numeric ID is subsequently reused.
+CREATE TABLE IF NOT EXISTS mcp_connections (
+    app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+    connection_id TEXT NOT NULL UNIQUE,
+    resource TEXT NOT NULL UNIQUE,
+    owner TEXT NOT NULL,
+    root TEXT NOT NULL,
+    app_created_at TEXT NOT NULL,
+    enabled_at INTEGER NOT NULL,
+    authorized_at INTEGER NOT NULL DEFAULT 0,
+    last_success_at INTEGER NOT NULL DEFAULT 0,
+    revoked_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS mcp_clients (
+    client_id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+    redirect_uri TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_requests (
+    request_id TEXT PRIMARY KEY,
+    poll_hash TEXT NOT NULL UNIQUE,
+    client_id TEXT NOT NULL REFERENCES mcp_clients(client_id) ON DELETE CASCADE,
+    challenge TEXT NOT NULL,
+    oauth_state TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    decision TEXT NOT NULL DEFAULT 'pending'
+        CHECK(decision IN ('pending','approved','denied'))
+);
+CREATE TABLE IF NOT EXISTS mcp_codes (
+    code_hash TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES mcp_clients(client_id) ON DELETE CASCADE,
+    challenge TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+    access_hash TEXT PRIMARY KEY,
+    refresh_hash TEXT NOT NULL UNIQUE,
+    client_id TEXT NOT NULL REFERENCES mcp_clients(client_id) ON DELETE CASCADE,
+    access_expires_at INTEGER NOT NULL,
+    refresh_expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_clients_connection ON mcp_clients(connection_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_requests_client ON mcp_requests(client_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_codes_client ON mcp_codes(client_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_tokens_client ON mcp_tokens(client_id);
+
 CREATE TABLE IF NOT EXISTS databases (
 	id INTEGER PRIMARY KEY,
 	engine TEXT NOT NULL,

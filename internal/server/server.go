@@ -209,6 +209,7 @@ func New(cfg Config) http.Handler {
 	}
 	if cfg.Apps != nil && cfg.Users != nil {
 		registerAppRoutes(mux, store, cfg)
+		if cfg.State!=nil {registerMCPRoutes(mux,store,cfg)}
 		registerAppCronRoutes(mux, store, cfg)
 		registerPHPLogRoutes(mux, store, cfg)
 		registerAppFileRoutes(mux, store, cfg)

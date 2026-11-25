@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,8 @@ import (
 	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/app"
 	"github.com/bau59/open-go-panel/internal/filemanager"
+	"github.com/bau59/open-go-panel/internal/mcpsandbox"
+	"github.com/bau59/open-go-panel/internal/mcpaccess"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
@@ -27,6 +30,9 @@ import (
 )
 
 func main() {
+	if len(os.Args)==2&&os.Args[1]=="mcp"{if err:=serveMCP();err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};return}
+	if len(os.Args)>1&&os.Args[1]=="--mcp-sandbox-helper"{if err:=mcpsandbox.RunHelper(os.Args[2:]);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};return}
+	if len(os.Args)==3&&os.Args[1]=="--mcp-file-helper"{if err:=filemanager.RunMCPHelper(os.Args[2],os.Stdin,os.Stdout);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};return}
 	if len(os.Args)==3 && os.Args[1]=="--restore-server-snapshot" {
 		logger:=slog.New(slog.NewTextHandler(os.Stdout,nil))
 		if err:=server.RunServerRestore(context.Background(),os.Args[2],logger);err!=nil{logger.Error("restore failed","err",err);os.Exit(1)}
@@ -203,4 +209,21 @@ func main() {
 		logger.Error("http server shutdown failed", "err", err)
 		os.Exit(1)
 	}
+}
+
+
+func serveMCP()error{
+    store,err:=state.Open("/var/lib/open-go-panel/panel.db");if err!=nil{return err};defer store.Close()
+    ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
+    srv:=&http.Server{Addr:mcpaccess.ListenAddr,Handler:mcpaccess.NewHandler(store,nil),
+        ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:150*time.Second,IdleTimeout:60*time.Second,
+        BaseContext:func(net.Listener)context.Context{return ctx}}
+    done:=make(chan error,1)
+    go func(){done<-srv.ListenAndServe()}()
+    select{
+    case err:=<-done:if !errors.Is(err,http.ErrServerClosed){return err};return nil
+    case <-ctx.Done():
+        shutdown,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()
+        return srv.Shutdown(shutdown)
+    }
 }

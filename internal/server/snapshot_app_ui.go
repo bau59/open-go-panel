@@ -112,7 +112,7 @@ func (m *snapshotManager) registerAppSnapshotRoutes(mux *http.ServeMux,store *se
 	})
 	mux.Handle("GET /backup/apps/{app}/cloud-list",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 		id,err:=m.appFromRequest(r);if err!=nil{http.NotFound(w,r);return}
-		remote,err:=m.appRemote(id);if err!=nil{http.Error(w,err.Error(),400);return}
+		remote,err:=m.appRemote(id);if err!=nil{if r.URL.Query().Get("fragment")=="1"&&r.Header.Get("HX-Request")=="true"{writeHTML(w,m.cfg.Logger,200,renderCloudInventory(cloudSnapshotInventory{},err,id));return};http.Error(w,err.Error(),400);return}
 		ctx,cancel:=context.WithTimeout(r.Context(),25*time.Second);defer cancel()
 		inventory,err:=m.cloudInventoryAt(ctx,remote)
 		var out strings.Builder
@@ -151,8 +151,8 @@ func (m *snapshotManager) renderAppSnapshots()string{
 	for _,a:=range apps{
 		p:=m.policyFor(m.appPolicyKey(a.ID))
 		fmt.Fprintf(&out,`<details class="snapshot-entry"><summary><strong>%s / %s</strong><span>Local: %s · Cloud: %s</span></summary><div class="snapshot-entry-files"><form method="post" action="/backup/apps/%d/policy" class="snapshot-policy"><div><h3>Local</h3><label>Every N days<input name="local_days" type="number" min="0" max="365" value="%d" required></label><label>Hour (UTC)<input name="local_hour" type="number" min="0" max="23" value="%d" required></label><label>Keep versions<input name="local_keep" type="number" min="1" max="100" value="%d" required></label></div><div><h3>Cloud</h3><label>Every N days<input name="cloud_days" type="number" min="0" max="365" value="%d" required></label><label>Hour (UTC)<input name="cloud_hour" type="number" min="0" max="23" value="%d" required></label><label>Keep versions (0 = unlimited)<input name="cloud_keep" type="number" min="0" max="100" value="%d" required></label></div><button class="button">Save project schedules</button></form>`,html.EscapeString(a.User),html.EscapeString(a.Name),snapshotIntervalLabel(p.LocalDays),snapshotIntervalLabel(p.CloudDays),a.ID,p.LocalDays,p.LocalHour,p.LocalKeep,p.CloudDays,p.CloudHour,p.CloudKeep)
-		fmt.Fprintf(&out,`<div class="snapshot-actions"><form method="post" action="/backup/apps/%d/create"><button class="secondary">Local backup now</button></form><form method="post" action="/backup/apps/%d/cloud"><button class="secondary">Cloud backup now</button></form><a class="secondary" href="/backup/apps/%d/cloud-list" hx-boost="false" hx-get="/backup/apps/%d/cloud-list?fragment=1" hx-target="#app-cloud-%d" hx-swap="innerHTML">Refresh cloud copies</a></div>`,a.ID,a.ID,a.ID,a.ID,a.ID)
-		fmt.Fprintf(&out,`<h3>Cloud copies</h3><div id="app-cloud-%d" hx-get="/backup/apps/%d/cloud-list?fragment=1" hx-trigger="intersect once" hx-swap="innerHTML"><p class="note">Open this section to load cloud copies. Cloud-only snapshots are removed from local storage after upload.</p></div><h3>Local copies</h3>`,a.ID,a.ID)
+		fmt.Fprintf(&out,`<div class="snapshot-actions"><form method="post" action="/backup/apps/%d/create"><button class="secondary">Local backup now</button></form><form method="post" action="/backup/apps/%d/cloud"><button class="secondary">Cloud backup now</button></form><a class="secondary" href="/backup/apps/%d/cloud-list" hx-boost="false" hx-get="/backup/apps/%d/cloud-list?fragment=1" hx-target="#app-cloud-%d" hx-swap="innerHTML" hx-push-url="false" hx-indicator="closest .snapshot-actions">Refresh cloud copies</a></div>`,a.ID,a.ID,a.ID,a.ID,a.ID)
+		fmt.Fprintf(&out,`<h3>Cloud copies</h3><div id="app-cloud-%d"><p class="note">Use Refresh cloud copies to load the list. Cloud-only snapshots are removed from local storage after upload.</p></div><h3>Local copies</h3>`,a.ID)
 		list,listErr:=snapshotsAt(appSnapshotRoot(a.ID))
 		if listErr!=nil{fmt.Fprintf(&out,`<p class="snapshot-error">%s</p>`,html.EscapeString(listErr.Error()))}
 		if listErr==nil&&len(list)==0{out.WriteString(`<p class="note">No local copies.</p>`)}

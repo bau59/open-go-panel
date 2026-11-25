@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/bau59/open-go-panel/internal/terminal"
+	"github.com/bau59/open-go-panel/internal/state"
 )
 
 const snapshotRoot = "/var/lib/open-go-panel/backups/server"
@@ -194,6 +195,14 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 	if _,err:=cfg.State.DB().ExecContext(ctx,"VACUUM INTO ?",dbfile);err!=nil{return err}
 	defer os.Remove(dbfile)
 	if err:=os.Chmod(dbfile,0600);err!=nil{return err}
+	// Authorization is bound to the original live host. Never resurrect
+	// revoked ChatGPT access by restoring an old server snapshot.
+	copyState,err:=state.Open(dbfile)
+	if err!=nil{return err}
+	_,clearErr:=copyState.DB().ExecContext(ctx,"DELETE FROM mcp_connections")
+	closeErr:=copyState.Close()
+	if clearErr!=nil{return clearErr}
+	if closeErr!=nil{return closeErr}
 	users,err:=cfg.Users.List(ctx)
 	if err!=nil{return err}
 	var accounts []snapshotAccount

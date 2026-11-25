@@ -59,6 +59,8 @@ if systemctl list-unit-files open-go-panel.service >/dev/null 2>&1; then
   systemctl disable --now open-go-panel.service 2>/dev/null || true
 fi
 
+systemctl disable --now open-go-panel-mcp.service 2>/dev/null || true
+rm -f /etc/systemd/system/open-go-panel-mcp.service
 rm -f "${SERVICE_FILE}"
 rm -f "${BIN_PATH}"
 systemctl daemon-reload
