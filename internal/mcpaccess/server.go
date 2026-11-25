@@ -48,10 +48,25 @@ func NewHandler(s *state.Store,runner Runner)http.Handler{
             domain,_,err:=s.Setting(DomainSetting)
             if err!=nil{http.Error(w,"MCP unavailable",503);return}
             if domain==""||!strings.EqualFold(r.Host,domain){http.NotFound(w,r);return}
-            if origin:=r.Header.Get("Origin");origin!=""&&origin!="https://"+domain&&origin!="https://chatgpt.com"{http.Error(w,"invalid origin",403);return}
+            if !validRequestOrigin(r,domain){http.Error(w,"invalid origin",403);return}
         }
         mux.ServeHTTP(w,r)
     })
+}
+
+// The OAuth browser continuation is a same-origin navigation protected by
+// a one-time, high-entropy polling secret. Older approval pages used
+// no-referrer, which makes browsers serialize the Origin as "null".
+// Do not extend that exception to the MCP transport or token endpoint.
+func validRequestOrigin(r *http.Request,domain string)bool{
+    values:=r.Header.Values("Origin")
+    if len(values)==0{return true}
+    if len(values)!=1{return false}
+    origin:=values[0]
+    if origin=="https://"+domain||origin=="https://chatgpt.com"{return true}
+    if origin!="null"||r.Method!=http.MethodPost||r.Header.Get("Sec-Fetch-Site")!="same-origin"||r.Header.Get("Sec-Fetch-Mode")!="navigate"{return false}
+    parts:=strings.Split(r.URL.Path,"/")
+    return len(parts)==4&&parts[0]==""&&parts[1]=="oauth"&&len(parts[2])==43&&parts[3]=="continue"
 }
 
 type rpcRequest struct{

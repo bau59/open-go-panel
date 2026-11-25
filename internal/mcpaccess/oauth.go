@@ -106,6 +106,9 @@ func (o *OAuth) register(w http.ResponseWriter,r *http.Request){
 var approvalPage=template.Must(template.New("approval").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Go Panel authorization</title><style>body{font:16px system-ui;max-width:620px;margin:5vh auto;padding:20px;color:#172033}code{overflow-wrap:anywhere}button{padding:12px 20px}</style><h1>Authorize ChatGPT</h1><p>Open the private Open Go Panel session and approve the matching request for this application. Do not approve an unrelated request.</p><p>Linux user: <strong>{{.Owner}}</strong></p><p>Application root: <code>{{.Root}}</code></p>{{if .RequestID}}<p>Request ID: <code>{{.RequestID}}</code></p>{{end}}<p>Requested access: project files and isolated command execution.</p><form method="post" action="{{.Action}}"><input type="hidden" name="poll" value="{{.Poll}}"><button type="submit">Continue after approval</button></form></html>`))
 
 func renderApproval(w http.ResponseWriter,c Connection,poll,requestID string){
+    // Preserve the browser's same-origin POST Origin without leaking the
+    // authorization URL or its query parameters to the OAuth callback.
+    w.Header().Set("Referrer-Policy","strict-origin")
     w.Header().Set("Content-Type","text/html; charset=utf-8")
     _=approvalPage.Execute(w,struct{Owner,Root,Poll,RequestID,Action string}{c.Owner,c.Root,poll,requestID,"/oauth/"+c.ID+"/continue"})
 }
