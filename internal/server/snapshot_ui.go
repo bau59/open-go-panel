@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -51,6 +52,17 @@ func registerSnapshotRoutes(mux *http.ServeMux,store *sessionStore,cfg Config)*s
 			idx,err:=readSnapshotIndex(filepath.Join(snapshotRoot,id),id);if err!=nil{return err}
 			return m.upload(ctx,idx)
 		})
+	})
+	post("/backup/snapshots/restore",func(r *http.Request)error{
+		id:=r.FormValue("id")
+		if !validSnapshotID(id)||r.FormValue("confirm")!="RESTORE"{return fmt.Errorf("type RESTORE to confirm recovery")}
+		if m.status().State=="Running"{return fmt.Errorf("a backup operation is running")}
+		if err:=checkFreshServer(r.Context(),cfg);err!=nil{return err}
+		if _,err:=readSnapshotIndex(filepath.Join(snapshotRoot,id),id);err!=nil{return err}
+		binary,err:=os.Executable();if err!=nil{return err}
+		cmd:=exec.CommandContext(r.Context(),"systemd-run","--unit=open-go-panel-restore","--on-active=5s","--collect","--property=Type=exec",binary,"--restore-server-snapshot",id)
+		if err:=cmd.Run();err!=nil{return fmt.Errorf("could not queue recovery: %w",err)}
+		return nil
 	})
 	post("/backup/snapshots/retrieve",func(r *http.Request)error{
 		id:=r.FormValue("id")
@@ -121,8 +133,9 @@ func (m *snapshotManager) render(r *http.Request)string{
 			link:="/backup/snapshots/"+idx.ID+"/download/"+f.Path
 			fmt.Fprintf(&out,`<div class="snapshot-row"><code>%s</code><span>%.1f MiB</span><a class="secondary" href="%s">Download</a></div>`,html.EscapeString(f.Path),float64(f.Size)/(1024*1024),html.EscapeString(link))
 		}
-		fmt.Fprintf(&out,`<form method="post" action="/backup/snapshots/upload"><input type="hidden" name="id" value="%s"><button class="button">Upload this snapshot</button></form></div></details>`,html.EscapeString(idx.ID))
+		fmt.Fprintf(&out,`<form method="post" action="/backup/snapshots/upload"><input type="hidden" name="id" value="%s"><button class="button">Upload this snapshot</button></form>`,html.EscapeString(idx.ID))
+		fmt.Fprintf(&out,`<details class="snapshot-restore"><summary class="secondary">Restore on fresh server</summary><p class="note">Install required runtimes first. Restores users, files, SQL, panel state, Caddy, app services, cron and previously running commands. The panel stops and restarts. Only use trusted snapshots; the target must have no managed resources. Docker volumes and unmanaged host files are not included.</p><form method="post" action="/backup/snapshots/restore"><input type="hidden" name="id" value="%s"><label>Type RESTORE<input name="confirm" required autocomplete="off"></label><button class="danger">Restore managed server</button></form></details></div></details>`,html.EscapeString(idx.ID))
 	}
-	out.WriteString(`<p class="note">Cloud recovery verifies and stages the archives locally. Applying a server snapshot requires an offline recovery procedure; it does not overwrite the live server.</p></section>`)
+	out.WriteString(`<p class="note">Download and verify a cloud snapshot first. Fresh-host recovery runs as an offline systemd job. Inspect progress with journalctl -u open-go-panel-restore.service. A failed restore may be partial; keep the source backups.</p></section>`)
 	return out.String()
 }
