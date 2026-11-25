@@ -216,7 +216,7 @@ func redisPage(data redisPageData) string {
 	}
 
 	return pageHead("Redis") + `<body>` + appHeader("databases") + `
-	<main class="shell">
+	<main class="shell" data-panel-key="redis" data-panel-tabs="keys,settings">
 		<div class="page-head">
 			<div>
 				<p class="eyebrow">Cache / key-value store</p>
@@ -239,9 +239,9 @@ func redisPage(data redisPageData) string {
 			<div class="metric"><span>Keys</span><strong>` + fmt.Sprintf("%d", data.Metrics.TotalKeys) + `</strong><small>all logical databases</small></div>
 		</section>
 
-		` + detail + `
+		<div data-panel-tab="keys">` + detail + `</div>
 
-		<section class="panel">
+		<section class="panel" data-panel-tab="keys">
 			<form method="get" action="/databases/redis" class="toolbar redis-toolbar">
 				<select name="db">` + dbOptions.String() + `</select>
 				<input name="q" value="` + html.EscapeString(data.Query) + `" placeholder="Search keys or Redis glob pattern">
@@ -268,7 +268,7 @@ func redisPage(data redisPageData) string {
 			</div>
 		</section>
 
-		<section class="panel panel-pad danger-zone" style="margin-top:16px">
+		<section class="panel panel-pad danger-zone" style="margin-top:16px" data-panel-tab="settings">
 			<div class="section-title">
 				<div><h2>Clear Redis cache</h2><p class="note" style="margin:6px 0 0">Deletes every key from every Redis logical database using FLUSHALL ASYNC.</p></div>
 				<form method="post" action="/databases/redis/flushall" onsubmit="return confirm('Delete ALL Redis keys from ALL logical databases? This cannot be undone.')"><button class="danger">Flush all keys</button></form>

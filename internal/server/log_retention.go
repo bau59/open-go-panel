@@ -184,10 +184,10 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  }
  alert:=""
  if problem!=""{alert=`<div class="alert">`+html.EscapeString(problem)+`</div>`}
- return pageHead("Log retention")+`<body>`+appHeader("log-retention")+`<main class="shell">
+ return pageHead("Log retention")+`<body>`+appHeader("log-retention")+`<main class="shell" data-panel-key="log-retention" data-panel-tabs="retention,sources">
  <div class="page-head"><div><p class="eyebrow">Observability / retention</p><h1>Log retention</h1>
  <p class="sub">One place to disable optional logs and set retention. Essential service errors remain available.</p></div><a class="secondary" href="/performance">HTTP performance</a></div>`+alert+switchPanel+`
- <section class="panel panel-pad" style="margin-bottom:16px">
+ <section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="retention">
  <h2>System journal (shared limit)</h2>
  <p class="note">Caddy access/error logs and non-namespaced systemd services share this quota. Managed Go applications with dedicated journal namespaces have their own retention policy and are not governed by this shared limit.</p>
  <form method="post" action="/log-retention/journal" style="margin-top:16px;max-width:700px">
@@ -198,7 +198,7 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  option(days,1,"1 day")+option(days,3,"3 days")+option(days,7,"7 days")+option(days,14,"14 days")+option(days,30,"30 days")+`</select></div></div>
  <p class="note">Applies via /etc/systemd/journald.conf.d. Restarting journald is required; existing archived journals are not vacuumed by this action. If journald uses volatile storage, SystemMaxUse may not govern its disk allocation.</p>
  <button class="button" type="submit" onclick="return confirm('Apply shared system journal limits and restart systemd-journald?')">Apply journal limits</button></form></section>
- <section class="panel panel-pad" style="margin-bottom:16px"><h2>Caddy HTTP metrics source</h2>
+ <section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="sources"><h2>Caddy HTTP metrics source</h2>
  <p class="note">Choose the already configured JSON access-log destination. Journal mode reads caddy.service from journald; file mode reads a JSON-lines file in /var/log/caddy/. No background collector is running. Reports read a bounded portion of the selected source only when requested.</p>
  <form method="post" action="/log-retention/source" style="margin-top:14px">
  <div class="caddy-timeouts"><div><label>Driver</label><select name="source">
@@ -206,22 +206,22 @@ func logRetentionPage(sizeMB,days,auditDays,redisLength int,problem,appRows stri
  <option value="file"`+selected(source,"file")+`>JSON file</option></select></div>
  <div><label>Caddy JSON file path</label><input name="file_path" value="`+html.EscapeString(filePath)+`" placeholder="/var/log/caddy/access.log"></div></div>
  <button class="secondary" style="margin-top:12px">Save metrics source</button></form></section>
- <section class="panel panel-pad" style="margin-bottom:16px"><h2>HTTP performance reports</h2>
+ <section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="sources"><h2>HTTP performance reports</h2>
  <p class="note">Reports read Caddy's existing JSON logs only on demand. There is no continuous importer, duplicate SQLite request history or separate retention policy for performance metrics.</p></section>
- <section class="panel panel-pad" style="margin-bottom:16px"><h2>Panel audit trail (SQLite)</h2>
+ <section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="retention"><h2>Panel audit trail (SQLite)</h2>
  <p class="note">Audit records have their own retention window, independent of systemd-journald. Expired events are deleted immediately on save and on subsequent audit writes.</p>
  <form method="post" action="/log-retention/audit" class="compact-form" style="max-width:640px">
  <select name="days" aria-label="Audit log retention">`+
  option(auditDays,7,"7 days")+option(auditDays,14,"14 days")+option(auditDays,30,"30 days")+option(auditDays,90,"90 days")+option(auditDays,365,"365 days") +`</select>
  <button class="secondary">Save audit retention</button></form></section>
- <section class="panel" style="margin-bottom:16px"><div class="panel-pad"><h2>Managed application journal retention</h2>
+ <section class="panel" style="margin-bottom:16px" data-panel-tab="retention"><div class="panel-pad"><h2>Managed application journal retention</h2>
  <p class="note">Existing per-app retention policies use separate journald namespaces. Capture can be disabled per application. The new setting takes effect on its next start, or you can explicitly choose Restart now.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Application</th><th>Retention</th><th></th></tr></thead><tbody>`+appRows+`</tbody></table></div></section>
- <section class="panel panel-pad" style="margin-bottom:16px"><h2>Redis SLOWLOG memory buffer</h2>
+ <section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="retention"><h2>Redis SLOWLOG memory buffer</h2>
  <p class="note">Redis retains a bounded number of slow commands in memory, independent of journald. The limit is per Redis instance, not per logical database. Changes use CONFIG SET and CONFIG REWRITE.</p>
  <form method="post" action="/log-retention/redis" class="compact-form" style="max-width:640px">
  <select name="length" aria-label="Redis SLOWLOG maximum commands">`+option(redisLength,128,"128 commands")+option(redisLength,256,"256 commands")+option(redisLength,512,"512 commands")+option(redisLength,1024,"1024 commands")+`</select><button class="secondary">Save Redis SLOWLOG limit</button></form></section>
- <section class="panel panel-pad"><h2>Source-specific logging and retention</h2>
+ <section class="panel panel-pad" data-panel-tab="sources"><h2>Source-specific logging and retention</h2>
  <p class="note">Separate controls are shown only where the underlying service genuinely supports an independent policy.</p>
  <div class="table-scroll"><table><thead><tr><th>Log source</th><th>Storage / retention scope</th><th>Configure</th></tr></thead><tbody>
  <tr><td>Caddy access and error</td><td>Shared journald or custom Caddy file. Performance reads existing logs without copying them.</td><td><a class="secondary" href="/caddy/logs">Caddy logs</a></td></tr>

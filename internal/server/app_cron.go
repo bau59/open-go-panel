@@ -159,7 +159,7 @@ func cronBlock(ctx context.Context, cfg Config, app panelapp.App) string {
 	}
 	jobs, err := cfg.Apps.CronJobs(ctx, app.ID)
 	if err != nil {
-		return `<section class="panel panel-pad app-card-wide" id="cron-jobs" style="margin-top:16px"><h2>Scheduled tasks</h2><p class="alert">` +
+		return `<section class="panel panel-pad app-card-wide" id="cron-jobs" data-panel-tab="cron"><h2>Scheduled tasks</h2><p class="alert">` +
 			html.EscapeString(err.Error()) + `</p></section>`
 	}
 	base := fmt.Sprintf("/apps/%d/cron", app.ID)
@@ -199,7 +199,7 @@ func cronBlock(ctx context.Context, cfg Config, app panelapp.App) string {
 	if app.Type == "php" && app.Service.PHPVersion == "7.4" {
 		phpNote = `<p class="note">PHP 7.4 tasks execute inside this application's isolated Docker container.</p>`
 	}
-	return `<section class="panel panel-pad app-card-wide" id="cron-jobs" style="margin-top:16px">
+	return `<section class="panel panel-pad app-card-wide" id="cron-jobs" data-panel-tab="cron">
 		<div class="section-title"><div><h2>Scheduled tasks</h2><p class="note" style="margin-top:6px">Five-field cron expressions, server-local timezone. Jobs use systemd timers and run without the panel.</p></div><span class="meta-chip">` +
 		fmt.Sprintf("%d tasks", len(jobs)) + `</span></div>` +
 		table + phpNote +

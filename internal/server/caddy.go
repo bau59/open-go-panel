@@ -519,7 +519,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 	}
 
 	return pageHead("Caddy") + `<body>` + appHeader("caddy") + `
-	<main class="shell">
+	<main class="shell" data-panel-key="caddy" data-panel-tabs="domains,settings,configuration">
 		<div class="page-head">
 			<div>
 				<p class="eyebrow">Edge / routing</p>
@@ -533,7 +533,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 		</div>
 		` + alert + `
 
-		<section class="panel" style="margin-bottom:16px">
+		<section class="panel" style="margin-bottom:16px" data-panel-tab="domains">
 			<div class="panel-pad" style="padding-bottom:10px">
 				<div class="section-title" style="margin-bottom:0">
 					<div><h2>Domains</h2><p class="note" style="margin:6px 0 0">Domains may be connected to apps or parked independently.</p></div>
@@ -549,9 +549,9 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</table>
 		</section>
 
-		` + selectedEditor + `
+		<div data-panel-tab="domains">` + selectedEditor + `</div>
 
-		<section class="panel panel-pad" style="margin-bottom:16px">
+		<section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="settings">
 			<div class="section-title">
 				<div>
 					<h2>Global defaults</h2>
@@ -609,7 +609,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 
 
 
-		<details class="panel panel-pad advanced-block" style="margin-bottom:16px">
+		<details class="panel panel-pad advanced-block" style="margin-bottom:16px" data-panel-tab="configuration">
 			<summary class="section-title" style="margin:0;cursor:pointer">
 				<div><h2>Advanced global template</h2><p class="note" style="margin:6px 0 0">Raw Caddy template. Normally you do not need to edit this.</p></div>
 				<span class="secondary">Open</span>
@@ -625,7 +625,7 @@ func caddyPage(status string, sites []panelcaddy.Site, config, template string, 
 			</div>
 		</details>
 
-		<details class="panel panel-pad advanced-block">
+		<details class="panel panel-pad advanced-block" data-panel-tab="configuration">
 			<summary class="section-title" style="margin:0;cursor:pointer">
 				<div><h2>Generated config</h2><p class="note" style="margin:6px 0 0">Read-only configuration currently managed by Open Go Panel.</p></div>
 				<span class="secondary">View</span>
@@ -663,7 +663,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 			routeLabel = "HTTP"
 		}
 		return `
-			<section class="panel panel-pad app-card">
+			<section class="panel panel-pad app-card" data-panel-tab="overview">
 				<div class="section-title">
 					<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Public address and Caddy routing.</p></div>
 					<span class="state-text ok"><i></i>connected</span>
@@ -692,7 +692,7 @@ func appDomainBlock(cfg Config, app panelapp.App) string {
 			</section>`
 	}
 	return `
-		<section class="panel panel-pad app-card">
+		<section class="panel panel-pad app-card" data-panel-tab="overview">
 			<div class="section-title">
 				<div><h2>Domain</h2><p class="note" style="margin:6px 0 0">Connect a public domain. Caddy handles routing and the global web defaults.</p></div>
 			</div>

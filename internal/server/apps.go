@@ -798,7 +798,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			rawUnit = unit
 		}
 		serviceBlock = `
-		<details id="service-settings" class="panel panel-pad advanced-block app-card-wide service-settings-card" style="margin-top:16px">
+		<details id="service-settings" class="panel panel-pad advanced-block app-card-wide service-settings-card" style="margin-top:16px" data-panel-tab="settings">
 			<summary class="section-title" style="margin:0;cursor:pointer">
 				<div>
 					<h2>Service settings</h2>
@@ -914,7 +914,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 	}
 
 	return pageHead(app.Name) + `<body>` + appHeader("apps") + `
-	<main class="shell app-shell">
+	<main class="shell app-shell" data-panel-key="app-` + fmt.Sprintf("%d", app.ID) + `" data-panel-tabs="overview,deploy,databases,cron,chatgpt,settings">
 		<div class="app-page-head">
 			<div>
 				<a class="app-breadcrumb" href="/apps">Applications</a>
@@ -959,7 +959,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 
 		` + serviceBlock + `
 
-		<details class="panel panel-pad advanced-block danger-zone" style="margin-top:16px">
+		<details class="panel panel-pad advanced-block danger-zone" style="margin-top:16px" data-panel-tab="settings">
 			<summary class="section-title" style="margin:0;cursor:pointer">
 				<div><h2>Danger zone</h2><p class="note" style="margin:6px 0 0">Destructive panel actions are kept out of the normal workflow.</p></div>
 				<span class="danger">Open</span>
@@ -1184,7 +1184,7 @@ func promotionBlock(cfg Config, app panelapp.App) string {
 			</div>
 		</form>`
 	}
-	return `<section class="panel panel-pad app-card app-card-wide">
+	return `<section class="panel panel-pad app-card app-card-wide" data-panel-tab="deploy">
 		<div class="section-title"><div><h2>Dev → Production</h2>
 			<p class="note" style="margin:6px 0 0">Air keeps running in development. Compile a snapshot and deploy the executable plus selected runtime directories to a separate production application.</p>
 		</div><span class="meta-chip">Go · Air</span></div>` +
@@ -1209,7 +1209,7 @@ func deployBlock(cfg Config, app panelapp.App) string {
 	if app.Type == "go" && app.Service.RunMode == "go-binary" {
 		disabled := " disabled"
 		if cfg.Apps.HasProductionRollback(app.ID) { disabled = "" }
-		return `<section class="panel panel-pad app-card app-card-wide">
+		return `<section class="panel panel-pad app-card app-card-wide" data-panel-tab="deploy">
 			<div class="section-title"><div><h2>Production binary</h2>
 			<p class="note" style="margin:6px 0 0">This application runs a compiled executable. Deploy it from a separate Go application in Air development mode using Build → Production.</p></div>
 			<span class="meta-chip">production</span></div>
@@ -1287,7 +1287,7 @@ func deployBlock(cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<section class="panel panel-pad app-card app-card-wide">
+		<section class="panel panel-pad app-card app-card-wide" data-panel-tab="deploy">
 			<div class="section-title">
 				<div><h2>Deploy</h2><p class="note" style="margin:6px 0 0">Pull a Git branch into the app directory, prepare dependencies and restart the service.</p></div>
 				<span class="meta-chip">` + html.EscapeString(deployed) + `</span>
@@ -1477,7 +1477,7 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<section class="panel panel-pad app-card app-card-wide app-card-health">
+		<section class="panel panel-pad app-card app-card-wide app-card-health" data-panel-tab="overview">
 			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Each layer is checked independently. HTTP 5xx is treated as unhealthy.</p></div></div>
 			<div class="health-grid">
 				` + processCard + portCard + localHTTPCard + publicCard + `
@@ -1542,7 +1542,7 @@ func databaseBlock(cfg Config, app panelapp.App) string {
 	}
 
 	return `
-		<section class="panel panel-pad app-card">
+		<section class="panel panel-pad app-card" data-panel-tab="databases">
 			<div class="section-title" style="margin-bottom:10px">
 				<div>
 					<h2>Databases</h2>

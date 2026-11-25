@@ -654,7 +654,7 @@ func databasesPage(data databasePageData) string {
 			current = data.RecommendedMySQL
 		}
 		mysqlSettings = `
-		<section class="panel panel-pad" style="margin-bottom:16px">
+		<section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="settings">
 			<div class="section-title">
 				<div>
 					<h2>MySQL server settings</h2>
@@ -674,7 +674,7 @@ func databasesPage(data databasePageData) string {
 	}
 
 	return pageHead("Databases") + `<body>` + appHeader("databases") + `
-	<main class="shell">
+	<main class="shell" data-panel-key="databases" data-panel-tabs="databases,settings,tools">
 		<div class="page-head">
 			<div>
 				<p class="eyebrow">Data</p>
@@ -700,7 +700,7 @@ func databasesPage(data databasePageData) string {
 			</div>
 		</section>
 
-		<section class="panel" style="margin-bottom:16px">
+		<section class="panel" style="margin-bottom:16px" data-panel-tab="databases">
 			<div class="panel-pad database-list-head">
 				<div>
 					<h2>Managed SQL databases</h2>
@@ -725,12 +725,12 @@ func databasesPage(data databasePageData) string {
 			</div>
 		</section>
 
-		` + databaseBackupTaskHTML(data.BackupTask) + `<p class="note db-backup-link">Backup schedules and cloud storage are managed in <a href="/backup?section=databases">Backups</a>.</p>
+		<div data-panel-tab="databases">` + databaseBackupTaskHTML(data.BackupTask) + `<p class="note db-backup-link">Backup schedules and cloud storage are managed in <a href="/backup?section=databases">Backups</a>.</p></div>
 
 
 		` + mysqlSettings + `
 
-		<section class="panel panel-pad" style="margin-bottom:16px">
+		<section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="tools">
 			<div class="section-title">
 				<div><h2>Adminer</h2><p class="note" style="margin:6px 0 0">Runs only on 127.0.0.1:8787 and is exposed through the authenticated panel proxy.</p></div>
 				` + stateText(data.Adminer.Active) + `

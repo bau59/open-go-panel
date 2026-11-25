@@ -1,5 +1,5 @@
 /* Open Go Panel: progressive HTMX enhancement and page-local controls.
-   No framework or persistent browser data. Native links/forms remain the fallback. */
+   No framework. Only the selected section is kept in session storage; native links/forms remain the fallback. */
 (() => {
   'use strict';
 
@@ -208,6 +208,101 @@
     });
   }
 
+  // Section tabs are presentation only. All original forms stay in the DOM;
+  // without JavaScript all sections remain available as ordinary panels.
+  const tabLabels = {
+    overview:'Overview', deploy:'Deploy', databases:'Databases', cron:'Scheduled tasks',
+    chatgpt:'ChatGPT access', settings:'Settings', domains:'Domains',
+    configuration:'Configuration', tools:'Tools', blocked:'Blocked IPs',
+    alerts:'Alerts', trusted:'Trusted IPs', keys:'Keys', software:'Software',
+    php:'PHP runtimes', containers:'Containers', create:'Create container',
+    versions:'Previous versions', routes:'Slow routes', requests:'Request log',
+    retention:'Retention', sources:'Logging sources'
+  };
+  const tabControllers = new WeakMap();
+  function fragmentTab(main) {
+    let hash;
+    try { hash = decodeURIComponent(location.hash.slice(1)); } catch (_) { return ''; }
+    if (hash.startsWith('tab-')) return hash.slice(4);
+    const target = hash && document.getElementById(hash);
+    return target && main.contains(target) ? target.closest('[data-panel-tab]')?.dataset.panelTab || '' : '';
+  }
+  function initPageTabs() {
+    const main = document.querySelector('main[data-panel-tabs]');
+    if (!main || tabControllers.has(main)) return;
+    const panels = Array.from(main.querySelectorAll('[data-panel-tab]'));
+    const keys = main.dataset.panelTabs.split(',').filter(key => panels.some(panel => panel.dataset.panelTab === key));
+    main.querySelectorAll(':scope > .service-tabs').forEach(nav => nav.remove());
+    if (keys.length < 2) { panels.forEach(panel => { panel.hidden = false; }); return; }
+    const storageKey = 'ogp.tab.' + main.dataset.panelKey;
+    const nav = document.createElement('nav');
+    nav.className = 'backup-tabs service-tabs';
+    nav.setAttribute('aria-label', 'Page sections');
+    const buttons = new Map();
+    let active;
+    function select(key, remember = true) {
+      if (!keys.includes(key)) return;
+      active = key;
+      panels.forEach(panel => { panel.hidden = panel.dataset.panelTab !== key; });
+      buttons.forEach((button, id) => {
+        button.classList.toggle('active', id === key);
+        button.setAttribute('aria-pressed', String(id === key));
+      });
+      if (remember) {
+        try { sessionStorage.setItem(storageKey, key); } catch (_) {}
+      }
+    }
+    keys.forEach(key => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = tabLabels[key] || key;
+      button.addEventListener('click', () => {
+        select(key);
+        history.replaceState(history.state, '', '#tab-' + key);
+      });
+      buttons.set(key, button);
+      nav.appendChild(button);
+    });
+    nav.addEventListener('keydown', event => {
+      const index = keys.indexOf(active);
+      const next = event.key === 'ArrowRight' ? (index + 1) % keys.length :
+        event.key === 'ArrowLeft' ? (index + keys.length - 1) % keys.length : -1;
+      if (next < 0) return;
+      event.preventDefault();
+      buttons.get(keys[next]).click();
+      buttons.get(keys[next]).focus();
+    });
+    let first = panels[0];
+    while (first.parentElement !== main) first = first.parentElement;
+    main.insertBefore(nav, first);
+    let saved = '';
+    try { saved = sessionStorage.getItem(storageKey) || ''; } catch (_) {}
+    const fragment = fragmentTab(main);
+    const initial = main.dataset.panelInitial;
+    select(keys.includes(fragment) ? fragment : keys.includes(initial) ? initial : keys.includes(saved) ? saved : keys[0]);
+    tabControllers.set(main, {select, keys});
+  }
+  function revealTabFragment() {
+    const main = document.querySelector('main[data-panel-tabs]');
+    if (!main) return;
+    const controller = tabControllers.get(main);
+    const key = fragmentTab(main);
+    if (controller?.keys.includes(key)) controller.select(key);
+  }
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link) return;
+    let id;
+    try { id = decodeURIComponent(link.getAttribute('href').slice(1)); } catch (_) { return; }
+    const target = document.getElementById(id);
+    const main = target?.closest('main[data-panel-tabs]');
+    const panel = target?.closest('[data-panel-tab]');
+    if (main && panel) tabControllers.get(main)?.select(panel.dataset.panelTab);
+  }, true);
+  addEventListener('hashchange', revealTabFragment);
+  document.addEventListener('htmx:afterSettle', revealTabFragment);
+  document.addEventListener('htmx:historyRestore', () => { initPageTabs(); revealTabFragment(); });
+
   function initUI(root = document) {
     enhanceLinks(root);
     initTables(root);
@@ -215,6 +310,7 @@
     initFileMenus(root);
     initFileSelection(root);
     initDatabaseOffsiteForm(root);
+    initPageTabs();
   }
 
   document.addEventListener('click', (event) => {
