@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 )
 
 const PartSize int64 = 900 * 1024 * 1024
+
+var ErrNotFound = errors.New("Yandex Disk resource not found")
 
 type Client struct {
 	Token string
@@ -48,6 +51,7 @@ func (c Client) request(ctx context.Context, method, endpoint, remote string, ou
 	res, err := c.HTTP.Do(req)
 	if err != nil { return fmt.Errorf("disk API request failed") }
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound { return ErrNotFound }
 	if res.StatusCode < 200 || res.StatusCode >= 300 { return fmt.Errorf("disk API: HTTP %d",res.StatusCode) }
 	if out != nil { return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(out) }
 	return nil
@@ -147,20 +151,8 @@ func (c Client) UploadArchive(ctx context.Context, remote, filename string) (Man
 // DownloadArchive reconstructs a published archive into an exclusive temporary
 // file, verifies all parts, then publishes it without replacing an existing file.
 func (c Client) DownloadArchive(ctx context.Context, remote, filename string) error {
-	var m Manifest
-	res,err:=c.download(ctx,remote+"/manifest.json")
+	m,err:=c.ArchiveManifest(ctx,remote)
 	if err!=nil{return err}
-	err=json.NewDecoder(io.LimitReader(res.Body,4<<20)).Decode(&m)
-	res.Body.Close()
-	if err!=nil{return err}
-	if m.Version!=1 || m.Size<=0 || len(m.Parts)==0 {return fmt.Errorf("invalid manifest")}
-	validHash:=regexp.MustCompile("^[0-9a-f]{64}$")
-	var total int64
-	for i,p:=range m.Parts{
-		if p.Name!=fmt.Sprintf("archive.part%06d",i+1)||p.Size<=0||p.Size>PartSize||!validHash.MatchString(p.SHA256)||p.Size>m.Size-total{return fmt.Errorf("invalid manifest part")}
-		total+=p.Size
-	}
-	if total!=m.Size{return fmt.Errorf("manifest size mismatch")}
 	tmp,err:=os.CreateTemp(filepath.Dir(filename),".ogp-restore-*")
 	if err!=nil{return err}
 	defer os.Remove(tmp.Name())
@@ -188,7 +180,7 @@ func (c Client) download(ctx context.Context,remote string)(*http.Response,error
 	if err!=nil{return nil,fmt.Errorf("invalid download request")}
 	res,err:=c.HTTP.Do(req)
 	if err!=nil{return nil,fmt.Errorf("disk download failed")}
-	if res.StatusCode!=200{res.Body.Close();return nil,fmt.Errorf("disk download: HTTP %d",res.StatusCode)}
+	if res.StatusCode!=200{res.Body.Close();if res.StatusCode==404{return nil,ErrNotFound};return nil,fmt.Errorf("disk download: HTTP %d",res.StatusCode)}
 	return res,nil
 }
 
@@ -217,7 +209,7 @@ func (c Client) ListDirectories(ctx context.Context,remote string)([]string,erro
 		req.Header.Set("Authorization","OAuth "+c.Token)
 		res,err:=c.HTTP.Do(req)
 		if err!=nil{return nil,fmt.Errorf("disk directory listing failed")}
-		if res.StatusCode!=200{res.Body.Close();return nil,fmt.Errorf("disk listing: HTTP %d",res.StatusCode)}
+		if res.StatusCode!=200{res.Body.Close();if res.StatusCode==404{return nil,ErrNotFound};return nil,fmt.Errorf("disk listing: HTTP %d",res.StatusCode)}
 		var data struct{Embedded struct{Items []struct{Name string `json:"name"`;Type string `json:"type"`} `json:"items"`;Total int `json:"total"`} `json:"_embedded"`}
 		err=json.NewDecoder(io.LimitReader(res.Body,8<<20)).Decode(&data)
 		res.Body.Close()
@@ -233,4 +225,19 @@ func (c Client) DeleteDirectory(ctx context.Context,remote string)error{
 	if !strings.HasPrefix(remote,"disk:/")&&!strings.HasPrefix(remote,"app:/"){return fmt.Errorf("invalid remote directory")}
 	if strings.Count(remote,"/")<3{return fmt.Errorf("refusing to delete storage root")}
 	return c.request(ctx,"DELETE","",remote,nil)
+}
+
+// ArchiveManifest reads and validates the completion marker for an archive.
+func (c Client) ArchiveManifest(ctx context.Context,remote string)(Manifest,error){
+	var m Manifest
+	if err:=c.GetJSON(ctx,remote+"/manifest.json",&m);err!=nil{return m,err}
+	if m.Version!=1 || m.Size<=0 || len(m.Parts)==0 {return m,fmt.Errorf("invalid manifest")}
+	validHash:=regexp.MustCompile("^[0-9a-f]{64}$")
+	var total int64
+	for i,p:=range m.Parts{
+		if p.Name!=fmt.Sprintf("archive.part%06d",i+1)||p.Size<=0||p.Size>PartSize||!validHash.MatchString(p.SHA256)||p.Size>m.Size-total{return m,fmt.Errorf("invalid manifest part")}
+		total+=p.Size
+	}
+	if total!=m.Size{return m,fmt.Errorf("manifest size mismatch")}
+	return m,nil
 }

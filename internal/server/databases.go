@@ -45,6 +45,7 @@ type databasePageData struct {
 
 func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 	registerDatabaseSlowLogRoutes(mux, store, cfg)
+	registerDatabaseCloudBackupRoutes(mux,store,cfg)
 	mux.Handle("GET /databases", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeDatabasesPage(w, r, cfg, http.StatusOK, "")
 	})))
