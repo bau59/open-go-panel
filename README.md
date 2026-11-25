@@ -522,3 +522,46 @@ The server snapshot includes consistent SQLite state, Linux accounts and home di
 Archives contain passwords, environment files and other secrets in their original form. They are not encrypted at rest by the panel. Restrict access to the cloud folder and only recover from trusted snapshots. Keep a separate copy of critical data.
 
 Database backup schedules and history are under **Backups → Databases**. The Databases page retains quick local actions. Open **Cloud copies** for a database to list its remote SQL archives and retrieve a copy to the server; retrieval never changes the live database. Restore explicitly from local history after retrieval.
+
+
+### ChatGPT access (MCP)
+
+The installer delivers one independent `open-go-panel-mcp.service` using the
+same panel binary in `mcp` mode. It listens on `127.0.0.1:18443`. Closing the
+administrative panel does not stop MCP.
+
+1. In **Infrastructure → ChatGPT access**, set a dedicated HTTPS hostname
+   (for example, `mcp.example.com`) with DNS pointing to this VPS. The panel
+   configures Caddy; test HTTPS before connecting an application.
+2. In an application, open **ChatGPT access**, enable the connection and copy
+   its plugin name and MCP URL.
+3. In ChatGPT on the web, open **Plugins → + → Add custom MCP server**.
+   Use the displayed URL, OAuth with dynamic registration, and install the
+   personal plugin. Match the authorization request ID shown in the OAuth
+   browser against the private panel request; approve it there, then continue
+   in the OAuth browser.
+4. In a new chat, select that plugin with `@`. A different application needs
+   a different connection. Revoke access from the application's page.
+
+The MCP service uses per-application OAuth authorization-code + S256 PKCE,
+short-lived access tokens and rotating refresh tokens. Tokens are stored as
+hashes, and deleting an application removes its grants. The public Caddy
+site exposes only OAuth, MCP and health routes; no administrative route is
+forwarded.
+
+Commands and file helpers execute under the application owner inside a
+separate Linux mount/PID/network/IPC namespace. Only the selected project
+(`/workspace`), read-only system runtimes and private temporary files are
+visible. Network sockets are disabled; dependency downloads and host-user
+caches are intentionally unavailable. Existing hardlinked files are refused
+because their inode may also be visible in another project. Use vendored
+dependencies or prepare dependencies through the normal deployment process.
+There is no unisolated fallback. File edits require the version returned by
+`read_file`; conflicting edits are rejected. Commands time out within 120
+seconds and output is bounded to 256 KiB. This is direct tool isolation, not
+isolation of the separately deployed application itself.
+
+OAuth authorizations survive service restarts and panel updates. They are
+excluded from full-server backups to prevent a restore from reviving revoked
+access; authorize again on a recovered VPS. Real ChatGPT compatibility
+requires completing the OAuth flow from the user's own web account.
