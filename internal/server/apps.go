@@ -33,7 +33,7 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 
 		status := cfg.Apps.Status(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app), cronBlock(r.Context(), cfg, app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app), cronBlock(r.Context(), cfg, app), mcpAppBlock(r.Context(),cfg,app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -49,6 +49,8 @@ func appHeader(active string) string {
 			shape = `<path d="M6 3h9l4 4v14H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM15 3v5h4M8 12h8M8 16h8"/>`
 		case "activity":
 			shape = `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 3"/>`
+		case "chatgpt":
+			shape = `<path d="M5 7h14v10H9l-4 4V7ZM9 11h6M9 14h4"/>`
 		case "security":
 			shape = `<path d="m12 2 8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4Z"/><path d="m9 12 2 2 4-4"/>`
 		}
@@ -83,6 +85,7 @@ func appHeader(active string) string {
 		menuItem{"caddy", "/caddy", "Caddy & domains"},
 		menuItem{"users", "/users", "Users"},
 		menuItem{"software", "/software", "Software"},
+		menuItem{"chatgpt", "/settings/chatgpt", "ChatGPT access"},
 		menuItem{"terminal", "/terminal", "Terminal"},
 		menuItem{"terminal-background", "/terminal/background", "Background commands"},
 	))
