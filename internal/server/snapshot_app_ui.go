@@ -54,6 +54,24 @@ func (m *snapshotManager) registerAppSnapshotRoutes(mux *http.ServeMux,store *se
 			return m.uploadAt(ctx,idx,root,remote)
 		})
 	})
+	post("/backup/apps/{app}/restore-files",func(r *http.Request)error{
+		id,err:=m.appFromRequest(r);if err!=nil{return err}
+		stamp:=r.FormValue("id")
+		if !validSnapshotID(stamp)||r.FormValue("confirm")!="RESTORE"{return errors.New("type RESTORE to confirm file recovery")}
+		return m.start("Restore application files",func(ctx context.Context)error{
+			a,err:=m.cfg.Apps.Get(id);if err!=nil{return err}
+			root:=filepath.Join(appSnapshotRoot(id),stamp)
+			idx,err:=readSnapshotIndex(root,stamp);if err!=nil{return err}
+			if idx.AppID!=id||idx.Owner!=a.User||idx.Application!=a.Name{return errors.New("application snapshot mismatch")}
+			name:="files/"+a.User+".tar.gz"
+			actual,err:=snapshotFileInfo(root,name);if err!=nil{return err}
+			verified:=false
+			for _,item:=range idx.Files{if item==actual{verified=true;break}}
+			if !verified{return errors.New("application archive failed integrity check")}
+			if _,err:=createAppSnapshot(ctx,m.cfg,id);err!=nil{return fmt.Errorf("cannot create safety snapshot: %w",err)}
+			return m.cfg.Apps.RestoreSnapshotFiles(ctx,id,filepath.Join(root,name))
+		})
+	})
 	post("/backup/apps/{app}/retrieve",func(r *http.Request)error{
 		id,err:=m.appFromRequest(r);if err!=nil{return err}
 		stamp:=r.FormValue("id");if !validSnapshotID(stamp){return errors.New("invalid snapshot ID")}
@@ -115,7 +133,7 @@ func (m *snapshotManager) renderAppSnapshots()string{
 				link:=fmt.Sprintf("/backup/apps/%d/%s/download/%s",a.ID,idx.ID,f.Path)
 				fmt.Fprintf(&out,`<div class="snapshot-row"><code>%s</code><span>%.1f MiB</span><a class="secondary" href="%s">Download</a></div>`,html.EscapeString(f.Path),float64(f.Size)/(1024*1024),html.EscapeString(link))
 			}
-			fmt.Fprintf(&out,`<form method="post" action="/backup/apps/%d/upload"><input type="hidden" name="id" value="%s"><button class="secondary">Upload this snapshot</button></form></div></details>`,a.ID,html.EscapeString(idx.ID))
+			fmt.Fprintf(&out,`<form method="post" action="/backup/apps/%d/upload"><input type="hidden" name="id" value="%s"><button class="secondary">Upload this snapshot</button></form><details class="snapshot-restore"><summary class="secondary">Restore files</summary><p class="note">Creates a safety snapshot before replacing project files. Database and application settings are unchanged. PHP 7.4 containers require full server recovery.</p><form method="post" action="/backup/apps/%d/restore-files"><input type="hidden" name="id" value="%s"><label>Type RESTORE<input name="confirm" required autocomplete="off"></label><button class="danger">Restore files</button></form></details></div></details>`,a.ID,html.EscapeString(idx.ID),a.ID,html.EscapeString(idx.ID))
 		}
 		out.WriteString("</div></details>")
 	}
