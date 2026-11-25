@@ -27,6 +27,11 @@ import (
 )
 
 func main() {
+	if len(os.Args)==3 && os.Args[1]=="--restore-server-snapshot" {
+		logger:=slog.New(slog.NewTextHandler(os.Stdout,nil))
+		if err:=server.RunServerRestore(context.Background(),os.Args[2],logger);err!=nil{logger.Error("restore failed","err",err);os.Exit(1)}
+		return
+	}
     // In helper mode the process runs as the app owner, before any privileged
     // panel config, SQLite state or background services are initialized.
     if len(os.Args) > 1 && os.Args[1] == "--app-file-helper" {
