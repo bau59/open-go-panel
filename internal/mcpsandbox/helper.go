@@ -20,12 +20,17 @@ func bind(source,target string,dir,readonly,device bool)error{
         file,err:=os.OpenFile(target,os.O_CREATE|os.O_EXCL,0644);if err!=nil{return err};if err:=file.Close();err!=nil{return err}
     }
     // Nonrecursive bind deliberately excludes any subordinate host mounts.
-    if err:=unix.Mount(source,target,"",unix.MS_BIND,"");err!=nil{return err}
+    if strings.HasPrefix(source,"/proc/self/fd/"){
+        fd,err:=strconv.Atoi(strings.TrimPrefix(source,"/proc/self/fd/"));if err!=nil{return err}
+        mountFD,err:=unix.OpenTree(fd,"",unix.OPEN_TREE_CLONE|unix.OPEN_TREE_CLOEXEC|unix.AT_EMPTY_PATH);if err!=nil{return fmt.Errorf("clone pinned mount: %w",err)}
+        defer unix.Close(mountFD)
+        if err:=unix.MoveMount(mountFD,"",unix.AT_FDCWD,target,unix.MOVE_MOUNT_F_EMPTY_PATH);err!=nil{return fmt.Errorf("attach pinned mount: %w",err)}
+    }else if err:=unix.Mount(source,target,"",unix.MS_BIND,"");err!=nil{return fmt.Errorf("mount %s: %w",source,err)}
     flags:=uintptr(unix.MS_BIND|unix.MS_REMOUNT|unix.MS_NOSUID)
     if !device{flags|=unix.MS_NODEV}
     if readonly{flags|=unix.MS_RDONLY}
     if device{flags|=unix.MS_NOEXEC}
-    return unix.Mount("",target,"",flags,"")
+    if err:=unix.Mount("",target,"",flags,"");err!=nil{return fmt.Errorf("remount %s: %w",target,err)};return nil
 }
 
 // RunHelper enters the root created only inside the new mount namespace.
