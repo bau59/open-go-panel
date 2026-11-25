@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/bau59/open-go-panel/internal/terminal"
 )
 
 const snapshotRoot = "/var/lib/open-go-panel/backups/server"
@@ -39,11 +41,18 @@ type snapshotIndex struct {
 	Files []snapshotFile `json:"files"`
 }
 
+type snapshotUnit struct {
+	Name string `json:"name"`
+	Enabled bool `json:"enabled"`
+	Active bool `json:"active"`
+}
+
 type snapshotAccount struct {
 	Username string `json:"username"`
 	Home string `json:"home"`
 	UID string `json:"uid"`
 	GID string `json:"gid"`
+	PrimaryGroup string `json:"primary_group"`
 	Shell string `json:"shell"`
 	Shadow string `json:"shadow"`
 	Groups []string `json:"groups"`
@@ -182,6 +191,8 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 		if !backupUsername.MatchString(u.Username)||u.Home!="/home/"+u.Username{return errors.New("invalid managed account")}
 		account,err:=user.Lookup(u.Username)
 		if err!=nil{return err}
+		primary,err:=user.LookupGroupId(account.Gid)
+		if err!=nil{return err}
 		groups,err:=account.GroupIds()
 		if err!=nil{return err}
 		shadow,err:=exec.CommandContext(ctx,"getent","shadow",u.Username).Output()
@@ -192,7 +203,7 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 			if err!=nil{return err}
 			groupsNames=append(groupsNames,group.Name)
 		}
-		accounts=append(accounts,snapshotAccount{Username:u.Username,Home:u.Home,UID:account.Uid,GID:account.Gid,Shell:u.Shell,Shadow:strings.TrimSpace(string(shadow)),Groups:groupsNames})
+		accounts=append(accounts,snapshotAccount{Username:u.Username,Home:u.Home,UID:account.Uid,GID:account.Gid,PrimaryGroup:primary.Name,Shell:u.Shell,Shadow:strings.TrimSpace(string(shadow)),Groups:groupsNames})
 	}
 	data,err:=json.Marshal(accounts)
 	if err!=nil{return err}
@@ -204,9 +215,15 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 	tw:=tar.NewWriter(gz)
 	defer func(){if e:=tw.Close();err==nil{err=e}}()
 	if err:=writeTarBytes(tw,"accounts.json",data);err!=nil{return err}
+	jobs,err:=terminal.NewBackgroundManager(cfg.State).List(ctx)
+	if err!=nil{return err}
+	var running []string
+	for _,job:=range jobs{if job.Status=="running"||job.Status=="starting"{running=append(running,job.ID)}}
+	jobData,err:=json.Marshal(running);if err!=nil{return err}
+	if err:=writeTarBytes(tw,"running-commands.json",jobData);err!=nil{return err}
 	if err:=writeTarTree(ctx,tw,dbfile,"panel.db");err!=nil{return err}
 	paths:=[]string{"/etc/open-go-panel","/etc/caddy","/var/lib/open-go-panel/runners","/var/lib/open-go-panel/env","/usr/local/lib/open-go-panel/ioncube","/etc/mysql/mysql.conf.d/99-open-go-panel.cnf"}
-	for _,pattern:=range []string{"/etc/systemd/system/open-go-panel-*.service","/etc/systemd/system/open-go-panel-*.timer","/etc/systemd/journald@open-go-panel-*.conf","/etc/php/*/fpm/pool.d/*open-go-panel*"}{
+	for _,pattern:=range []string{"/etc/systemd/system/open-go-panel-*.service","/etc/systemd/system/open-go-panel-*.timer","/etc/systemd/journald@open-go-panel-*.conf","/etc/php/*/fpm/pool.d/ogp-app-*.conf","/etc/php/*/mods-available/*ioncube*.ini","/etc/php/*/fpm/conf.d/*ioncube*.ini"}{
 		matches,err:=filepath.Glob(pattern)
 		if err!=nil{return err}
 		paths=append(paths,matches...)
@@ -215,6 +232,14 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 		if _,err:=os.Lstat(name);errors.Is(err,os.ErrNotExist){continue}else if err!=nil{return err}
 		if err:=writeTarTree(ctx,tw,name,"system/"+strings.TrimPrefix(name,"/"));err!=nil{return err}
 	}
+	var units []snapshotUnit
+	for _,name:=range paths{
+		if !strings.HasPrefix(name,"/etc/systemd/system/"){continue}
+		unit:=filepath.Base(name)
+		units=append(units,snapshotUnit{Name:unit,Enabled:exec.CommandContext(ctx,"systemctl","is-enabled","--quiet",unit).Run()==nil,Active:exec.CommandContext(ctx,"systemctl","is-active","--quiet",unit).Run()==nil})
+	}
+	unitData,err:=json.Marshal(units);if err!=nil{return err}
+	if err:=writeTarBytes(tw,"units.json",unitData);err!=nil{return err}
 	packages,err:=exec.CommandContext(ctx,"apt-mark","showmanual").Output()
 	if err!=nil{return err}
 	if err:=writeTarBytes(tw,"packages.txt",packages);err!=nil{return err}
