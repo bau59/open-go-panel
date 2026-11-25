@@ -121,12 +121,9 @@ func createServerSnapshot(ctx context.Context,cfg Config)(snapshotIndex,error){
 		for _,db:=range dbs{
 			name:="databases/"+db.Engine+"/"+db.Name+".sql.gz"
 			if !validSnapshotPath(name){return idx,errors.New("invalid database backup name")}
-			b,err:=cfg.Databases.Backup(ctx,db.ID)
+			b,err:=cfg.Databases.BackupTo(ctx,db.ID,filepath.Join(dir,"databases",db.Engine))
 			if err!=nil{return idx,fmt.Errorf("backup database %s: %w",db.Name,err)}
-			if err:=os.MkdirAll(filepath.Join(dir,"databases",db.Engine),0700);err!=nil{return idx,err}
-			// Both directories live under the same backup root. A hard link
-			// pins the finished immutable SQL snapshot without duplicating it.
-			if err:=os.Link(b.Path,filepath.Join(dir,name));err!=nil{return idx,err}
+			if err:=os.Rename(b.Path,filepath.Join(dir,name));err!=nil{return idx,err}
 			names=append(names,name)
 		}
 	}
