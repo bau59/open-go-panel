@@ -272,3 +272,8 @@ func (s *Store) RecordSuccess(ctx context.Context,conn Connection)error{
     return err
 }
 
+
+
+func (s *Store) ByID(ctx context.Context,id string)(Connection,error){
+    return readConnection(s.db.QueryRowContext(ctx,connectionQuery+" WHERE c.connection_id=? AND c.revoked_at=0",id))
+}
