@@ -121,7 +121,10 @@ func databaseBackupSections(data databasePageData) string {
                         <input name="destination" value="`+html.EscapeString(data.Offsite.Destination)+`" autocomplete="off" placeholder="backup-bucket/my-server">
                     </label>
                     <div class="db-offsite-fields" data-offsite-yandex`+yandexHidden+`>
-                        <label>Yandex Disk OAuth token (read/write Disk access)
+                        <label>Yandex Disk access
+                            <select name="yandex_scope"><option value="app"`+offsiteSelected(data.Offsite.YandexScope,"app")+`>Application folder (restricted)</option><option value="disk"`+offsiteSelected(data.Offsite.YandexScope,"disk")+`>Entire Disk (selected folder)</option></select>
+                        </label>
+                        <label>Yandex Disk OAuth token
                             <input name="oauth_token" type="password" autocomplete="new-password" placeholder="Leave blank to retain saved token">
                         </label>
                         <p class="note">Archives are split into 900 MiB parts. The manifest is published after all parts are uploaded.</p>
