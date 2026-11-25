@@ -95,3 +95,40 @@ func TestArchiveManifestRequiresCompletion(t *testing.T){
     d.files[remote+"/manifest.json"]=[]byte(`{"version":1,"size":10,"parts":[]}`)
     if _,err:=c.ArchiveManifest(context.Background(),remote);err==nil{t.Fatal("accepted malformed manifest")}
 }
+
+
+type redirectDiskTransport func(*http.Request)(*http.Response,error)
+func (f redirectDiskTransport) RoundTrip(r *http.Request)(*http.Response,error){return f(r)}
+
+func TestSignedDownloadFollowsHTTPSRedirectWithoutOAuth(t *testing.T){
+	for _,target:=range []string{"https://storage.example/manifest","http://storage.example/manifest"}{
+		t.Run(target,func(t *testing.T){
+			reached:=false
+			client:=New("private-token")
+			client.HTTP.Transport=redirectDiskTransport(func(r *http.Request)(*http.Response,error){
+				header:=make(http.Header)
+				status:=200
+				body:=""
+				switch r.URL.Host{
+				case "cloud-api.yandex.net":
+					if r.Header.Get("Authorization")!="OAuth private-token"{t.Fatal("API authorization missing")}
+					body=`{"href":"https://downloader.example/manifest?signature=private"}`
+				case "downloader.example":
+					if r.Header.Get("Authorization")!=""{t.Fatal("OAuth leaked to downloader")}
+					status=302;header.Set("Location",target)
+				case "storage.example":
+					reached=true
+					if r.Header.Get("Authorization")!=""||r.Header.Get("Referer")!=""||r.Header.Get("Cookie")!=""{t.Fatal("credentials leaked during redirect")}
+					body=`{"version":1}`
+				default:t.Fatalf("unexpected host: %s",r.URL.Host)
+				}
+				return &http.Response{StatusCode:status,Header:header,Body:io.NopCloser(strings.NewReader(body))},nil
+			})
+			var result struct{Version int `json:"version"`}
+			err:=client.GetJSON(context.Background(),"app:/backup/manifest.json",&result)
+			if strings.HasPrefix(target,"http:"){
+				if err==nil||reached{t.Fatal("accepted insecure redirect")}
+			}else if err!=nil||!reached||result.Version!=1{t.Fatalf("signed download failed: %v",err)}
+		})
+	}
+}
