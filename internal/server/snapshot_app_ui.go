@@ -114,16 +114,13 @@ func (m *snapshotManager) registerAppSnapshotRoutes(mux *http.ServeMux,store *se
 		id,err:=m.appFromRequest(r);if err!=nil{http.NotFound(w,r);return}
 		remote,err:=m.appRemote(id);if err!=nil{http.Error(w,err.Error(),400);return}
 		ctx,cancel:=context.WithTimeout(r.Context(),25*time.Second);defer cancel()
-		list,err:=m.cloudListAt(ctx,remote);if err!=nil{http.Error(w,err.Error(),502);return}
+		inventory,err:=m.cloudInventoryAt(ctx,remote)
 		var out strings.Builder
-		fmt.Fprintf(&out,`<main class="shell"><section class="panel panel-pad"><div class="section-title"><h1>Application cloud snapshots</h1><a class="secondary" href="/backup">Back</a></div>`)
-		if len(list)==0{out.WriteString(`<p class="note">No completed snapshots.</p>`)}
-		for _,idx:=range list{
-			if idx.AppID!=id{continue}
-			fmt.Fprintf(&out,`<form method="post" action="/backup/apps/%d/retrieve" class="snapshot-row"><input type="hidden" name="id" value="%s"><span><strong>%s</strong><small>%d archives</small></span><button class="secondary">Download &amp; verify</button></form>`,id,html.EscapeString(idx.ID),html.EscapeString(idx.CreatedAt.Format("2006-01-02 15:04 UTC")),len(idx.Files))
+		out.WriteString(renderCloudInventory(inventory,err,id))
+		if r.URL.Query().Get("fragment")=="1"&&r.Header.Get("HX-Request")=="true"{
+			writeHTML(w,m.cfg.Logger,200,out.String());return
 		}
-		out.WriteString("</section></main>")
-		writeHTML(w,m.cfg.Logger,200,pageHead("Application cloud snapshots")+"<body>"+appHeader("backup")+out.String()+"</body></html>")
+		writeHTML(w,m.cfg.Logger,200,pageHead("Application cloud snapshots")+"<body>"+appHeader("backup")+`<main class="shell"><section class="panel panel-pad"><div class="section-title"><h1>Application cloud snapshots</h1><a class="secondary" href="/backup">Back</a></div>`+out.String()+"</section></main></body></html>")
 	})))
 	mux.Handle("GET /backup/apps/{app}/{id}/download/{file...}",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 		id,err:=m.appFromRequest(r);if err!=nil{http.NotFound(w,r);return}
@@ -154,8 +151,11 @@ func (m *snapshotManager) renderAppSnapshots()string{
 	for _,a:=range apps{
 		p:=m.policyFor(m.appPolicyKey(a.ID))
 		fmt.Fprintf(&out,`<details class="snapshot-entry"><summary><strong>%s / %s</strong><span>Local: %s · Cloud: %s</span></summary><div class="snapshot-entry-files"><form method="post" action="/backup/apps/%d/policy" class="snapshot-policy"><div><h3>Local</h3><label>Every N days<input name="local_days" type="number" min="0" max="365" value="%d" required></label><label>Hour (UTC)<input name="local_hour" type="number" min="0" max="23" value="%d" required></label><label>Keep versions<input name="local_keep" type="number" min="1" max="100" value="%d" required></label></div><div><h3>Cloud</h3><label>Every N days<input name="cloud_days" type="number" min="0" max="365" value="%d" required></label><label>Hour (UTC)<input name="cloud_hour" type="number" min="0" max="23" value="%d" required></label><label>Keep versions (0 = unlimited)<input name="cloud_keep" type="number" min="0" max="100" value="%d" required></label></div><button class="button">Save project schedules</button></form>`,html.EscapeString(a.User),html.EscapeString(a.Name),snapshotIntervalLabel(p.LocalDays),snapshotIntervalLabel(p.CloudDays),a.ID,p.LocalDays,p.LocalHour,p.LocalKeep,p.CloudDays,p.CloudHour,p.CloudKeep)
-		fmt.Fprintf(&out,`<div class="snapshot-actions"><form method="post" action="/backup/apps/%d/create"><button class="secondary">Local backup now</button></form><form method="post" action="/backup/apps/%d/cloud"><button class="secondary">Cloud backup now</button></form><a class="secondary" href="/backup/apps/%d/cloud-list">Find cloud copies</a></div>`,a.ID,a.ID,a.ID)
-		list,_:=snapshotsAt(appSnapshotRoot(a.ID))
+		fmt.Fprintf(&out,`<div class="snapshot-actions"><form method="post" action="/backup/apps/%d/create"><button class="secondary">Local backup now</button></form><form method="post" action="/backup/apps/%d/cloud"><button class="secondary">Cloud backup now</button></form><a class="secondary" href="/backup/apps/%d/cloud-list" hx-boost="false" hx-get="/backup/apps/%d/cloud-list?fragment=1" hx-target="#app-cloud-%d" hx-swap="innerHTML">Refresh cloud copies</a></div>`,a.ID,a.ID,a.ID,a.ID,a.ID)
+		fmt.Fprintf(&out,`<h3>Cloud copies</h3><div id="app-cloud-%d" hx-get="/backup/apps/%d/cloud-list?fragment=1" hx-trigger="intersect once" hx-swap="innerHTML"><p class="note">Open this section to load cloud copies. Cloud-only snapshots are removed from local storage after upload.</p></div><h3>Local copies</h3>`,a.ID,a.ID)
+		list,listErr:=snapshotsAt(appSnapshotRoot(a.ID))
+		if listErr!=nil{fmt.Fprintf(&out,`<p class="snapshot-error">%s</p>`,html.EscapeString(listErr.Error()))}
+		if listErr==nil&&len(list)==0{out.WriteString(`<p class="note">No local copies.</p>`)}
 		for _,idx:=range list{
 			if idx.AppID!=a.ID||idx.Owner!=a.User||idx.Application!=a.Name{continue}
 			fmt.Fprintf(&out,`<details class="snapshot-entry"><summary><strong>%s</strong><span>%d archives</span></summary><div class="snapshot-entry-files">`,html.EscapeString(idx.CreatedAt.Format("2006-01-02 15:04 UTC")),len(idx.Files))

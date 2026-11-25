@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bau59/open-go-panel/internal/yandexdisk"
 )
 
 type snapshotPolicy struct {
@@ -227,27 +229,56 @@ func (m *snapshotManager) uploadAt(ctx context.Context,idx snapshotIndex,localRo
 	return client.PutJSON(ctx,root+"/manifest.json",idx)
 }
 
-func (m *snapshotManager) cloudList(ctx context.Context)([]snapshotIndex,error){
-	if m.cfg.Databases==nil{return nil,errors.New("database manager unavailable")}
-	_,root,err:=m.cfg.Databases.YandexStorage()
-	if err!=nil{return nil,err}
-	return m.cloudListAt(ctx,root+"/server")
+type cloudSnapshotInventory struct {
+	Snapshots []snapshotIndex
+	Incomplete []string
+}
+
+func (m *snapshotManager) cloudList(ctx context.Context)(cloudSnapshotInventory,error){
+	if m.cfg.Databases==nil{return cloudSnapshotInventory{},errors.New("database manager unavailable")}
+	client,root,err:=m.cfg.Databases.YandexStorage()
+	if err!=nil{return cloudSnapshotInventory{},err}
+	return scanCloudSnapshots(ctx,client,root+"/server")
+}
+
+func (m *snapshotManager) cloudInventoryAt(ctx context.Context,root string)(cloudSnapshotInventory,error){
+	if m.cfg.Databases==nil{return cloudSnapshotInventory{},errors.New("database manager unavailable")}
+	client,_,err:=m.cfg.Databases.YandexStorage();if err!=nil{return cloudSnapshotInventory{},err}
+	return scanCloudSnapshots(ctx,client,root)
+}
+
+// Only a valid final manifest makes a directory a completed restore point.
+// Distinguish incomplete directories from errors reading completed snapshots.
+func scanCloudSnapshots(ctx context.Context,client yandexdisk.Client,root string)(cloudSnapshotInventory,error){
+	var result cloudSnapshotInventory
+	names,err:=client.ListDirectories(ctx,root)
+	if errors.Is(err,yandexdisk.ErrNotFound){return result,nil}
+	if err!=nil{return result,err}
+	var problems []error
+	for _,id:=range names{
+		if !validSnapshotID(id){continue}
+		if err:=ctx.Err();err!=nil{problems=append(problems,err);break}
+		var idx snapshotIndex
+		err:=client.GetJSON(ctx,root+"/"+id+"/manifest.json",&idx)
+		if errors.Is(err,yandexdisk.ErrNotFound){
+			result.Incomplete=append(result.Incomplete,id)
+			continue
+		}
+		if err==nil{err=validateSnapshotIndex(idx,id)}
+		if err!=nil{
+			problems=append(problems,fmt.Errorf("snapshot %s: %w",id,err))
+			continue
+		}
+		result.Snapshots=append(result.Snapshots,idx)
+	}
+	sort.Slice(result.Snapshots,func(i,j int)bool{return result.Snapshots[i].ID>result.Snapshots[j].ID})
+	sort.Sort(sort.Reverse(sort.StringSlice(result.Incomplete)))
+	return result,errors.Join(problems...)
 }
 
 func (m *snapshotManager) cloudListAt(ctx context.Context,root string)([]snapshotIndex,error){
-	client,_,err:=m.cfg.Databases.YandexStorage();if err!=nil{return nil,err}
-	if err:=client.Check(ctx,root);err!=nil{return nil,err}
-	names,err:=client.ListDirectories(ctx,root)
-	if err!=nil{return nil,err}
-	var result []snapshotIndex
-	for _,id:=range names{
-		if !snapshotIDPattern.MatchString(id){continue}
-		var idx snapshotIndex
-		if err:=client.GetJSON(ctx,root+"/"+id+"/manifest.json",&idx);err!=nil{continue}
-		if validateSnapshotIndex(idx,id)==nil{result=append(result,idx)}
-	}
-	sort.Slice(result,func(i,j int)bool{return result[i].ID>result[j].ID})
-	return result,nil
+	inventory,err:=m.cloudInventoryAt(ctx,root)
+	return inventory.Snapshots,err
 }
 
 func (m *snapshotManager) pruneCloud(ctx context.Context,root string,keep int)error{

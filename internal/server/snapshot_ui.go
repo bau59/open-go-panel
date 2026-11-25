@@ -71,15 +71,12 @@ func registerSnapshotRoutes(mux *http.ServeMux,store *sessionStore,cfg Config)*s
 	mux.Handle("GET /backup/snapshots/cloud-list",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 		ctx,cancel:=context.WithTimeout(r.Context(),25*time.Second)
 		defer cancel()
-		list,err:=m.cloudList(ctx)
-		if err!=nil{http.Error(w,err.Error(),http.StatusBadGateway);return}
-		var out strings.Builder
-		out.WriteString("<h3>Cloud restore points</h3>")
-		if len(list)==0{out.WriteString("<p class=\"note\">No completed snapshots.</p>")}
-		for _,idx:=range list{
-			fmt.Fprintf(&out,`<form method="post" action="/backup/snapshots/retrieve" class="snapshot-row"><input type="hidden" name="id" value="%s"><span><strong>%s</strong><small>%d archives</small></span><button class="secondary">Download &amp; verify</button></form>`,html.EscapeString(idx.ID),html.EscapeString(idx.CreatedAt.Format("2006-01-02 15:04 UTC")),len(idx.Files))
+		inventory,err:=m.cloudList(ctx)
+		content:=renderCloudInventory(inventory,err,0)
+		if r.URL.Query().Get("fragment")=="1"&&r.Header.Get("HX-Request")=="true"{
+			writeHTML(w,cfg.Logger,200,content);return
 		}
-		writeHTML(w,cfg.Logger,200,pageHead("Cloud restore points")+"<body>"+appHeader("backup")+`<main class="shell"><section class="panel panel-pad"><div class="section-title"><h1>Cloud restore points</h1><a class="secondary" href="/backup">Back to backups</a></div>`+out.String()+"</section></main></body></html>")
+		writeHTML(w,cfg.Logger,200,pageHead("Cloud restore points")+"<body>"+appHeader("backup")+`<main class="shell"><section class="panel panel-pad"><div class="section-title"><h1>Cloud restore points</h1><a class="secondary" href="/backup">Back to backups</a></div>`+content+"</section></main></body></html>")
 	})))
 	mux.Handle("GET /backup/snapshots/{id}/download/{file...}",requireAuth(store,http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 		id,name:=r.PathValue("id"),r.PathValue("file")
@@ -124,8 +121,8 @@ func (m *snapshotManager) render(r *http.Request)string{
 	}
 	out.WriteString(`<div class="snapshot-grid"><section class="panel panel-pad"><h2>Backup policy</h2><p class="note">Independent local and cloud schedules. Set days to zero to disable. Times are UTC.</p><form method="post" action="/backup/snapshots/policy" class="snapshot-policy">`)
 	fmt.Fprintf(&out,`<div><h3>Local snapshots</h3><label>Every N days<input type="number" min="0" max="365" name="local_days" value="%d" required></label><label>Hour (UTC)<input type="number" min="0" max="23" name="local_hour" value="%d" required></label><label>Keep versions<input type="number" min="1" max="100" name="local_keep" value="%d" required></label></div><div><h3>Cloud snapshots</h3><label>Every N days<input type="number" min="0" max="365" name="cloud_days" value="%d" required></label><label>Hour (UTC)<input type="number" min="0" max="23" name="cloud_hour" value="%d" required></label><label>Keep cloud versions (0 = unlimited)<input type="number" min="0" max="100" name="cloud_keep" value="%d" required></label></div><button class="button">Save schedules</button></form></section>`,p.LocalDays,p.LocalHour,p.LocalKeep,p.CloudDays,p.CloudHour,p.CloudKeep)
-	fmt.Fprintf(&out,`<section class="panel panel-pad"><h2>Yandex Disk storage</h2><p class="note">OAuth connection, 900 MiB parts, SHA-256 checksums.</p><div class="snapshot-fact"><span>Remote directory</span><code>%s</code></div><div class="snapshot-actions"><a class="secondary" href="/backup?section=storage">Connection settings</a><a class="secondary" href="/backup/snapshots/cloud-list">Find cloud restore points</a></div><form method="post" action="/backup/snapshots/cloud"><button class="button">Create cloud snapshot</button></form><p class="note">Archives contain credentials. Restrict access to the selected Disk folder. Cloud retention only removes completed snapshots under the selected folder.</p></section></div>`,html.EscapeString(remote))
-	out.WriteString(`<section class="panel panel-pad"><div class="section-title"><div><h2>Server restore points</h2><p class="note">Panel SQLite state, managed user homes, credentials, app commands and schedules, Caddy and managed SQL dumps. Docker configuration only; volumes and unmanaged system data are not included.</p></div><form method="post" action="/backup/snapshots/create"><button class="button">Create local snapshot</button></form></div>`)
+	fmt.Fprintf(&out,`<section class="panel panel-pad"><h2>Yandex Disk storage</h2><p class="note">OAuth connection, 900 MiB parts, SHA-256 checksums.</p><div class="snapshot-fact"><span>Remote directory</span><code>%s</code></div><div class="snapshot-actions"><a class="secondary" href="/backup?section=storage">Connection settings</a><a class="secondary" href="/backup/snapshots/cloud-list" hx-boost="false" hx-get="/backup/snapshots/cloud-list?fragment=1" hx-target="#server-cloud" hx-swap="innerHTML">Refresh cloud restore points</a></div><form method="post" action="/backup/snapshots/cloud"><button class="button">Create cloud snapshot</button></form><p class="note">Archives contain credentials. Restrict access to the selected Disk folder. Cloud retention only removes completed snapshots under the selected folder.</p><h3>Cloud restore points</h3><div id="server-cloud"><p class="note">Refresh to load cloud copies.</p></div></section></div>`,html.EscapeString(remote))
+	out.WriteString(`<section class="panel panel-pad"><div class="section-title"><div><h2>Local server restore points</h2><p class="note">Panel SQLite state, managed user homes, credentials, app commands and schedules, Caddy and managed SQL dumps. Docker configuration only; volumes and unmanaged system data are not included.</p></div><form method="post" action="/backup/snapshots/create"><button class="button">Create local snapshot</button></form></div>`)
 	if len(list)==0{out.WriteString(`<p class="note">No local snapshots yet.</p>`)}
 	for _,idx:=range list{
 		fmt.Fprintf(&out,`<details class="snapshot-entry"><summary><strong>%s</strong><span>%d archives</span></summary><div class="snapshot-entry-files">`,html.EscapeString(idx.CreatedAt.Format("2006-01-02 15:04 UTC")),len(idx.Files))
@@ -148,4 +145,30 @@ func parseSnapshotPolicy(r *http.Request)(snapshotPolicy,error){
 		values[i]=n
 	}
 	return snapshotPolicy{LocalDays:values[0],LocalHour:values[1],LocalKeep:values[2],CloudDays:values[3],CloudHour:values[4],CloudKeep:values[5]},nil
+}
+
+
+func renderCloudInventory(inventory cloudSnapshotInventory,err error,appID int64)string{
+	var out strings.Builder
+	if err!=nil{fmt.Fprintf(&out,`<p class="snapshot-error">Cloud listing incomplete: %s</p>`,html.EscapeString(err.Error()))}
+	if len(inventory.Incomplete)>0{
+		fmt.Fprintf(&out,`<details><summary>%d incomplete snapshots (no final manifest)</summary><p class="note">These folders are not yet safe to restore. Retry an interrupted upload.</p><ul>`,len(inventory.Incomplete))
+		for _,id:=range inventory.Incomplete{fmt.Fprintf(&out,`<li><code>%s</code></li>`,html.EscapeString(id))}
+		out.WriteString("</ul></details>")
+	}
+	action:="/backup/snapshots/retrieve"
+	if appID>0{action=fmt.Sprintf("/backup/apps/%d/retrieve",appID)}
+	count:=0
+	for _,idx:=range inventory.Snapshots{
+		if idx.AppID!=appID{
+			fmt.Fprintf(&out,`<p class="snapshot-error">Snapshot %s belongs to a different application ID; recovery is unavailable here.</p>`,html.EscapeString(idx.ID))
+			continue
+		}
+		count++
+		var size int64
+		for _,file:=range idx.Files{size+=file.Size}
+		fmt.Fprintf(&out,`<form method="post" action="%s" class="snapshot-row"><input type="hidden" name="id" value="%s"><span><strong>%s</strong><small>Cloud · %d archives · %s</small></span><button class="secondary">Download &amp; verify</button></form>`,action,html.EscapeString(idx.ID),html.EscapeString(idx.CreatedAt.Format("2006-01-02 15:04 UTC")),len(idx.Files),formatBytes(uint64(size)))
+	}
+	if count==0&&err==nil&&len(inventory.Incomplete)==0&&len(inventory.Snapshots)==0{out.WriteString(`<p class="note">No completed cloud snapshots.</p>`)}
+	return out.String()
 }
