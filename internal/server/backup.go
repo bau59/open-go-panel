@@ -22,6 +22,7 @@ import (
 var backupUsername = regexp.MustCompile("^[a-z_][a-z0-9_-]{0,31}$")
 
 func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+ snapshots := registerSnapshotRoutes(mux,store,cfg)
  mux.Handle("GET /backup", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   users, err := cfg.Users.List(r.Context())
   if err != nil { http.Error(w, err.Error(), 500); return }
@@ -42,7 +43,8 @@ func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
   }
   body := `
   <div class="backup-page">
-   <section class="page-head"><div><h1>Backup &amp; export</h1><p class="sub">Export configuration, installed software and user data on demand.</p></div></section>
+   <section class="page-head"><div><h1>Backups &amp; Recovery</h1><p class="sub">Manage local snapshots, cloud storage and recovery exports.</p></div></section>
+   ` + snapshots.render(r) + `
    <section class="backup-overview" aria-label="Server exports">
     <article class="panel backup-tile"><div><h2>Panel configuration</h2><p class="sub">Users, applications, database bindings and domain settings.</p></div><a class="secondary backup-action" href="/backup/panel.json">Download JSON</a></article>
     <article class="panel backup-tile"><div><h2>Installed software</h2><p class="sub">APT package installation script for Ubuntu.</p></div><a class="secondary backup-action" href="/backup/software.sh">Download script</a></article>
