@@ -179,6 +179,26 @@ result=call(a_conn,"run_command",{"command":f"sh -c 'sleep 60; echo {marker}' & 
 assert result["timed_out"]
 time.sleep(1)
 assert subprocess.run(["sudo","pgrep","-u",USER,"-f",marker],capture_output=True).returncode==1, "orphan process"
+# Large projects must not be rejected before the requested operation starts.
+# Use one wide directory to also exercise the streaming directory traversal.
+sudo("-u",USER,"python3","-c", "import os,sys; d=sys.argv[1]; os.mkdir(d); [open(os.path.join(d,str(i)), 'x').close() for i in range(200001)]",root_a+"/large")
+try:
+    assert call(a_conn,"read_file",{"path":"demo.txt"})["content"]=="manual"
+    assert call(a_conn,"list_directory",{"path":"large"})["truncated"]
+    assert call(a_conn,"run_command",{"command":"pwd && id -u"})["output"].splitlines()==["/workspace",sudo("id","-u",USER)]
+finally:
+    sudo("-u",USER,"rm","-rf",root_a+"/large")
+# Same-UID hardlinks remain blocked; unrelated file tools still work.
+sudo("-u",USER,"ln",root_b+"/secret.txt",root_a+"/hardlink")
+try:
+    call(a_conn,"read_file",{"path":"hardlink"},failed=True)
+    call(a_conn,"edit_file",{"path":"hardlink","content":"bad","version":hashlib.sha256(b"secret sibling\\n").hexdigest()},failed=True)
+    call(a_conn,"delete_path",{"path":"hardlink"},failed=True)
+    assert call(a_conn,"read_file",{"path":"demo.txt"})["content"]=="manual"
+    call(a_conn,"run_command",{"command":"cat hardlink"},failed=True)
+    assert sudo("-u",USER,"cat",root_b+"/secret.txt")=="secret sibling"
+finally:
+    sudo("-u",USER,"rm",root_a+"/hardlink")
 sudo("systemctl","stop","open-go-panel.service")
 assert len(rpc(a_conn,"tools/list")["result"]["tools"])==8
 sudo("systemctl","start","open-go-panel.service")

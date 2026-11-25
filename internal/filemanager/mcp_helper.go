@@ -50,6 +50,7 @@ func RunMCPHelper(operation string,input io.Reader,output io.Writer)error{
 }
 
 func mcpOperation(m *Manager,operation string,args MCPArgs)(any,error){
+    m.rejectHardlinks=true
     switch operation{
     case "list_directory":
         entries,limited,err:=m.List(args.Path)
