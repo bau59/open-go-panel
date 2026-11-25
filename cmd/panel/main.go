@@ -169,6 +169,7 @@ func main() {
 			Docker:        dockerManager,
 			State:         stateStore,
 			ClosePanel:    schedulePanelStop,
+			BackupContext: backupWorkCtx,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
