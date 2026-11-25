@@ -69,6 +69,13 @@ func (m *Manager) UploadBackup(ctx context.Context, backup Backup) error {
 	if err := validateBackupRemote(remote); err != nil {
 		return err
 	}
+	if conn := m.OffsiteConnection(); conn.Provider == "yandex" {
+		client,root,err:=m.YandexStorage()
+		if err!=nil{return err}
+		dir:=root+"/"+path.Join(backup.Engine,backup.Database,path.Base(backup.Path))
+		_,err=client.UploadArchive(ctx,dir,backup.Path)
+		return err
+	}
 	dst := backupRemotePath(remote, backup)
 	// A connection can be slow for hours on a multi-gigabyte SQL archive.
 	// Idle timeout protects hung connections; there is no total-duration cap.

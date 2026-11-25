@@ -2,6 +2,7 @@ package dbmanager
 
 import (
     "context"
+    "github.com/bau59/open-go-panel/internal/yandexdisk"
     "errors"
     "fmt"
     "net"
@@ -24,6 +25,8 @@ type OffsiteConnection struct {
     Region string
     AccessKey string
     SecretKey string
+    OAuthToken string
+    YandexScope string
     Host string
     Port int
     User string
@@ -49,10 +52,12 @@ func (m *Manager) OffsiteConnection() OffsiteConnection {
     if provider != "existing" {
         destination = strings.TrimPrefix(destination, managedOffsiteRemote+":")
     }
+    scope:=get("db.offsite_yandex_scope")
+    if scope==""{scope="app"}
     port, _ := strconv.Atoi(get("db.offsite_port"))
     if port == 0 { port = 22 }
     return OffsiteConnection{
-        Provider: provider, Destination: destination,
+        Provider: provider, Destination: destination, YandexScope:scope,
         Endpoint: get("db.offsite_endpoint"), Region: get("db.offsite_region"),
         Host: get("db.offsite_host"), Port: port,
         User: get("db.offsite_user"), KeyFile: get("db.offsite_key_file"),
@@ -124,7 +129,7 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
     conn.User = strings.TrimSpace(conn.User)
     conn.KeyFile = strings.TrimSpace(conn.KeyFile)
     conn.KnownHostsFile = strings.TrimSpace(conn.KnownHostsFile)
-    if conn.Destination != "" {
+    if conn.Destination != "" && conn.Provider != "yandex" {
         if _, err := exec.LookPath("rclone"); err != nil {
             return errors.New("rclone is not installed; install it before configuring off-site storage")
         }
@@ -147,6 +152,17 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
         }
         remote = managedOffsiteRemote + ":" + conn.Destination
         switch conn.Provider {
+        case "yandex":
+            if conn.YandexScope==""{conn.YandexScope="app"}
+            if conn.YandexScope!="app"&&conn.YandexScope!="disk"{return errors.New("invalid Yandex Disk scope")}
+            token := strings.TrimSpace(conn.OAuthToken)
+            if token == "" && m.OffsiteConnection().Provider == "yandex" {
+                var err error
+                token,err = m.savedYandexToken()
+                if err != nil { return err }
+            }
+            if token == "" || strings.ContainsAny(token, "\r\n\t ") { return errors.New("Yandex Disk requires an OAuth token") }
+            config = "oauth_token = " + token + "\n"
         case "s3", "r2", "b2":
             // Leaving credentials blank retains saved root-only keys for the
             // same provider. Secrets never round-trip through the HTML form.
@@ -198,7 +214,7 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
             config = fmt.Sprintf("[%s]\ntype = sftp\nhost = %s\nuser = %s\nport = %d\nkey_file = %s\nknown_hosts_file = %s\n",
                 managedOffsiteRemote, conn.Host, conn.User, conn.Port, conn.KeyFile, conn.KnownHostsFile)
         default:
-            return errors.New("supported destinations: existing rclone, S3, R2, B2 (S3 API), SFTP")
+            return errors.New("supported destinations: existing rclone, S3, R2, B2 (S3 API), SFTP, Yandex Disk")
         }
     }
 
@@ -210,6 +226,7 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
     values := map[string]string{
         backupRemoteSetting: remote,
         "db.offsite_provider": conn.Provider,
+        "db.offsite_yandex_scope":conn.YandexScope,
         "db.offsite_endpoint": conn.Endpoint,
         "db.offsite_region": conn.Region,
         "db.offsite_host": conn.Host,
@@ -270,6 +287,11 @@ func (m *Manager) TestOffsiteConnection(ctx context.Context) error {
     remote := m.BackupRemote()
     if remote == "" { return errors.New("external destination is not configured") }
     if err := validateBackupRemote(remote); err != nil { return err }
+    if m.OffsiteConnection().Provider == "yandex" {
+        client,root,err:=m.YandexStorage()
+        if err!=nil{return err}
+        return client.Check(ctx,root)
+    }
     args := []string{"lsf", remote, "--max-depth", "1", "--timeout", "30m", "--contimeout", "1m", "--retries", "3"}
     if conn := m.OffsiteConnection(); conn.Provider != "existing" {
         args = append([]string{"--config", m.offsiteConfigFile}, args...)
@@ -354,4 +376,25 @@ func (m *Manager) savedS3Credentials() (string, string) {
         if value, ok := strings.CutPrefix(line, "secret_access_key = "); ok { secret = value }
     }
     return access, secret
+}
+
+func (m *Manager) savedYandexToken() (string,error) {
+    info,err := os.Lstat(m.offsiteConfigFile)
+    if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 { return "",errors.New("Yandex Disk credential file unavailable") }
+    data,err := os.ReadFile(m.offsiteConfigFile)
+    if err != nil { return "",errors.New("cannot read Yandex Disk credential") }
+    token,ok := strings.CutPrefix(strings.TrimSpace(string(data)), "oauth_token = ")
+    if !ok || token=="" || strings.ContainsAny(token,"\r\n\t ") { return "",errors.New("invalid saved Yandex Disk credential") }
+    return token,nil
+}
+
+// YandexStorage returns the configured private client and selected root.
+// Credentials are not exposed to the web page.
+func (m *Manager) YandexStorage() (yandexdisk.Client,string,error) {
+    conn:=m.OffsiteConnection()
+    if conn.Provider!="yandex"||conn.Destination=="" {return yandexdisk.Client{},"",errors.New("configure Yandex Disk in Databases / Off-site backup export")}
+    token,err:=m.savedYandexToken()
+    if err!=nil{return yandexdisk.Client{},"",err}
+    if conn.YandexScope!="app"&&conn.YandexScope!="disk"{return yandexdisk.Client{},"",errors.New("invalid Yandex Disk scope")}
+    return yandexdisk.New(token),conn.YandexScope+":/"+conn.Destination,nil
 }

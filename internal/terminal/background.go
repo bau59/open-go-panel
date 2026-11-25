@@ -309,3 +309,19 @@ func (m *BackgroundManager) Forget(ctx context.Context, id string) error {
 
 // Drain one journalctl invocation without storing unbounded command output.
 var _ io.Writer = (*limitedOutput)(nil)
+
+// ResumeSnapshotCommand restarts an existing command definition after a
+// deliberate fresh-server restore, preserving its original identifier.
+func (m *BackgroundManager) ResumeSnapshotCommand(ctx context.Context,id string)error{
+	job,err:=m.Get(ctx,id)
+	if err!=nil{return err}
+	if job.StoppedAt!=""{return errors.New("snapshot command was stopped")}
+	args,err:=backgroundRunArgs(job)
+	if err!=nil{return err}
+	if info,err:=os.Stat(job.WorkDir);err!=nil||!info.IsDir(){return errors.New("snapshot command working directory unavailable")}
+	cmd:=exec.CommandContext(ctx,"systemd-run",args...)
+	cmd.Stdout=io.Discard
+	cmd.Stderr=io.Discard
+	if err:=cmd.Run();err!=nil{return fmt.Errorf("restart snapshot command: %w",err)}
+	return nil
+}

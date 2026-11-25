@@ -1,0 +1,49 @@
+name: snapshot-recovery
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  recovery:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build smoke artifacts
+        run: |
+          mkdir -p smoke-dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o smoke-dist/open-go-panel-linux-amd64 ./cmd/panel
+          curl -fsSL https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css -o smoke-dist/xterm.css
+          curl -fsSL https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js -o smoke-dist/xterm.js
+          curl -fsSL https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js -o smoke-dist/xterm-addon-fit.js
+          (cd smoke-dist && sha256sum open-go-panel-linux-amd64 xterm.css xterm.js xterm-addon-fit.js > SHA256SUMS)
+
+      - name: Run local artifact server
+        run: |
+          python3 -m http.server 18080 --directory smoke-dist >/tmp/ogp-smoke-http.log 2>&1 &
+          echo $! > /tmp/ogp-smoke-http.pid
+          sleep 1
+          curl -fsS http://127.0.0.1:18080/SHA256SUMS
+
+      - name: Install on clean Ubuntu runner
+        run: |
+          sudo env \
+            OGP_BINARY_URL=http://127.0.0.1:18080/open-go-panel-linux-amd64 \
+            OGP_CHECKSUMS_URL=http://127.0.0.1:18080/SHA256SUMS \
+            OGP_ASSET_BASE_URL=http://127.0.0.1:18080 \
+            bash ./install.sh
+
+      - name: Create and recover a managed-server snapshot
+        shell: bash
+        run: bash tests/snapshot-recovery.sh
+      - name: Recovery diagnostics
+        if: failure()
+        run: sudo journalctl -u open-go-panel.service -n 100 --no-pager

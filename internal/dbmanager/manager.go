@@ -672,6 +672,20 @@ func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) 
 		return Backup{}, err
 	}
 	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
+	return m.backupToUnlocked(ctx,item,root)
+}
+
+// BackupTo creates a fresh SQL dump in a caller-owned private staging
+// directory without changing the independent local database history.
+func (m *Manager) BackupTo(ctx context.Context,id int64,root string)(Backup,error){
+	if !m.operationMu.TryLock(){return Backup{},errOperationInProgress}
+	defer m.operationMu.Unlock()
+	item,err:=m.Get(id)
+	if err!=nil{return Backup{},err}
+	return m.backupToUnlocked(ctx,item,root)
+}
+
+func (m *Manager) backupToUnlocked(ctx context.Context,item Database,root string)(Backup,error){
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return Backup{}, fmt.Errorf("create backup directory: %w", err)
 	}
@@ -776,6 +790,16 @@ func (m *Manager) BackupFile(id int64, path string) (string, error) {
 // Restore creates a safety snapshot before touching the target database.
 // The operation lock also protects the snapshot and rollback from concurrent imports.
 func (m *Manager) Restore(ctx context.Context, id int64, path string) error {
+	return m.restoreWithSafety(ctx,id,path,false)
+}
+
+// RestoreProjectSnapshot replaces a managed database with a verified project
+// dump. The existing database is backed up before resetting it.
+func (m *Manager) RestoreProjectSnapshot(ctx context.Context,id int64,path string)error{
+	return m.restoreWithSafety(ctx,id,path,true)
+}
+
+func (m *Manager) restoreWithSafety(ctx context.Context, id int64, path string, replace bool) error {
 	if !m.operationMu.TryLock() {
 		return errOperationInProgress
 	}
@@ -794,7 +818,14 @@ func (m *Manager) Restore(ctx context.Context, id int64, path string) error {
 		return fmt.Errorf("refuse to restore without a safety backup: %w", err)
 	}
 
-	if err := m.restoreUnlocked(ctx, id, clean); err != nil {
+	restoreErr:=func()error{
+		if replace{
+			target,err:=m.Get(id);if err!=nil{return err}
+			if err:=resetLocalDatabase(ctx,target);err!=nil{return err}
+		}
+		return m.restoreUnlocked(ctx,id,clean)
+	}()
+	if err := restoreErr; err != nil {
 		target, getErr := m.Get(id)
 		if getErr != nil {
 			return fmt.Errorf("restore failed: %w; safety backup at %s; lookup for rollback failed: %v", err, safety.Path, getErr)

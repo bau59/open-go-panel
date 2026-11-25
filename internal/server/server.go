@@ -49,6 +49,7 @@ type Config struct {
 	Docker        *paneldocker.Manager
 	State         *state.Store
 	ClosePanel    func(context.Context) error
+	BackupContext context.Context
 }
 
 type sessionStore struct {
