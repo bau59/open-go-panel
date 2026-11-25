@@ -73,16 +73,16 @@ func appHeader(active string) string {
 	}
 	var nav strings.Builder
 	for _, item := range []menuItem{
-		{"overview", "/", "Overview"},
-		{"apps", "/apps", "Apps"},
+		{"overview", "/", "Dashboard"},
+		{"apps", "/apps", "Applications"},
 		{"databases", "/databases", "Databases"},
 		{"docker", "/docker", "Docker"},
+		{"backup", "/backup", "Backups"},
 	} { nav.WriteString(link(item)) }
 	nav.WriteString(group("Infrastructure",
 		menuItem{"caddy", "/caddy", "Caddy & domains"},
 		menuItem{"users", "/users", "Users"},
 		menuItem{"software", "/software", "Software"},
-		menuItem{"backup", "/backup", "Backup"},
 		menuItem{"terminal", "/terminal", "Terminal"},
 		menuItem{"terminal-background", "/terminal/background", "Background commands"},
 	))
