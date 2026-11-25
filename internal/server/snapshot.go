@@ -115,17 +115,7 @@ func createServerSnapshot(ctx context.Context,cfg Config)(snapshotIndex,error){
 		if !backupUsername.MatchString(u.Username)||u.Home!="/home/"+u.Username{return idx,fmt.Errorf("unsupported home for %s",u.Username)}
 		name:="files/"+u.Username+".tar.gz"
 		if err:=os.MkdirAll(filepath.Join(dir,"files"),0700);err!=nil{return idx,err}
-		f,err:=os.OpenFile(filepath.Join(dir,name),os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
-		if err!=nil{return idx,err}
-		// Read home files with the user's privileges, not as root. GNU tar
-		// preserves symlinks and ownership metadata without following links.
-		cmd:=exec.CommandContext(ctx,"runuser","-u",u.Username,"--","/usr/bin/tar","--acls","--xattrs","-czf","-","-C",u.Home,".")
-		cmd.Stdout=f
-		cmd.Stderr=io.Discard
-		runErr:=cmd.Run()
-		closeErr:=f.Close()
-		if runErr!=nil{return idx,fmt.Errorf("archive home %s: %w",u.Username,runErr)}
-		if closeErr!=nil{return idx,closeErr}
+		if err:=archiveSnapshotFiles(ctx,u.Username,u.Home,filepath.Join(dir,name));err!=nil{return idx,fmt.Errorf("archive home %s: %w",u.Username,err)}
 		names=append(names,name)
 	}
 	if cfg.Databases!=nil{
