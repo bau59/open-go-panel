@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -64,13 +62,7 @@ func createAppSnapshot(ctx context.Context,cfg Config,id int64)(snapshotIndex,er
 	names=append(names,"config.tar.gz")
 	if err:=os.MkdirAll(filepath.Join(dir,"files"),0700);err!=nil{return idx,err}
 	name:="files/"+a.User+".tar.gz"
-	f,err:=os.OpenFile(filepath.Join(dir,name),os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
-	if err!=nil{return idx,err}
-	cmd:=exec.CommandContext(ctx,"runuser","-u",a.User,"--","/usr/bin/tar","--acls","--xattrs","-czf","-","-C",a.Root,".")
-	cmd.Stdout=f;cmd.Stderr=io.Discard
-	runErr:=cmd.Run();closeErr:=f.Close()
-	if runErr!=nil{return idx,fmt.Errorf("archive application %s: %w",a.Name,runErr)}
-	if closeErr!=nil{return idx,closeErr}
+	if err:=archiveSnapshotFiles(ctx,a.User,a.Root,filepath.Join(dir,name));err!=nil{return idx,fmt.Errorf("archive application %s: %w",a.Name,err)}
 	names=append(names,name)
 	return publishSnapshot(ctx,idx,dir,root,names)
 }
