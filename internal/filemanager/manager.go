@@ -7,6 +7,7 @@ import (
     "compress/gzip"
     "encoding/binary"
     "crypto/rand"
+    "crypto/sha256"
     "encoding/hex"
     "errors"
     "fmt"
@@ -126,7 +127,7 @@ func (m *Manager) openFile(folder, name string) (*os.File, os.FileInfo, error) {
     if err != nil { return nil, nil, err }
     defer unix.Close(fd)
     fileFD, err := unix.Openat2(fd, name, &unix.OpenHow{
-        Flags: uint64(unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW),
+        Flags: uint64(unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK),
         Resolve: unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS|unix.RESOLVE_NO_XDEV,
     })
     if err != nil { return nil, nil, fmt.Errorf("open file: %w", err) }
@@ -154,7 +155,7 @@ func (m *Manager) ReadText(folder, name string) (string, error) {
     return string(data), nil
 }
 
-func (m *Manager) write(folder, name string, source io.Reader, limit int64, overwrite bool) error {
+func (m *Manager) write(folder, name string, source io.Reader, limit int64, overwrite bool, expectedVersion ...string) error {
     if !validName(name) { return errors.New("invalid file name") }
     fd, err := m.directory(folder)
     if err != nil { return err }
@@ -168,6 +169,10 @@ func (m *Manager) write(folder, name string, source io.Reader, limit int64, over
     }
     if overwrite && errors.Is(statErr, unix.ENOENT) { return errors.New("file no longer exists") }
     if !overwrite && statErr == nil { return errors.New("destination already exists") }
+
+    if len(expectedVersion)>0 {
+        if err:=checkVersionAt(fd,name,expectedVersion[0],stat);err!=nil{return err}
+    }
 
     random := make([]byte, 12)
     if _, err := rand.Read(random); err != nil { return err }
@@ -186,6 +191,9 @@ func (m *Manager) write(folder, name string, source io.Reader, limit int64, over
     if copyErr != nil { return copyErr }
     if closeErr != nil { return closeErr }
     if overwrite {
+        if len(expectedVersion)>0 {
+            if err:=checkVersionAt(fd,name,expectedVersion[0],stat);err!=nil{return err}
+        }
         return unix.Renameat(fd, temp, fd, name)
     }
     if err := unix.Renameat2(fd, temp, fd, name, unix.RENAME_NOREPLACE); err != nil {
@@ -511,4 +519,54 @@ func (m *Manager) Extract(folder, name string) (int, error) {
         }
     }
     return count, nil
+}
+
+
+var ErrEditConflict = errors.New("file changed since it was read")
+
+func textVersion(content string)string{
+    sum:=sha256.Sum256([]byte(content))
+    return hex.EncodeToString(sum[:])
+}
+
+// SaveVersioned checks both the content version and actual write permission on
+// the existing file. The ordinary panel editor remains unchanged.
+func (m *Manager) SaveVersioned(folder,name,content,version string)error{
+    if len(version)!=64{return errors.New("a read_file version is required")}
+    if _,err:=hex.DecodeString(version);err!=nil{return errors.New("invalid file version")}
+    if len(content)>MaxEditBytes||!utf8.ValidString(content)||strings.ContainsRune(content,0){
+        return errors.New("editor content must be valid UTF-8 and <= 2 MiB")
+    }
+    return m.write(folder,name,strings.NewReader(content),MaxEditBytes,true,version)
+}
+
+func checkVersionAt(parent int,name,version string,original unix.Stat_t)error{
+    fd,err:=unix.Openat2(parent,name,&unix.OpenHow{
+        Flags:uint64(unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK),
+        Resolve:unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS|unix.RESOLVE_NO_XDEV,
+    })
+    if err!=nil{return err}
+    file:=os.NewFile(uintptr(fd),name);defer file.Close()
+    var before,after,current unix.Stat_t
+    if err:=unix.Fstat(fd,&before);err!=nil{return err}
+    if before.Mode&unix.S_IFMT!=unix.S_IFREG||before.Nlink!=1{return errors.New("only regular, non-hardlinked files may be edited")}
+    if before.Dev!=original.Dev||before.Ino!=original.Ino||before.Ctim!=original.Ctim||before.Mtim!=original.Mtim||before.Size!=original.Size{return ErrEditConflict}
+    if before.Size>MaxEditBytes{return errors.New("file exceeds editor limit")}
+    data,err:=io.ReadAll(io.LimitReader(file,MaxEditBytes+1));if err!=nil{return err}
+    if len(data)>MaxEditBytes||textVersion(string(data))!=version{return ErrEditConflict}
+    if err:=unix.Fstat(fd,&after);err!=nil{return err}
+    if err:=unix.Fstatat(parent,name,&current,unix.AT_SYMLINK_NOFOLLOW);err!=nil{return err}
+    if after.Ino!=before.Ino||after.Ctim!=before.Ctim||after.Mtim!=before.Mtim||after.Size!=before.Size||
+        current.Ino!=before.Ino||current.Dev!=before.Dev||current.Ctim!=before.Ctim||current.Mtim!=before.Mtim||current.Size!=before.Size{return ErrEditConflict}
+    return nil
+}
+
+func (m *Manager) DeletePath(folder,name string,recursive bool)error{
+    if recursive{return m.Delete(folder,name)}
+    if !validName(name){return errors.New("invalid item name")}
+    fd,err:=m.directory(folder);if err!=nil{return err};defer unix.Close(fd)
+    var stat unix.Stat_t
+    if err:=unix.Fstatat(fd,name,&stat,unix.AT_SYMLINK_NOFOLLOW);err!=nil{return err}
+    if stat.Mode&unix.S_IFMT==unix.S_IFDIR{return unix.Unlinkat(fd,name,unix.AT_REMOVEDIR)}
+    return unix.Unlinkat(fd,name,0)
 }
