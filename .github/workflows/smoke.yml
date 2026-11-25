@@ -16,6 +16,7 @@ on:
       - "internal/terminal/**"
       - ".github/workflows/smoke.yml"
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   smoke:

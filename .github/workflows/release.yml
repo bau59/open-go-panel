@@ -134,10 +134,22 @@ jobs:
           sleep 1
           curl -fsS http://127.0.0.1:8443/health | grep -qx ok
 
+  production-smoke:
+    uses: ./.github/workflows/smoke.yml
+
+  snapshot-recovery:
+    uses: ./.github/workflows/snapshot-recovery.yml
+
+  mcp-integration:
+    uses: ./.github/workflows/mcp-integration.yml
+
   build:
     needs:
       - verify
       - smoke
+      - production-smoke
+      - snapshot-recovery
+      - mcp-integration
     runs-on: ubuntu-latest
 
     strategy:
