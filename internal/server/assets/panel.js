@@ -95,16 +95,25 @@
   }
 
   function initSidebar() {
-    const nav = document.querySelector('.nav');
-    if (!nav || nav.dataset.ogpNavReady === '1') return;
-    nav.dataset.ogpNavReady = '1';
-    if (matchMedia('(max-width:1050px)').matches) {
-      for (const group of nav.querySelectorAll('details.current')) group.open = false;
-    }
+    const header = document.querySelector('.topbar');
+    const toggle = header?.querySelector('.mobile-nav-toggle');
+    if (!toggle || header.dataset.mobileReady === '1') return;
+    header.dataset.mobileReady = '1';
+    toggle.addEventListener('click', () => {
+      const open = header.classList.toggle('mobile-nav-open');
+      toggle.setAttribute('aria-expanded', String(open));
+    });
+  }
+
+  function closeMobileNav() {
+    const header = document.querySelector('.topbar');
+    if (!header) return;
+    header.classList.remove('mobile-nav-open');
+    header.querySelector('.mobile-nav-toggle')?.setAttribute('aria-expanded', 'false');
   }
 
   function closeMenus(except) {
-    document.querySelectorAll('.fileman-more[open]').forEach((details) => {
+    document.querySelectorAll('.fileman-more[open], .db-action-menu[open]').forEach((details) => {
       if (details !== except) details.open = false;
     });
   }
@@ -112,11 +121,11 @@
   function positionMenu(details) {
     if (!details.open) return;
     const trigger = details.querySelector('summary');
-    const popup = details.querySelector('.fileman-popover');
+    const popup = details.querySelector('.fileman-popover, .inline-popover');
     if (!trigger || !popup) return;
     const rect = trigger.getBoundingClientRect();
     const gutter = 12;
-    const width = Math.min(340, innerWidth - gutter * 2);
+    const width = Math.min(details.matches(".db-action-menu") ? 520 : 340, innerWidth - gutter * 2);
     popup.style.width = width + 'px';
     popup.style.left = Math.max(gutter, Math.min(rect.right - width, innerWidth - width - gutter)) + 'px';
     popup.style.top = gutter + 'px';
@@ -130,7 +139,7 @@
   }
 
   function initFileMenus(root) {
-    root.querySelectorAll('.fileman-more').forEach((details) => {
+    root.querySelectorAll('.fileman-more, .db-action-menu').forEach((details) => {
       if (details.dataset.ogpMenuReady === '1') return;
       details.dataset.ogpMenuReady = '1';
       details.addEventListener('toggle', () => {
@@ -209,20 +218,17 @@
   }
 
   document.addEventListener('click', (event) => {
-    const nav = document.querySelector('.nav');
-    if (nav && !nav.contains(event.target) && matchMedia('(max-width:1050px)').matches) {
-      nav.querySelectorAll('details[open]').forEach((details) => { details.open = false; });
-    }
-    if (!event.target.closest('.fileman-more')) closeMenus();
+    if (!event.target.closest('.topbar') || event.target.closest('.nav a')) closeMobileNav();
+    if (!event.target.closest('.fileman-more, .db-action-menu')) closeMenus();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeMenus();
+    if (event.key === 'Escape') { closeMenus(); closeMobileNav(); }
   });
   addEventListener('scroll', () => {
-    document.querySelectorAll('.fileman-more[open]').forEach(positionMenu);
+    document.querySelectorAll('.fileman-more[open], .db-action-menu[open]').forEach(positionMenu);
   }, true);
   addEventListener('resize', () => {
-    document.querySelectorAll('.fileman-more[open]').forEach(positionMenu);
+    document.querySelectorAll('.fileman-more[open], .db-action-menu[open]').forEach(positionMenu);
   });
 
   const showError = (message) => {

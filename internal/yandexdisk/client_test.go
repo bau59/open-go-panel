@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -84,4 +85,13 @@ func TestFailedUploadDoesNotPublishManifest(t *testing.T){
 	remote:="disk:/server/failed"
 	if _,err:=c.UploadArchive(context.Background(),remote,input);err==nil{t.Fatal("accepted failed transfer")}
 	if _,ok:=d.files[remote+"/manifest.json"];ok{t.Fatal("published incomplete manifest")}
+}
+
+func TestArchiveManifestRequiresCompletion(t *testing.T){
+    d:=&fakeDisk{files:map[string][]byte{},dirs:map[string]bool{}}
+    c:=Client{Token:"test-token",HTTP:&http.Client{Transport:d}}
+    remote:="disk:/sql/backup.sql.gz"
+    if _,err:=c.ArchiveManifest(context.Background(),remote);!errors.Is(err,ErrNotFound){t.Fatalf("missing completion marker: %v",err)}
+    d.files[remote+"/manifest.json"]=[]byte(`{"version":1,"size":10,"parts":[]}`)
+    if _,err:=c.ArchiveManifest(context.Background(),remote);err==nil{t.Fatal("accepted malformed manifest")}
 }

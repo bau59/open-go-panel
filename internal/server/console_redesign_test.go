@@ -50,7 +50,8 @@ func TestDashboardLoadsResourcesAfterInitialPage(t *testing.T){
 func TestGlassNavigationMarkup(t *testing.T) {
 	page := appHeader("caddy")
 	for _, part := range []string{
-		`<nav class="nav" aria-label="Main navigation">`,
+		`<nav id="panel-nav" class="nav" aria-label="Main navigation">`,
+		`aria-controls="panel-nav panel-header-actions" aria-expanded="false"`,
 		`<details class="current" open><summary>Infrastructure</summary>`,
 		`aria-current="page" href="/caddy"`,
 		`<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">`,
