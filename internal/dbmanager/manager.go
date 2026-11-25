@@ -672,6 +672,20 @@ func (m *Manager) backupUnlocked(ctx context.Context, id int64) (Backup, error) 
 		return Backup{}, err
 	}
 	root := filepath.Join("/var/lib/open-go-panel/backups/databases", item.Engine, item.Name)
+	return m.backupToUnlocked(ctx,item,root)
+}
+
+// BackupTo creates a fresh SQL dump in a caller-owned private staging
+// directory without changing the independent local database history.
+func (m *Manager) BackupTo(ctx context.Context,id int64,root string)(Backup,error){
+	if !m.operationMu.TryLock(){return Backup{},errOperationInProgress}
+	defer m.operationMu.Unlock()
+	item,err:=m.Get(id)
+	if err!=nil{return Backup{},err}
+	return m.backupToUnlocked(ctx,item,root)
+}
+
+func (m *Manager) backupToUnlocked(ctx context.Context,item Database,root string)(Backup,error){
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return Backup{}, fmt.Errorf("create backup directory: %w", err)
 	}
