@@ -38,7 +38,9 @@ type Manifest struct {
 }
 
 func (c Client) request(ctx context.Context, method, endpoint, remote string, out any) error {
-	u := "https://cloud-api.yandex.net/v1/disk/resources"+endpoint+"?"+url.Values{"path":{remote},"overwrite":{"true"}}.Encode()
+	values := url.Values{"path":{remote}}
+	if endpoint=="/upload" { values.Set("overwrite","true") }
+	u := "https://cloud-api.yandex.net/v1/disk/resources"+endpoint+"?"+values.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u, nil)
 	if err != nil { return err }
 	req.Header.Set("Authorization", "OAuth "+c.Token)
@@ -80,7 +82,7 @@ func (c Client) upload(ctx context.Context, remote string, size int64, reader io
 	var link struct { Href string `json:"href"` }
 	if err := c.request(ctx,"GET","/upload",remote,&link); err != nil { return err }
 	u, err := url.Parse(link.Href)
-	if err != nil || u.Scheme != "https" || u.Hostname()=="" { return fmt.Errorf("invalid upload URL") }
+	if err != nil || u.Scheme != "https" || u.Hostname()=="" || u.User!=nil { return fmt.Errorf("invalid upload URL") }
 	req, err := http.NewRequestWithContext(ctx,"PUT",link.Href,reader)
 	if err != nil { return fmt.Errorf("invalid upload request") }
 	req.ContentLength = size
@@ -111,6 +113,10 @@ func (c Client) UploadArchive(ctx context.Context, remote, filename string) (Man
 		if _,err:=io.Copy(h,io.NewSectionReader(f,offset,n)); err!=nil { return m,err }
 		part.SHA256=hex.EncodeToString(h.Sum(nil))
 		var uploadErr error
+		var existing struct { Size int64 `json:"size"`; SHA256 string `json:"sha256"` }
+		if c.request(ctx,"GET","",remote+"/"+part.Name,&existing)==nil && existing.Size==n && strings.EqualFold(existing.SHA256,part.SHA256) {
+			m.Parts=append(m.Parts,part);offset+=n;continue
+		}
 		for attempt:=0;attempt<3;attempt++ {
 			uploadErr=c.upload(ctx,remote+"/"+path.Base(part.Name),n,io.NewSectionReader(f,offset,n))
 			if uploadErr==nil { break }
@@ -172,4 +178,40 @@ func (c Client) download(ctx context.Context,remote string)(*http.Response,error
 	if err!=nil{return nil,fmt.Errorf("disk download failed")}
 	if res.StatusCode!=200{res.Body.Close();return nil,fmt.Errorf("disk download: HTTP %d",res.StatusCode)}
 	return res,nil
+}
+
+// PutJSON publishes a small completion index after its referenced archives.
+func (c Client) PutJSON(ctx context.Context, remote string, value any) error {
+	data,err:=json.Marshal(value)
+	if err!=nil{return err}
+	if len(data)>4<<20{return fmt.Errorf("snapshot index too large")}
+	return c.upload(ctx,remote,int64(len(data)),bytes.NewReader(data))
+}
+
+func (c Client) GetJSON(ctx context.Context,remote string,out any) error {
+	res,err:=c.download(ctx,remote)
+	if err!=nil{return err}
+	defer res.Body.Close()
+	return json.NewDecoder(io.LimitReader(res.Body,4<<20)).Decode(out)
+}
+
+// ListDirectories lists immediate child directories with pagination.
+func (c Client) ListDirectories(ctx context.Context,remote string)([]string,error){
+	var names []string
+	for offset:=0;;{
+		values:=url.Values{"path":{remote},"limit":{"100"},"offset":{fmt.Sprint(offset)}}
+		req,err:=http.NewRequestWithContext(ctx,"GET","https://cloud-api.yandex.net/v1/disk/resources?"+values.Encode(),nil)
+		if err!=nil{return nil,err}
+		req.Header.Set("Authorization","OAuth "+c.Token)
+		res,err:=c.HTTP.Do(req)
+		if err!=nil{return nil,fmt.Errorf("disk directory listing failed")}
+		if res.StatusCode!=200{res.Body.Close();return nil,fmt.Errorf("disk listing: HTTP %d",res.StatusCode)}
+		var data struct{Embedded struct{Items []struct{Name string `json:"name"`;Type string `json:"type"`} `json:"items"`;Total int `json:"total"`} `json:"_embedded"`}
+		err=json.NewDecoder(io.LimitReader(res.Body,8<<20)).Decode(&data)
+		res.Body.Close()
+		if err!=nil{return nil,err}
+		for _,item:=range data.Embedded.Items{if item.Type=="dir"{names=append(names,item.Name)}}
+		offset+=len(data.Embedded.Items)
+		if len(data.Embedded.Items)==0||offset>=data.Embedded.Total{return names,nil}
+	}
 }
