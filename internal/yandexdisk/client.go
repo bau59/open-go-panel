@@ -10,8 +10,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -52,6 +54,19 @@ func New(token string) Client {
 	return Client{Token:token, HTTP:&http.Client{Transport:&http.Transport{Proxy:http.ProxyFromEnvironment, ResponseHeaderTimeout: 2*time.Minute, TLSHandshakeTimeout: 15*time.Second}, CheckRedirect:func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
+// Check creates the destination if needed and verifies its accessibility.
+func (c Client) Check(ctx context.Context, remote string) error {
+	prefix, relative, ok := strings.Cut(remote,":/")
+	if !ok || (prefix!="app" && prefix!="disk") || relative=="" { return fmt.Errorf("expected app:/ or disk:/ backup directory") }
+	dir := prefix+":/"
+	for _, segment := range strings.Split(relative,"/") {
+		if segment=="" || segment=="." || segment==".." || strings.ContainsAny(segment,"\\\r\n") { return fmt.Errorf("invalid backup directory") }
+		dir = strings.TrimSuffix(dir,"/")+"/"+segment
+		if err := c.mkdir(ctx,dir); err != nil { return err }
+	}
+	return nil
+}
+
 func (c Client) mkdir(ctx context.Context, remote string) error {
 	var meta struct { Type string `json:"type"` }
 	if err := c.request(ctx,"GET","",remote,&meta); err == nil {
@@ -80,14 +95,7 @@ func (c Client) upload(ctx context.Context, remote string, size int64, reader io
 // The caller must supply a unique snapshot directory and an immutable archive.
 func (c Client) UploadArchive(ctx context.Context, remote, filename string) (Manifest,error) {
 	m := Manifest{Version:1}
-	prefix, relative, ok := strings.Cut(remote,":/")
-	if !ok || (prefix!="app" && prefix!="disk") || relative=="" { return m,fmt.Errorf("expected app:/ or disk:/ backup directory") }
-	dir := prefix+":/"
-	for _, segment := range strings.Split(relative,"/") {
-		if segment=="" || segment=="." || segment==".." { return m,fmt.Errorf("invalid backup directory") }
-		dir = strings.TrimSuffix(dir,"/")+"/"+segment
-		if err := c.mkdir(ctx,dir); err != nil { return m,err }
-	}
+	if err := c.Check(ctx,remote); err != nil { return m,err }
 	f, err := os.Open(filename)
 	if err != nil { return m,err }
 	defer f.Close()
@@ -116,4 +124,52 @@ func (c Client) UploadArchive(ctx context.Context, remote, filename string) (Man
 	if err!=nil { return m,err }
 	if err:=c.upload(ctx,remote+"/manifest.json",int64(len(data)),bytes.NewReader(data));err!=nil { return m,err }
 	return m,nil
+}
+
+// DownloadArchive reconstructs a published archive into an exclusive temporary
+// file, verifies all parts, then publishes it without replacing an existing file.
+func (c Client) DownloadArchive(ctx context.Context, remote, filename string) error {
+	var m Manifest
+	res,err:=c.download(ctx,remote+"/manifest.json")
+	if err!=nil{return err}
+	err=json.NewDecoder(io.LimitReader(res.Body,4<<20)).Decode(&m)
+	res.Body.Close()
+	if err!=nil{return err}
+	if m.Version!=1 || m.Size<=0 || len(m.Parts)==0 {return fmt.Errorf("invalid manifest")}
+	validHash:=regexp.MustCompile("^[0-9a-f]{64}$")
+	var total int64
+	for i,p:=range m.Parts{
+		if p.Name!=fmt.Sprintf("archive.part%06d",i+1)||p.Size<=0||p.Size>PartSize||!validHash.MatchString(p.SHA256)||p.Size>m.Size-total{return fmt.Errorf("invalid manifest part")}
+		total+=p.Size
+	}
+	if total!=m.Size{return fmt.Errorf("manifest size mismatch")}
+	tmp,err:=os.CreateTemp(filepath.Dir(filename),".ogp-restore-*")
+	if err!=nil{return err}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	for _,p:=range m.Parts{
+		res,err:=c.download(ctx,remote+"/"+p.Name)
+		if err!=nil{return err}
+		h:=sha256.New()
+		n,copyErr:=io.Copy(io.MultiWriter(tmp,h),io.LimitReader(res.Body,p.Size+1))
+		res.Body.Close()
+		if copyErr!=nil{return copyErr}
+		if n!=p.Size||hex.EncodeToString(h.Sum(nil))!=p.SHA256{return fmt.Errorf("part verification failed: %s",p.Name)}
+	}
+	if err:=tmp.Sync();err!=nil{return err}
+	if err:=tmp.Close();err!=nil{return err}
+	return os.Link(tmp.Name(),filename)
+}
+
+func (c Client) download(ctx context.Context,remote string)(*http.Response,error){
+	var link struct{Href string `json:"href"`}
+	if err:=c.request(ctx,"GET","/download",remote,&link);err!=nil{return nil,err}
+	u,err:=url.Parse(link.Href)
+	if err!=nil||u.Scheme!="https"||u.Hostname()==""||u.User!=nil{return nil,fmt.Errorf("invalid download URL")}
+	req,err:=http.NewRequestWithContext(ctx,"GET",link.Href,nil)
+	if err!=nil{return nil,fmt.Errorf("invalid download request")}
+	res,err:=c.HTTP.Do(req)
+	if err!=nil{return nil,fmt.Errorf("disk download failed")}
+	if res.StatusCode!=200{res.Body.Close();return nil,fmt.Errorf("disk download: HTTP %d",res.StatusCode)}
+	return res,nil
 }
