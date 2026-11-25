@@ -164,7 +164,7 @@ func restrictSyscalls(network bool)error{
         // Only IPv4 sockets in the isolated namespace. No filesystem Unix
         // sockets, netlink, raw sockets or packet sockets are exposed.
         filter=append(filter,
-            unix.SockFilter{Code:jeq,Jf:6,K:unix.SYS_SOCKET},
+            unix.SockFilter{Code:jeq,Jf:8,K:unix.SYS_SOCKET},
             unix.SockFilter{Code:load,K:16},
             unix.SockFilter{Code:jeq,Jt:1,K:unix.AF_INET},
             unix.SockFilter{Code:ret,K:denied},
@@ -173,8 +173,6 @@ func restrictSyscalls(network bool)error{
             unix.SockFilter{Code:jeq,Jt:1,K:unix.SOCK_STREAM},
             unix.SockFilter{Code:ret,K:denied},
             unix.SockFilter{Code:ret,K:unix.SECCOMP_RET_ALLOW})
-        // Skip all eight socket-specific instructions for other syscalls.
-        filter[len(filter)-9].Jf=8
     }else{
         filter=append(filter,unix.SockFilter{Code:jeq,Jf:1,K:unix.SYS_SOCKET},unix.SockFilter{Code:ret,K:denied})
     }
