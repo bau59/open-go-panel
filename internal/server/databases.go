@@ -130,19 +130,19 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		hour, err := strconv.Atoi(r.FormValue("hour_utc"))
 		if err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "invalid backup hour")
+			backupRedirect(w,r,"databases","invalid backup hour")
 			return
 		}
 		keep, err := strconv.Atoi(r.FormValue("keep"))
 		if err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "invalid backup retention")
+			backupRedirect(w,r,"databases","invalid backup retention")
 			return
 		}
 		if err := cfg.Databases.SetBackupSchedule(r.FormValue("enabled") == "1", hour, keep); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			backupRedirect(w,r,"databases",err.Error())
 			return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		backupRedirect(w,r,"databases","")
 	})))
 
 
@@ -163,33 +163,33 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			KeyFile: r.FormValue("key_file"), KnownHostsFile: r.FormValue("known_hosts_file"),
 		}
 		if err := cfg.Databases.SaveOffsiteConnection(conn); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+			backupRedirect(w,r,"storage",err.Error()); return
 		}
-		http.Redirect(w, r, "/databases?notice=External+destination+saved", http.StatusSeeOther)
+		backupRedirect(w,r,"storage","")
 	})))
 
 	mux.Handle("POST /databases/backups/offsite/schedule", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
 		hour, err := strconv.Atoi(r.FormValue("hour_utc"))
-		if err != nil { writeDatabasesPage(w, r, cfg, http.StatusBadRequest, "invalid external upload hour"); return }
+		if err != nil { backupRedirect(w,r,"databases","invalid external upload hour"); return }
 		if err := cfg.Databases.SetOffsiteSchedule(r.FormValue("enabled") == "1", hour); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+			backupRedirect(w,r,"databases",err.Error()); return
 		}
-		http.Redirect(w, r, "/databases?notice=External+schedule+saved", http.StatusSeeOther)
+		backupRedirect(w,r,"databases","")
 	})))
 
 	mux.Handle("POST /databases/backups/offsite/test", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := cfg.Databases.StartOffsiteConnectionTest(); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+			backupRedirect(w,r,"storage",err.Error()); return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		backupRedirect(w,r,"storage","")
 	})))
 
 	mux.Handle("POST /databases/backups/offsite/run", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := cfg.Databases.StartOffsiteUploadLatest(); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+			backupRedirect(w,r,"databases",err.Error()); return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		backupRedirect(w,r,"databases","")
 	})))
 
 	mux.Handle("POST /databases/{id}/backup/export", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -197,9 +197,9 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		if err != nil || id <= 0 { http.Error(w, "invalid database id", http.StatusBadRequest); return }
 		if err := r.ParseForm(); err != nil { http.Error(w, "invalid form", http.StatusBadRequest); return }
 		if err := cfg.Databases.StartOffsiteUploadOne(id, r.FormValue("path")); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error()); return
+			if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases",err.Error()) } else { writeDatabasesPage(w,r,cfg,http.StatusBadRequest,err.Error()) }; return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases","") } else { http.Redirect(w,r,"/databases",http.StatusSeeOther) }
 	})))
 
 	mux.Handle("POST /databases/backups/remote", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,10 +222,10 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		}
 		schedule := cfg.Databases.BackupSchedule()
 		if err := cfg.Databases.StartLocalBackup(id, schedule.Keep); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases",err.Error()) } else { writeDatabasesPage(w,r,cfg,http.StatusBadRequest,err.Error()) }
 			return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases","") } else { http.Redirect(w,r,"/databases",http.StatusSeeOther) }
 	})))
 
 	mux.Handle("GET /databases/{id}/backup/download", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -258,10 +258,10 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			return
 		}
 		if err := cfg.Databases.DeleteBackup(id, r.FormValue("path")); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases",err.Error()) } else { writeDatabasesPage(w,r,cfg,http.StatusBadRequest,err.Error()) }
 			return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases","") } else { http.Redirect(w,r,"/databases",http.StatusSeeOther) }
 	})))
 
 	mux.Handle("POST /databases/{id}/restore", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,10 +275,10 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 			return
 		}
 		if err := cfg.Databases.Restore(r.Context(), id, r.FormValue("path")); err != nil {
-			writeDatabasesPage(w, r, cfg, http.StatusBadRequest, err.Error())
+			if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases",err.Error()) } else { writeDatabasesPage(w,r,cfg,http.StatusBadRequest,err.Error()) }
 			return
 		}
-		http.Redirect(w, r, "/databases", http.StatusSeeOther)
+		if r.FormValue("return_to")=="backup" { backupRedirect(w,r,"databases","") } else { http.Redirect(w,r,"/databases",http.StatusSeeOther) }
 	})))
 
 	mux.Handle("POST /databases/{engine}/restart", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -566,42 +566,7 @@ func databasesPage(data databasePageData) string {
 			}
 		}
 
-		var backupRows strings.Builder
-		for _, backup := range data.Backups[item.ID] {
-			fmt.Fprintf(&backupRows, `
-				<div class="backup-row">
-					<div class="db-backup-file"><strong>%s</strong><div class="note">%s</div></div>
-					<div class="actions db-backup-actions">
-						<a class="secondary" href="/databases/%d/backup/download?path=%s">Download</a>
-                        <form method="post" action="/databases/%d/backup/export">
-                            <input type="hidden" name="path" value="%s">
-                            <button class="secondary">Send off-site</button>
-                        </form>
-						<form method="post" action="/databases/%d/restore" onsubmit="return confirm('Restore this backup over the current database?')">
-							<input type="hidden" name="path" value="%s">
-							<button class="secondary">Restore</button>
-						</form>
-						<form method="post" action="/databases/%d/backup/delete" onsubmit="return confirm('Permanently delete this backup file? This cannot be undone.')">
-							<input type="hidden" name="path" value="%s">
-							<button class="danger">Delete</button>
-						</form>
-					</div>
-				</div>`,
-				html.EscapeString(filepath.Base(backup.Path)),
-				html.EscapeString(formatBytes(uint64(backup.Size))),
-				item.ID,
-				url.QueryEscape(backup.Path),
-                item.ID,
-                html.EscapeString(backup.Path),
-				item.ID,
-				html.EscapeString(backup.Path),
-				item.ID,
-				html.EscapeString(backup.Path),
-			)
-		}
-		if backupRows.Len() == 0 {
-			backupRows.WriteString(`<p class="note">No backups yet.</p>`)
-		}
+		backupRows := databaseBackupRows(item,data.Backups[item.ID],data.BackupRemote!="",false)+fmt.Sprintf(`<a class="secondary db-cloud-link" href="/backup?section=databases&amp;database=%d">Local &amp; cloud backup history</a>`,item.ID)
 
 		fmt.Fprintf(&rows, `
 		<tr>
@@ -613,9 +578,9 @@ func databasesPage(data databasePageData) string {
 				<div class="actions db-row-actions">
 					%s
 					<a class="secondary" href="/databases/%d/slow-queries">Slow queries</a>
-					<form method="post" action="/databases/%d/backup"><button class="secondary">Backup now</button></form>
+					<form method="post" action="/databases/%d/backup"><button class="secondary">Local backup</button></form>
 					<details class="db-action-menu">
-						<summary class="secondary">Backups</summary>
+						<summary class="secondary">Local backups</summary>
 						<div class="inline-popover wide">%s</div>
 					</details>
 					<details class="db-action-menu">
@@ -664,7 +629,7 @@ func databasesPage(data databasePageData) string {
 			openAdminer,
 			item.ID,
 			item.ID,
-			backupRows.String(),
+			backupRows,
 			html.EscapeString(item.DSN()),
 			item.ID,
 			item.ID,
@@ -759,7 +724,7 @@ func databasesPage(data databasePageData) string {
 			</div>
 		</section>
 
-		` + databaseBackupSections(data) + `
+		` + databaseBackupTaskHTML(data.BackupTask) + `<p class="note db-backup-link">Backup schedules and cloud storage are managed in <a href="/backup?section=databases">Backups</a>.</p>
 
 
 		` + mysqlSettings + `

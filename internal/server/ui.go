@@ -94,9 +94,10 @@ func appHeader(active string) string {
 	nav.WriteString(link(menuItem{"security", "/security", "Security"}))
 	return `<div class="topbar-wrap"><div class="shell"><header class="topbar">
 		<a class="brand" href="/"><span class="brand-mark">OG</span><span class="brand-copy"><strong>Open Go Panel</strong><small>SERVER CONTROL</small></span></a>
-		<nav class="nav" aria-label="Main navigation">` + nav.String() + `</nav>
+		<button type="button" class="mobile-nav-toggle secondary" aria-controls="panel-nav panel-header-actions" aria-expanded="false" aria-label="Toggle navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+		<nav id="panel-nav" class="nav" aria-label="Main navigation">` + nav.String() + `</nav>
 		<div class="sidebar-note"><span class="sidebar-note-dot"></span>Server management</div>
-		<div class="header-actions">
+		<div id="panel-header-actions" class="header-actions">
 			<form method="post" action="/panel/close" onsubmit="return confirm('Stop and disable the panel service? To reopen it, use SSH: sudo systemctl start open-go-panel.service')"><button class="secondary compact-action" type="submit" title="Stop the panel service and close its port">Close panel</button></form>
 			<form method="post" action="/logout"><button class="secondary" type="submit">Logout</button></form>
 		</div>

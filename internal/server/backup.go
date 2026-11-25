@@ -24,6 +24,18 @@ var backupUsername = regexp.MustCompile("^[a-z_][a-z0-9_-]{0,31}$")
 func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
  snapshots := registerSnapshotRoutes(mux,store,cfg)
  mux.Handle("GET /backup", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  section:=r.URL.Query().Get("section")
+  tabs:=backupNavigation(section)
+  if section=="storage"||section=="databases"{
+   if cfg.Databases==nil {http.Error(w,"database manager unavailable",503);return}
+   data:=loadDatabaseBackupData(cfg)
+   content:=backupStorageSection(data)
+   if section=="databases"{content=databaseBackupSections(data)+databaseBackupHistory(cfg,r)}
+   notice:=""
+   if msg:=r.URL.Query().Get("error");msg!=""{notice=`<div class="alert">`+html.EscapeString(msg)+`</div>`}
+   writeHTML(w,cfg.Logger,200,pageHead("Backups")+"<body>"+appHeader("backup")+`<main class="shell"><div class="backup-page"><section class="page-head"><div><h1>Backups &amp; Recovery</h1><p class="sub">Manage local snapshots, cloud storage and recovery exports.</p></div></section>`+tabs+notice+content+"</div></main></body></html>")
+   return
+  }
   users, err := cfg.Users.List(r.Context())
   if err != nil { http.Error(w, err.Error(), 500); return }
   var rows strings.Builder
@@ -44,7 +56,7 @@ func registerBackupRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
   body := `
   <div class="backup-page">
    <section class="page-head"><div><h1>Backups &amp; Recovery</h1><p class="sub">Manage local snapshots, cloud storage and recovery exports.</p></div></section>
-   ` + snapshots.render(r) + `
+   ` + tabs + snapshots.render(r) + `
    <section class="backup-overview" aria-label="Server exports">
     <article class="panel backup-tile"><div><h2>Panel configuration</h2><p class="sub">Users, applications, database bindings and domain settings.</p></div><a class="secondary backup-action" href="/backup/panel.json">Download JSON</a></article>
     <article class="panel backup-tile"><div><h2>Installed software</h2><p class="sub">APT package installation script for Ubuntu.</p></div><a class="secondary backup-action" href="/backup/software.sh">Download script</a></article>
@@ -213,4 +225,16 @@ func writeTarTree(ctx context.Context,tw *tar.Writer,root,prefix string)error{
   closeErr:=f.Close()
   if err!=nil{return err};return closeErr
  })
+}
+
+func backupNavigation(section string)string{
+ var out strings.Builder
+ out.WriteString(`<nav class="backup-tabs" aria-label="Backup sections">`)
+ for _,tab:=range []struct{key,href,label string}{{"","/backup","Server &amp; applications"},{"databases","/backup?section=databases","Databases"},{"storage","/backup?section=storage","Cloud storage"}}{
+  active:=""
+  if section==tab.key{active=` class="active" aria-current="page"`}
+  fmt.Fprintf(&out,`<a%s href="%s">%s</a>`,active,tab.href,tab.label)
+ }
+ out.WriteString("</nav>")
+ return out.String()
 }
