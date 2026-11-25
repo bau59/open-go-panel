@@ -47,6 +47,7 @@ type Entry struct {
 
 type Manager struct {
     root *os.File
+    rejectHardlinks bool
 }
 
 func validName(name string) bool {
@@ -135,6 +136,11 @@ func (m *Manager) openFile(folder, name string) (*os.File, os.FileInfo, error) {
     info, err := file.Stat()
     if err != nil { file.Close(); return nil, nil, err }
     if !info.Mode().IsRegular() { file.Close(); return nil, nil, errors.New("only regular files can be opened") }
+    if m.rejectHardlinks {
+        var stat unix.Stat_t
+        if err:=unix.Fstat(fileFD,&stat);err!=nil{file.Close();return nil,nil,err}
+        if stat.Nlink!=1{file.Close();return nil,nil,errors.New("hardlinked file is not accessible through MCP")}
+    }
     return file, info, nil
 }
 
@@ -291,17 +297,20 @@ func (m *Manager) Delete(folder, name string) error {
     if err != nil { return err }
     defer unix.Close(fd)
     remaining := MaxDeleteEntries
-    return removeTree(fd, name, 0, &remaining)
+    return removeTree(fd, name, 0, &remaining,m.rejectHardlinks)
 }
 
-func removeTree(parent int, name string, depth int, remaining *int) error {
+func removeTree(parent int, name string, depth int, remaining *int, rejectHardlinks bool) error {
     if !validName(name) || depth > maxDepth || *remaining <= 0 {
         return errors.New("delete depth/item limit reached")
     }
     *remaining--
     var info unix.Stat_t
     if err := unix.Fstatat(parent, name, &info, unix.AT_SYMLINK_NOFOLLOW); err != nil { return err }
-    if (info.Mode & unix.S_IFMT) != unix.S_IFDIR { return unix.Unlinkat(parent, name, 0) }
+    if (info.Mode & unix.S_IFMT) != unix.S_IFDIR {
+        if rejectHardlinks&&info.Mode&unix.S_IFMT==unix.S_IFREG&&info.Nlink!=1{return errors.New("hardlinked file is not removable through MCP")}
+        return unix.Unlinkat(parent, name, 0)
+    }
     fd, err := unix.Openat2(parent, name, &unix.OpenHow{
         Flags: uint64(unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC),
         Resolve: unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS|unix.RESOLVE_NO_XDEV,
@@ -312,7 +321,7 @@ func removeTree(parent int, name string, depth int, remaining *int) error {
     if readErr != nil && !errors.Is(readErr, io.EOF) { dir.Close(); return readErr }
     if len(names) > *remaining { dir.Close(); return fmt.Errorf("directory exceeds the remaining %d-item delete limit", *remaining) }
     for _, child := range names {
-        if err := removeTree(fd, child, depth+1, remaining); err != nil { dir.Close(); return err }
+        if err := removeTree(fd, child, depth+1, remaining,rejectHardlinks); err != nil { dir.Close(); return err }
     }
     if err := dir.Close(); err != nil { return err }
     return unix.Unlinkat(parent, name, unix.AT_REMOVEDIR)
@@ -568,5 +577,6 @@ func (m *Manager) DeletePath(folder,name string,recursive bool)error{
     var stat unix.Stat_t
     if err:=unix.Fstatat(fd,name,&stat,unix.AT_SYMLINK_NOFOLLOW);err!=nil{return err}
     if stat.Mode&unix.S_IFMT==unix.S_IFDIR{return unix.Unlinkat(fd,name,unix.AT_REMOVEDIR)}
+    if m.rejectHardlinks&&stat.Mode&unix.S_IFMT==unix.S_IFREG&&stat.Nlink!=1{return errors.New("hardlinked file is not removable through MCP")}
     return unix.Unlinkat(fd,name,0)
 }

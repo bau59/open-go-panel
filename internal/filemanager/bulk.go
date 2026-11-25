@@ -108,7 +108,7 @@ func (m *Manager) DeleteMany(folder string, names []string) (int, error) {
     }
     for i, name := range names {
         remaining := MaxDeleteEntries
-        if err := removeTree(fd, name, 0, &remaining); err != nil {
+        if err := removeTree(fd, name, 0, &remaining,m.rejectHardlinks); err != nil {
             return i, fmt.Errorf("deleted %d of %d items before %q failed: %w", i, len(names), name, err)
         }
     }

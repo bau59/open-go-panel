@@ -553,8 +553,10 @@ Commands and file helpers execute under the application owner inside a
 separate Linux mount/PID/network/IPC namespace. Only the selected project
 (`/workspace`), read-only system runtimes and private temporary files are
 visible. Network sockets are disabled; dependency downloads and host-user
-caches are intentionally unavailable. Existing hardlinked files are refused
-because their inode may also be visible in another project. Use vendored
+caches are intentionally unavailable. File tools reject access to individual hardlinked files because their inode
+may also be visible in another project. Shell commands check the entire
+project for hardlinks, streaming directory entries without a fixed total
+file-count limit; this check counts toward the command timeout. Use vendored
 dependencies or prepare dependencies through the normal deployment process.
 There is no unisolated fallback. File edits require the version returned by
 `read_file`; conflicting edits are rejected. Commands time out within 120

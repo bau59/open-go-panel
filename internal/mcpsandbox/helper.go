@@ -103,18 +103,12 @@ func RunHelper(args []string)error{
     if err:=os.WriteFile(stage+"/etc/group",[]byte(fmt.Sprintf("%s:x:%d:\n",owner,gid)),0644);err!=nil{return err}
     if err:=unix.Chroot(stage);err!=nil{return err}
     if err:=os.Chdir("/");err!=nil{return err}
-    // Preexisting hardlinks can expose a shared inode even in a mount
-    // namespace. Refuse them rather than silently exposing sibling content.
-    count:=0
-    if err:=filepath.WalkDir("/workspace",func(path string,entry os.DirEntry,err error)error{
-        if err!=nil{return err};count++
-        if count>200000{return errors.New("project exceeds sandbox entry limit")}
-        if entry.Type().IsRegular(){
-            info,err:=entry.Info();if err!=nil{return err}
-            stat,ok:=info.Sys().(*syscall.Stat_t);if !ok||stat.Nlink!=1{return errors.New("project contains a hardlinked file")}
-        }
-        return nil
-    });err!=nil{return err}
+    // File tools check the specific inode before reading or modifying it.
+    // Arbitrary shell commands still need to reject shared inodes across
+    // the entire mounted tree, but the number of files is not a boundary.
+    if operation=="run_command"{
+        if err:=checkCommandTree("/workspace");err!=nil{return err}
+    }
     for capability:=0;capability<64;capability++{
         err:=unix.Prctl(unix.PR_CAPBSET_DROP,uintptr(capability),0,0,0)
         if err!=nil&&!errors.Is(err,unix.EINVAL){return err}
