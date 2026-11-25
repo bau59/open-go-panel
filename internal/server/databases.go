@@ -158,7 +158,7 @@ func registerDatabaseRoutes(mux *http.ServeMux, store *sessionStore, cfg Config)
 		conn := dbmanager.OffsiteConnection{
 			Provider: r.FormValue("provider"), Destination: r.FormValue("destination"),
 			Endpoint: r.FormValue("endpoint"), Region: r.FormValue("region"),
-			AccessKey: r.FormValue("access_key"), SecretKey: r.FormValue("secret_key"),
+			AccessKey: r.FormValue("access_key"), SecretKey: r.FormValue("secret_key"), OAuthToken: r.FormValue("oauth_token"),
 			Host: r.FormValue("host"), Port: port, User: r.FormValue("user"),
 			KeyFile: r.FormValue("key_file"), KnownHostsFile: r.FormValue("known_hosts_file"),
 		}
