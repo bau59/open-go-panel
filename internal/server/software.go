@@ -79,7 +79,7 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 		refresh = `<script>(function(){var route=location.pathname+location.search;setTimeout(function(){if(location.pathname+location.search!==route)return;if(window.htmx){window.htmx.ajax('GET',route,{target:'body',swap:'innerHTML'});}else{location.reload();}},3000);})()</script>`
 	}
 
-	var cards strings.Builder
+	var cards, phpCards strings.Builder
 	for _, item := range items {
 		statusClass := "warn"
 		statusText := "not installed"
@@ -142,7 +142,9 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
                 </form>
             </div>`
         }
-        cards.WriteString(`
+        target := &cards
+        if item.ID == "php" || item.ID == "php74" { target = &phpCards }
+        target.WriteString(`
 			<article class="panel panel-pad software-card">
 				<div class="software-card-head">
 					<div>
@@ -161,7 +163,7 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 	}
 
 	return pageHead("Software") + `<body>` + appHeader("software") + `
-	<main class="shell">
+	<main class="shell" data-panel-key="software" data-panel-tabs="software,php">
 		<div class="page-head">
 			<div>
 				<p class="eyebrow">Server software</p>
@@ -171,7 +173,8 @@ func softwarePage(items []software.Item, task software.Task, phpVersion string, 
 		</div>
 		` + alert + running + `
 		
-		<section class="software-grid">` + cards.String() + `</section>
+		<section class="software-grid" data-panel-tab="software">` + cards.String() + `</section>
+		` + func() string { if phpCards.Len()==0 {return ""}; return `<section class="software-grid" data-panel-tab="php">` + phpCards.String() + `</section>` }() + `
 
 		<section class="panel panel-pad" style="margin-top:16px">
 			<div class="section-title">

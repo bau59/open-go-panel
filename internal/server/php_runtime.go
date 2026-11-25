@@ -131,7 +131,7 @@ func phpRuntimeBlock(app panelapp.App) string {
         current = "PHP 7.4 · isolated Docker"
     }
     action := fmt.Sprintf("/apps/%d/php-version", app.ID)
-    return `<section class="panel panel-pad" style="margin-top:16px">
+    return `<section class="panel panel-pad" style="margin-top:16px" data-panel-tab="settings">
         <div class="section-title">
             <div>
                 <h2>PHP runtime</h2>

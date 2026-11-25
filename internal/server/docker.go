@@ -383,7 +383,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
     }
 
     return pageHead("Docker") + `<body>` + appHeader("docker") + `
-    <main class="shell">
+    <main class="shell" data-panel-key="docker" data-panel-tabs="containers,create,versions">
         <div class="page-head">
             <div><p class="eyebrow">Containers</p><h1>Docker</h1><p class="sub">Start, stop, restart, remove and configure container autostart.</p></div>
             <div class="page-control-cluster">
@@ -398,21 +398,21 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             <div class="metric"><span>CPU</span><strong id="docker-total-cpu">—</strong><small>running containers</small></div>
             <div class="metric"><span>Memory</span><strong id="docker-total-memory">—</strong><small>running containers</small></div>
         </section>
-                <section class="panel" id="docker-containers" style="margin-bottom:16px">
+                <section class="panel" id="docker-containers" style="margin-bottom:16px" data-panel-tab="containers">
             <div class="database-list-head panel-pad"><div><h2>Containers</h2><p class="note" style="margin:6px 0 0">CPU and memory refresh every 10 seconds; rebuild reuses existing settings.</p></div>
             <a href="/docker" class="secondary compact-action">Refresh</a></div>
             <div class="table-scroll"><table><thead><tr><th>Container</th><th>Image</th><th>Status</th><th>CPU</th><th>Memory</th><th>Ports</th><th>Autostart</th><th>Actions</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>
         </section>
         ` + rebuildDialogs.String() + resourceDialogs.String() + dockerLogsDialog() + `
-        ` + func() string {if backupCount==0{return ""};return `<details class="panel docker-backups">
+        ` + func() string {if backupCount==0{return ""};return `<details class="panel docker-backups" data-panel-tab="versions">
             <summary>Previous versions (`+fmt.Sprintf("%d",backupCount)+`) <span class="note">Kept for rollback; not active deployments</span></summary>
             <div class="table-scroll"><table><thead><tr><th>Backup container</th><th>Image</th><th>Purpose</th><th>Actions</th></tr></thead><tbody>`+backupRows.String()+`</tbody></table></div>
         </details>`}() + `
-        <div class="docker-add-toolbar">
+        <div class="docker-add-toolbar" data-panel-tab="create">
             <button type="button" class="secondary" onclick="const d=document.getElementById('docker-add-image');d.open=!d.open;if(d.open)d.scrollIntoView({behavior:'smooth',block:'start'})">+ Run container</button>
             <button type="button" class="secondary" onclick="const d=document.getElementById('docker-add-github');d.open=!d.open;if(d.open)d.scrollIntoView({behavior:'smooth',block:'start'})">+ Build from GitHub</button>
         </div>
-        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-image" style="margin-bottom:16px">
+        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-image" style="margin-bottom:16px" data-panel-tab="create">
             <summary><strong>Run container</strong><span>Pull an image and launch a new Docker container</span></summary>
             <form method="post" action="/docker/create" class="docker-create-grid">
                 <div><label>Container name</label><input name="name" placeholder="my-container" required></div>
@@ -433,7 +433,7 @@ func dockerPage(status paneldocker.Status, containers []paneldocker.Container, i
             </form>
             <p class="note" style="margin-top:12px">Ports bind to 127.0.0.1 by default. Public ports may bypass UFW rules; enable only when external access is required.</p>
         </details>
-        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-github" style="margin-bottom:16px">
+        <details class="panel panel-pad docker-create-card docker-fold" id="docker-add-github" style="margin-bottom:16px" data-panel-tab="create">
             <summary><strong>Build from GitHub</strong><span>Clone, build and deploy from a GitHub repository</span></summary>
             <form method="post" action="/docker/github/key" class="docker-key-form" style="margin:16px 0 22px">
                 <div><label>GitHub repository for deploy key</label><input name="repository" value="` + html.EscapeString(key.Repository) + `" placeholder="owner/repository" required></div>

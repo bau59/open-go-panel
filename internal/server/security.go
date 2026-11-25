@@ -390,7 +390,7 @@ func securityPage(data securityPageData) string {
 	}
 
 	return pageHead("Security") + `<body>` + appHeader("security") + `
-	<main class="shell">
+	<main class="shell" data-panel-key="security" data-panel-tabs="blocked,alerts,trusted,settings">
 		<div class="page-head">
 			<div><p class="eyebrow">Ubuntu security</p><h1>Security</h1><p class="sub">CrowdSec handles detection and dynamic bans. UFW controls the static inbound perimeter.</p></div>
 		</div>
@@ -410,16 +410,16 @@ func securityPage(data securityPageData) string {
 			<p class="sub" style="margin:16px 0 0">` + setupText + `</p>
 		</section>
 
-		<section class="panel panel-pad" style="margin-bottom:16px">
+		<section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="settings">
 			<div class="section-title"><div><h2>CrowdSec decision profiles</h2><p class="note" style="margin:6px 0 0">Review or edit ban durations, matching filters and remediation actions. Changes are validated before being applied.</p></div><a href="/security/profiles" class="secondary">Manage profiles</a></div>
 		</section>
 
-		<details class="panel panel-pad advanced-block" style="margin-bottom:16px">
+		<details class="panel panel-pad advanced-block" style="margin-bottom:16px" data-panel-tab="settings">
 			<summary class="section-title" style="margin:0;cursor:pointer"><div><h2>Firewall rules</h2><p class="note" style="margin:6px 0 0">Current UFW rules.</p></div><span class="secondary">View</span></summary>
 			<pre class="security-output" style="margin-top:18px">` + html.EscapeString(data.Status.FirewallStatus) + `</pre>
 		</details>
 
-		<section class="panel" style="margin-bottom:16px">
+		<section class="panel" style="margin-bottom:16px" data-panel-tab="blocked">
 			<div class="panel-pad">
 				<div class="section-title"><div><h2>Blocked IPs</h2><p class="note" style="margin:6px 0 0">Temporary decisions expire automatically.</p></div></div>
 				<form class="list-toolbar" method="get" action="/security" style="padding:0;border:0">
@@ -431,7 +431,7 @@ func securityPage(data securityPageData) string {
 			` + pagerHTML("/security", "decisions_page", data.Query, data.DecisionPage) + `
 		</section>
 
-		<section class="panel" style="margin-bottom:16px">
+		<section class="panel" style="margin-bottom:16px" data-panel-tab="trusted">
 			<div class="panel-pad">
 				<div class="section-title"><div><h2>Never block</h2><p class="note" style="margin:6px 0 0">Trusted administration IPs and CIDRs.</p></div></div>
 				<form method="post" action="/security/trust" class="compact-form compact-form-3">
@@ -446,7 +446,7 @@ func securityPage(data securityPageData) string {
 			` + pagerHTML("/security", "trust_page", data.Query, data.TrustPage) + `
 		</section>
 
-		<section class="panel">
+		<section class="panel" data-panel-tab="alerts">
 			<div class="panel-pad">
 				<div class="section-title"><div><h2>Alerts</h2><p class="note" style="margin:6px 0 0">Detection history remains after temporary bans expire.</p></div></div>
 				<form class="list-toolbar" method="get" action="/security" style="padding:0;border:0">
