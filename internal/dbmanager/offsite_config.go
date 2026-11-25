@@ -26,6 +26,7 @@ type OffsiteConnection struct {
     AccessKey string
     SecretKey string
     OAuthToken string
+    YandexScope string
     Host string
     Port int
     User string
@@ -51,10 +52,12 @@ func (m *Manager) OffsiteConnection() OffsiteConnection {
     if provider != "existing" {
         destination = strings.TrimPrefix(destination, managedOffsiteRemote+":")
     }
+    scope:=get("db.offsite_yandex_scope")
+    if scope==""{scope="app"}
     port, _ := strconv.Atoi(get("db.offsite_port"))
     if port == 0 { port = 22 }
     return OffsiteConnection{
-        Provider: provider, Destination: destination,
+        Provider: provider, Destination: destination, YandexScope:scope,
         Endpoint: get("db.offsite_endpoint"), Region: get("db.offsite_region"),
         Host: get("db.offsite_host"), Port: port,
         User: get("db.offsite_user"), KeyFile: get("db.offsite_key_file"),
@@ -150,6 +153,8 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
         remote = managedOffsiteRemote + ":" + conn.Destination
         switch conn.Provider {
         case "yandex":
+            if conn.YandexScope==""{conn.YandexScope="app"}
+            if conn.YandexScope!="app"&&conn.YandexScope!="disk"{return errors.New("invalid Yandex Disk scope")}
             token := strings.TrimSpace(conn.OAuthToken)
             if token == "" && m.OffsiteConnection().Provider == "yandex" {
                 var err error
@@ -221,6 +226,7 @@ func (m *Manager) SaveOffsiteConnection(conn OffsiteConnection) error {
     values := map[string]string{
         backupRemoteSetting: remote,
         "db.offsite_provider": conn.Provider,
+        "db.offsite_yandex_scope":conn.YandexScope,
         "db.offsite_endpoint": conn.Endpoint,
         "db.offsite_region": conn.Region,
         "db.offsite_host": conn.Host,
@@ -282,9 +288,9 @@ func (m *Manager) TestOffsiteConnection(ctx context.Context) error {
     if remote == "" { return errors.New("external destination is not configured") }
     if err := validateBackupRemote(remote); err != nil { return err }
     if m.OffsiteConnection().Provider == "yandex" {
-        token, err := m.savedYandexToken()
-        if err != nil { return err }
-        return yandexdisk.New(token).Check(ctx, "disk:/"+m.OffsiteConnection().Destination)
+        client,root,err:=m.YandexStorage()
+        if err!=nil{return err}
+        return client.Check(ctx,root)
     }
     args := []string{"lsf", remote, "--max-depth", "1", "--timeout", "30m", "--contimeout", "1m", "--retries", "3"}
     if conn := m.OffsiteConnection(); conn.Provider != "existing" {
@@ -389,5 +395,6 @@ func (m *Manager) YandexStorage() (yandexdisk.Client,string,error) {
     if conn.Provider!="yandex"||conn.Destination=="" {return yandexdisk.Client{},"",errors.New("configure Yandex Disk in Databases / Off-site backup export")}
     token,err:=m.savedYandexToken()
     if err!=nil{return yandexdisk.Client{},"",err}
-    return yandexdisk.New(token),"disk:/"+conn.Destination,nil
+    if conn.YandexScope!="app"&&conn.YandexScope!="disk"{return yandexdisk.Client{},"",errors.New("invalid Yandex Disk scope")}
+    return yandexdisk.New(token),conn.YandexScope+":/"+conn.Destination,nil
 }
