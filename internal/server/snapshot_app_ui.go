@@ -72,6 +72,36 @@ func (m *snapshotManager) registerAppSnapshotRoutes(mux *http.ServeMux,store *se
 			return m.cfg.Apps.RestoreSnapshotFiles(ctx,id,filepath.Join(root,name))
 		})
 	})
+	post("/backup/apps/{app}/restore-database",func(r *http.Request)error{
+		id,err:=m.appFromRequest(r);if err!=nil{return err}
+		stamp,name:=r.FormValue("id"),r.FormValue("file")
+		if !validSnapshotID(stamp)||!validSnapshotPath(name)||!strings.HasPrefix(name,"databases/")||r.FormValue("confirm")!="RESTORE"{return errors.New("select a database archive and type RESTORE")}
+		return m.start("Restore application database",func(ctx context.Context)error{
+			if m.cfg.Databases==nil{return errors.New("database manager unavailable")}
+			a,err:=m.cfg.Apps.Get(id);if err!=nil{return err}
+			root:=filepath.Join(appSnapshotRoot(id),stamp)
+			idx,err:=readSnapshotIndex(root,stamp);if err!=nil{return err}
+			if idx.AppID!=id||idx.Owner!=a.User||idx.Application!=a.Name{return errors.New("application snapshot mismatch")}
+			actual,err:=snapshotFileInfo(root,name);if err!=nil{return err}
+			verified:=false
+			for _,item:=range idx.Files{if item==actual{verified=true;break}}
+			if !verified{return errors.New("database archive failed integrity check")}
+			bindings,err:=m.cfg.Databases.AttachmentsForApp(id);if err!=nil{return err}
+			for _,binding:=range bindings{
+				db,err:=m.cfg.Databases.Get(binding.DatabaseID);if err!=nil{return err}
+				if name!="databases/"+db.Engine+"/"+db.Name+".sql.gz"{continue}
+				dest:=filepath.Join("/var/lib/open-go-panel/backups/databases",db.Engine,db.Name)
+				if err:=os.MkdirAll(dest,0700);err!=nil{return err}
+				// Reuse the managed SQL restore and its safety rollback. A
+				// hard link avoids copying the entire verified gzip archive.
+				link:=filepath.Join(dest,"project-restore-"+stamp+".sql.gz")
+				if err:=os.Link(filepath.Join(root,name),link);err!=nil{return err}
+				defer os.Remove(link)
+				return m.cfg.Databases.RestoreProjectSnapshot(ctx,db.ID,link)
+			}
+			return errors.New("database is not attached to this application")
+		})
+	})
 	post("/backup/apps/{app}/retrieve",func(r *http.Request)error{
 		id,err:=m.appFromRequest(r);if err!=nil{return err}
 		stamp:=r.FormValue("id");if !validSnapshotID(stamp){return errors.New("invalid snapshot ID")}
@@ -132,6 +162,9 @@ func (m *snapshotManager) renderAppSnapshots()string{
 			for _,f:=range idx.Files{
 				link:=fmt.Sprintf("/backup/apps/%d/%s/download/%s",a.ID,idx.ID,f.Path)
 				fmt.Fprintf(&out,`<div class="snapshot-row"><code>%s</code><span>%.1f MiB</span><a class="secondary" href="%s">Download</a></div>`,html.EscapeString(f.Path),float64(f.Size)/(1024*1024),html.EscapeString(link))
+				if strings.HasPrefix(f.Path,"databases/"){
+					fmt.Fprintf(&out,`<details class="snapshot-restore"><summary class="secondary">Restore this database</summary><p class="note">Replaces the currently attached database after creating a safety backup. Other databases and files are unchanged.</p><form method="post" action="/backup/apps/%d/restore-database"><input type="hidden" name="id" value="%s"><input type="hidden" name="file" value="%s"><label>Type RESTORE<input name="confirm" required autocomplete="off"></label><button class="danger">Restore database</button></form></details>`,a.ID,html.EscapeString(idx.ID),html.EscapeString(f.Path))
+				}
 			}
 			fmt.Fprintf(&out,`<form method="post" action="/backup/apps/%d/upload"><input type="hidden" name="id" value="%s"><button class="secondary">Upload this snapshot</button></form><details class="snapshot-restore"><summary class="secondary">Restore files</summary><p class="note">Creates a safety snapshot before replacing project files. Database and application settings are unchanged. PHP 7.4 containers require full server recovery.</p><form method="post" action="/backup/apps/%d/restore-files"><input type="hidden" name="id" value="%s"><label>Type RESTORE<input name="confirm" required autocomplete="off"></label><button class="danger">Restore files</button></form></details></div></details>`,a.ID,html.EscapeString(idx.ID),a.ID,html.EscapeString(idx.ID))
 		}
