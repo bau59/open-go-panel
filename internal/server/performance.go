@@ -159,7 +159,7 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  html.EscapeString(b.Time.Local().Format("2006-01-02 15:04")),b.Count,b.P50,b.P95,b.P99)}
  if buckets.Len()==0 {buckets.WriteString(`<tr><td colspan="5" class="empty">No measured time buckets.</td></tr>`)}
  if values.Get("run")!="1" {caution+=`<p class="note">Select a period and press Generate report. Caddy logs are read only when requested.</p>`}
- return pageHead("Performance")+`<body>`+appHeader("performance")+`<main class="shell">
+ return pageHead("Performance")+`<body>`+appHeader("performance")+`<main class="shell" data-panel-key="performance" data-panel-tabs="overview,routes,requests">
  <div class="page-head"><div><p class="eyebrow">Observability / HTTP</p><h1>Performance</h1><p class="sub">On-demand Caddy log report. No continuous importer or duplicate request storage. Values are Caddy durations, not isolated Go, DNS, TLS or browser time.</p></div>
  <a href="/log-retention" class="secondary">Log retention</a></div>`+caution+`
  <section class="panel panel-pad" style="margin-bottom:16px"><h2>Filters</h2>
@@ -181,12 +181,12 @@ func performancePage(period string, values url.Values, f caddy.PerformanceFilter
  stat("P50",ms(data.P50))+stat("P95",ms(data.P95))+
  stat("P99",ms(data.P99))+stat("Slow requests",strconv.Itoa(data.Slow))+
  stat("HTTP 5xx",strconv.Itoa(data.Errors))+stat("5xx rate",div(data.Total))+`</section>
- <section class="panel panel-pad" style="margin-bottom:16px"><h2>Request duration trend</h2>
+ <section class="panel panel-pad" style="margin-bottom:16px" data-panel-tab="overview"><h2>Request duration trend</h2>
  <p class="note">Measured Caddy request durations; request counts and precise percentiles by time bucket appear below.</p>`+graphic.String()+`
  <details><summary class="secondary">Exact bucket values</summary><div class="table-scroll"><table><thead><tr><th>Time</th><th>Requests</th><th>P50 ms</th><th>P95 ms</th><th>P99 ms</th></tr></thead><tbody>`+buckets.String()+`</tbody></table></div></details></section>
- <section class="panel" style="margin-bottom:16px"><div class="panel-pad"><h2>Slowest routes by P95</h2><p class="note">Numeric path segments and UUIDs are grouped; unknown dynamic route templates are not inferred.</p></div>
+ <section class="panel" style="margin-bottom:16px" data-panel-tab="routes"><div class="panel-pad"><h2>Slowest routes by P95</h2><p class="note">Numeric path segments and UUIDs are grouped; unknown dynamic route templates are not inferred.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Domain</th><th>Route</th><th>Count</th><th>P50 ms</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th><th>5xx</th></tr></thead><tbody>`+routes.String()+`</tbody></table></div></section>
- <section class="panel"><div class="panel-pad"><h2>Request log</h2><p class="note">Query strings and client IP addresses are not retained in performance results.</p></div>
+ <section class="panel" data-panel-tab="requests"><div class="panel-pad"><h2>Request log</h2><p class="note">Query strings and client IP addresses are not retained in performance results.</p></div>
  <div class="table-scroll"><table><thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Route</th><th>Status</th><th>Duration</th><th>Size</th><th></th></tr></thead><tbody>`+rows.String()+`</tbody></table></div>
  <div class="pager" style="padding:16px"><span class="pager-info">Page `+strconv.Itoa(f.Page)+`</span><div class="pager-actions">`+prev+next+`</div></div></section>
  `+performanceThresholdForm(func()performanceThresholds{if f.AppID>0 {return extra.PerApp[f.AppID]};return extra.Global}(),f.AppID,extra.Apps)+`

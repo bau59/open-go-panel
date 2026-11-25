@@ -1112,3 +1112,40 @@ details[open]>summary.secondary{background:#edf2ff;border-color:#b7c9f5;color:#3
  .db-backup-actions>a,.db-backup-actions button{min-height:38px}
  .db-row-actions{gap:6px}
 }
+
+/* Native check controls must not inherit full-width text-field sizing. */
+input:is([type="checkbox"],[type="radio"]):not(.switch input){
+ width:16px;height:16px;min-width:16px;max-width:16px;padding:0;
+ flex:0 0 16px;margin:0;accent-color:var(--primary);vertical-align:middle;
+ cursor:pointer;box-shadow:none;
+}
+label:has(>input:is([type="checkbox"],[type="radio"])){
+ display:flex;align-items:center;gap:9px;
+}
+.check-row{align-items:center;gap:9px}
+.switch input[type="checkbox"]{width:100%;height:100%;margin:0;padding:0}
+[data-panel-tab][hidden]{display:none!important}
+.app-dashboard-grid:not(:has(>[data-panel-tab]:not([hidden]))):not(:has(>:not([data-panel-tab]))){display:none}
+.service-tabs{margin:0 0 16px}
+.service-tabs button{
+ display:inline-flex;align-items:center;justify-content:center;
+ min-height:36px;padding:8px 13px;border:0;border-radius:8px;
+ background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:650;cursor:pointer;
+}
+.service-tabs button:hover{background:var(--surface-3);color:var(--text)}
+.service-tabs button.active{background:var(--surface-3);color:var(--text)}
+.mcp-copy-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;margin:16px 0}
+.mcp-copy-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.mcp-copy-row input{min-width:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+.mcp-network-form{border-top:1px solid var(--border);padding-top:16px;margin:16px 0}
+.mcp-network-form h3{margin:0 0 12px;font-size:15px}
+.mcp-network-form .settings-list{max-width:620px}
+.mcp-network-form .setting-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.mcp-network-form .setting-row small{display:block;color:var(--muted);font-weight:400;margin-top:4px}
+.mcp-network-form>.note{max-width:75ch;margin:12px 0}
+@media(max-width:640px){
+ .service-tabs{gap:4px}
+ .service-tabs button{min-height:34px;padding:7px 9px;font-size:12px}
+ .mcp-copy-row{grid-template-columns:minmax(0,1fr) auto}
+ .mcp-copy-row .secondary{padding:0 9px}
+}
