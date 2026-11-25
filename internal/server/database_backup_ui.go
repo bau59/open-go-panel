@@ -61,13 +61,15 @@ func databaseBackupSections(data databasePageData) string {
         {"r2", "Cloudflare R2"},
         {"b2", "Backblaze B2 (S3 API)"},
         {"sftp", "SFTP (SSH key)"},
+        {"yandex", "Yandex Disk (OAuth)"},
     }
     var providerOptions strings.Builder
     for _, option := range options {
         fmt.Fprintf(&providerOptions, `<option value="%s"%s>%s</option>`,
             option.value, offsiteSelected(provider, option.value), html.EscapeString(option.label))
     }
-    s3Hidden, sftpHidden := "", ""
+    s3Hidden, sftpHidden, yandexHidden := "", "", ""
+    if provider != "yandex" { yandexHidden = " hidden" }
     if provider != "s3" && provider != "r2" && provider != "b2" { s3Hidden = " hidden" }
     if provider != "sftp" { sftpHidden = " hidden" }
     port := data.Offsite.Port
@@ -115,9 +117,15 @@ func databaseBackupSections(data databasePageData) string {
                     <label>Storage provider
                         <select name="provider" id="db-offsite-provider">`+providerOptions.String()+`</select>
                     </label>
-                    <label>Destination (remote:bucket/path for existing, bucket/path for S3, folder/path for SFTP)
+                    <label>Destination (remote:bucket/path for existing, bucket/path for S3, folder/path for SFTP or Yandex Disk)
                         <input name="destination" value="`+html.EscapeString(data.Offsite.Destination)+`" autocomplete="off" placeholder="backup-bucket/my-server">
                     </label>
+                    <div class="db-offsite-fields" data-offsite-yandex`+yandexHidden+`>
+                        <label>Yandex Disk OAuth token (read/write Disk access)
+                            <input name="oauth_token" type="password" autocomplete="new-password" placeholder="Leave blank to retain saved token">
+                        </label>
+                        <p class="note">Archives are split into 900 MiB parts. The manifest is published after all parts are uploaded.</p>
+                    </div>
                     <div class="db-offsite-fields" data-offsite-s3`+s3Hidden+`>
                         <label>HTTPS S3 API endpoint (required for R2 / B2)
                             <input name="endpoint" value="`+html.EscapeString(data.Offsite.Endpoint)+`" placeholder="https://account.r2.cloudflarestorage.com" autocomplete="off">
@@ -151,7 +159,7 @@ func databaseBackupSections(data databasePageData) string {
                     </div>
                     <div class="db-offsite-actions">
                         <button class="button">Save connection</button>
-                        <span class="note">Managed credentials are stored in a root-only 0600 rclone configuration file, never in SQLite. Empty destination disables exports.</span>
+                        <span class="note">Managed credentials are stored in a root-only 0600 credential file, never in SQLite. Empty destination disables exports.</span>
                     </div>
                 </form>
             </details>
