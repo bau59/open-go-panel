@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -32,12 +33,8 @@ func registerSnapshotRoutes(mux *http.ServeMux,store *sessionStore,cfg Config)*s
 	}
 	post("/backup/snapshots/policy",func(r *http.Request)error{
 		if m.status().State=="Running"{return fmt.Errorf("wait for the active snapshot operation")}
-		values:=make([]int,5)
-		for i,key:=range []string{"local_days","local_hour","local_keep","cloud_days","cloud_hour"}{
-			n,err:=strconv.Atoi(r.FormValue(key));if err!=nil{return fmt.Errorf("invalid %s",key)}
-			values[i]=n
-		}
-		return m.savePolicy(snapshotPolicy{LocalDays:values[0],LocalHour:values[1],LocalKeep:values[2],CloudDays:values[3],CloudHour:values[4]})
+		p,err:=parseSnapshotPolicy(r);if err!=nil{return err}
+		return m.savePolicy(p)
 	})
 	post("/backup/snapshots/create",func(r *http.Request)error{
 		return m.start("Create local snapshot",func(ctx context.Context)error{return m.local(ctx,false)})
@@ -60,9 +57,11 @@ func registerSnapshotRoutes(mux *http.ServeMux,store *sessionStore,cfg Config)*s
 		if err:=checkFreshServer(r.Context(),cfg);err!=nil{return err}
 		if _,err:=readSnapshotIndex(filepath.Join(snapshotRoot,id),id);err!=nil{return err}
 		binary,err:=os.Executable();if err!=nil{return err}
-		cmd:=exec.CommandContext(r.Context(),"systemd-run","--unit=open-go-panel-restore","--on-active=5s","--collect","--property=Type=exec",binary,"--restore-server-snapshot",id)
-		if err:=cmd.Run();err!=nil{return fmt.Errorf("could not queue recovery: %w",err)}
-		return nil
+		return m.start("Restore managed server",func(ctx context.Context)error{
+			cmd:=exec.CommandContext(ctx,"systemd-run","--unit=open-go-panel-restore","--wait","--collect","--property=Type=exec",binary,"--restore-server-snapshot",id)
+			if err:=cmd.Run();err!=nil{return fmt.Errorf("recovery job failed; inspect journalctl -u open-go-panel-restore.service: %w",err)}
+			return nil
+		})
 	})
 	post("/backup/snapshots/retrieve",func(r *http.Request)error{
 		id:=r.FormValue("id")
@@ -94,12 +93,13 @@ func registerSnapshotRoutes(mux *http.ServeMux,store *sessionStore,cfg Config)*s
 		if err!=nil{http.NotFound(w,r);return}
 		defer f.Close()
 		info,err:=f.Stat();if err!=nil||!info.Mode().IsRegular(){http.NotFound(w,r);return}
-		if err:=http.NewResponseController(w).SetWriteDeadline(time.Time{});err!=nil{http.Error(w,"download unavailable",http.StatusServiceUnavailable);return}
+		if err:=http.NewResponseController(w).SetWriteDeadline(time.Time{});err!=nil&&!errors.Is(err,http.ErrNotSupported){http.Error(w,"download unavailable",http.StatusServiceUnavailable);return}
 		w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename=%q",filepath.Base(name)))
 		w.Header().Set("Content-Type","application/gzip")
 		w.Header().Set("Cache-Control","no-store")
 		http.ServeContent(w,r,filepath.Base(name),info.ModTime(),f)
 	})))
+	m.registerAppSnapshotRoutes(mux,store,post)
 	return m
 }
 
@@ -123,8 +123,8 @@ func (m *snapshotManager) render(r *http.Request)string{
 		fmt.Fprintf(&out,`<div class="snapshot-task"><strong>%s</strong><span>%s</span><span>%s</span><a class="secondary" href="/backup">Refresh status</a></div>`,html.EscapeString(task.State),html.EscapeString(task.Kind),html.EscapeString(task.Message))
 	}
 	out.WriteString(`<div class="snapshot-grid"><section class="panel panel-pad"><h2>Backup policy</h2><p class="note">Independent local and cloud schedules. Set days to zero to disable. Times are UTC.</p><form method="post" action="/backup/snapshots/policy" class="snapshot-policy">`)
-	fmt.Fprintf(&out,`<div><h3>Local snapshots</h3><label>Every N days<input type="number" min="0" max="365" name="local_days" value="%d" required></label><label>Hour (UTC)<input type="number" min="0" max="23" name="local_hour" value="%d" required></label><label>Keep versions<input type="number" min="1" max="100" name="local_keep" value="%d" required></label></div><div><h3>Cloud snapshots</h3><label>Every N days<input type="number" min="0" max="365" name="cloud_days" value="%d" required></label><label>Hour (UTC)<input type="number" min="0" max="23" name="cloud_hour" value="%d" required></label><p class="note">Cloud-only runs do not change local retention.</p></div><button class="button">Save schedules</button></form></section>`,p.LocalDays,p.LocalHour,p.LocalKeep,p.CloudDays,p.CloudHour)
-	fmt.Fprintf(&out,`<section class="panel panel-pad"><h2>Yandex Disk storage</h2><p class="note">OAuth connection, 900 MiB parts, SHA-256 checksums.</p><div class="snapshot-fact"><span>Remote directory</span><code>%s</code></div><div class="snapshot-actions"><a class="secondary" href="/databases#db-offsite-backups">Connection settings</a><a class="secondary" href="/backup/snapshots/cloud-list">Find cloud restore points</a></div><form method="post" action="/backup/snapshots/cloud"><button class="button">Create cloud snapshot</button></form><p class="note">Archives contain credentials. Restrict access to the selected Disk folder. Cloud retention is managed on the Disk.</p></section></div>`,html.EscapeString(remote))
+	fmt.Fprintf(&out,`<div><h3>Local snapshots</h3><label>Every N days<input type="number" min="0" max="365" name="local_days" value="%d" required></label><label>Hour (UTC)<input type="number" min="0" max="23" name="local_hour" value="%d" required></label><label>Keep versions<input type="number" min="1" max="100" name="local_keep" value="%d" required></label></div><div><h3>Cloud snapshots</h3><label>Every N days<input type="number" min="0" max="365" name="cloud_days" value="%d" required></label><label>Hour (UTC)<input type="number" min="0" max="23" name="cloud_hour" value="%d" required></label><label>Keep cloud versions (0 = unlimited)<input type="number" min="0" max="100" name="cloud_keep" value="%d" required></label></div><button class="button">Save schedules</button></form></section>`,p.LocalDays,p.LocalHour,p.LocalKeep,p.CloudDays,p.CloudHour,p.CloudKeep)
+	fmt.Fprintf(&out,`<section class="panel panel-pad"><h2>Yandex Disk storage</h2><p class="note">OAuth connection, 900 MiB parts, SHA-256 checksums.</p><div class="snapshot-fact"><span>Remote directory</span><code>%s</code></div><div class="snapshot-actions"><a class="secondary" href="/databases#db-offsite-backups">Connection settings</a><a class="secondary" href="/backup/snapshots/cloud-list">Find cloud restore points</a></div><form method="post" action="/backup/snapshots/cloud"><button class="button">Create cloud snapshot</button></form><p class="note">Archives contain credentials. Restrict access to the selected Disk folder. Cloud retention only removes completed snapshots under the selected folder.</p></section></div>`,html.EscapeString(remote))
 	out.WriteString(`<section class="panel panel-pad"><div class="section-title"><div><h2>Server restore points</h2><p class="note">Panel SQLite state, managed user homes, credentials, app commands and schedules, Caddy and managed SQL dumps. Docker configuration only; volumes and unmanaged system data are not included.</p></div><form method="post" action="/backup/snapshots/create"><button class="button">Create local snapshot</button></form></div>`)
 	if len(list)==0{out.WriteString(`<p class="note">No local snapshots yet.</p>`)}
 	for _,idx:=range list{
@@ -137,5 +137,15 @@ func (m *snapshotManager) render(r *http.Request)string{
 		fmt.Fprintf(&out,`<details class="snapshot-restore"><summary class="secondary">Restore on fresh server</summary><p class="note">Install required runtimes first. Restores users, files, SQL, panel state, Caddy, app services, cron and previously running commands. The panel stops and restarts. Only use trusted snapshots; the target must have no managed resources. Docker volumes and unmanaged host files are not included.</p><form method="post" action="/backup/snapshots/restore"><input type="hidden" name="id" value="%s"><label>Type RESTORE<input name="confirm" required autocomplete="off"></label><button class="danger">Restore managed server</button></form></details></div></details>`,html.EscapeString(idx.ID))
 	}
 	out.WriteString(`<p class="note">Download and verify a cloud snapshot first. Fresh-host recovery runs as an offline systemd job. Inspect progress with journalctl -u open-go-panel-restore.service. A failed restore may be partial; keep the source backups.</p></section>`)
+	out.WriteString(m.renderAppSnapshots())
 	return out.String()
+}
+
+func parseSnapshotPolicy(r *http.Request)(snapshotPolicy,error){
+	values:=make([]int,6)
+	for i,key:=range []string{"local_days","local_hour","local_keep","cloud_days","cloud_hour","cloud_keep"}{
+		n,err:=strconv.Atoi(r.FormValue(key));if err!=nil{return snapshotPolicy{},fmt.Errorf("invalid %s",key)}
+		values[i]=n
+	}
+	return snapshotPolicy{LocalDays:values[0],LocalHour:values[1],LocalKeep:values[2],CloudDays:values[3],CloudHour:values[4],CloudKeep:values[5]},nil
 }
