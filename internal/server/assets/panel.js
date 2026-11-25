@@ -185,7 +185,8 @@
         const sftp = provider === 'sftp';
         const groups = [
           [form.querySelector('[data-offsite-s3]'), s3],
-          [form.querySelector('[data-offsite-sftp]'), sftp]
+          [form.querySelector('[data-offsite-sftp]'), sftp],
+          [form.querySelector('[data-offsite-yandex]'), provider === 'yandex']
         ];
         groups.forEach(([group, visible]) => {
           if (!group) return;
