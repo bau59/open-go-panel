@@ -129,7 +129,15 @@ func restrictSyscalls()error{
         filter=append(filter,unix.SockFilter{Code:jeq,Jf:1,K:nr},unix.SockFilter{Code:ret,K:denied})
     }
     filter=append(filter,unix.SockFilter{Code:jeq,Jf:1,K:unix.SYS_CLONE3},unix.SockFilter{Code:ret,K:uint32(unix.SECCOMP_RET_ERRNO)|uint32(unix.ENOSYS)})
-    filter=append(filter,unix.SockFilter{Code:ret,K:unix.SECCOMP_RET_ALLOW})
+    // clone() remains available for threads and child processes, but no
+    // process may create another namespace after the privileged setup.
+    mask:=uint32(unix.CLONE_NEWNS|unix.CLONE_NEWUSER|unix.CLONE_NEWPID|unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS|unix.CLONE_NEWCGROUP)
+    filter=append(filter,
+        unix.SockFilter{Code:jeq,Jf:3,K:unix.SYS_CLONE},
+        unix.SockFilter{Code:load,K:16},
+        unix.SockFilter{Code:uint16(unix.BPF_JMP|unix.BPF_JSET|unix.BPF_K),Jf:1,K:mask},
+        unix.SockFilter{Code:ret,K:denied},
+        unix.SockFilter{Code:ret,K:unix.SECCOMP_RET_ALLOW})
     prog:=unix.SockFprog{Len:uint16(len(filter)),Filter:&filter[0]}
     return unix.Prctl(unix.PR_SET_SECCOMP,unix.SECCOMP_MODE_FILTER,uintptr(unsafe.Pointer(&prog)),0,0)
 }

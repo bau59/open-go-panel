@@ -31,15 +31,15 @@ type Result struct {
 }
 
 type cappedOutput struct {
-    bytes.Buffer
+    buffer bytes.Buffer
     limit int
     truncated bool
 }
 func (b *cappedOutput) Write(p []byte)(int,error){
     count:=len(p)
-    remaining:=max(0,b.limit-b.Len())
+    remaining:=max(0,b.limit-b.buffer.Len())
     if count>remaining{b.truncated=true;p=p[:remaining]}
-    _,_=b.Buffer.Write(p)
+    _,_=b.buffer.Write(p)
     return count,nil
 }
 
@@ -85,7 +85,7 @@ func Run(ctx context.Context,owner,root,workdir,operation,command string,input i
     cmd.Stdout=output;cmd.Stderr=output
     cmd.WaitDelay=3*time.Second
     err=cmd.Run()
-    result.Output=output.String();result.Truncated=output.truncated
+    result.Output=output.buffer.String();result.Truncated=output.truncated
     result.TimedOut=errors.Is(childCtx.Err(),context.DeadlineExceeded)
     if cmd.ProcessState!=nil{result.ExitCode=cmd.ProcessState.ExitCode()}
     if err==nil{return result,nil}
