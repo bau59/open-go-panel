@@ -381,3 +381,13 @@ func (m *Manager) savedYandexToken() (string,error) {
     if !ok || token=="" || strings.ContainsAny(token,"\r\n\t ") { return "",errors.New("invalid saved Yandex Disk credential") }
     return token,nil
 }
+
+// YandexStorage returns the configured private client and selected root.
+// Credentials are not exposed to the web page.
+func (m *Manager) YandexStorage() (yandexdisk.Client,string,error) {
+    conn:=m.OffsiteConnection()
+    if conn.Provider!="yandex"||conn.Destination=="" {return yandexdisk.Client{},"",errors.New("configure Yandex Disk in Databases / Off-site backup export")}
+    token,err:=m.savedYandexToken()
+    if err!=nil{return yandexdisk.Client{},"",err}
+    return yandexdisk.New(token),"disk:/"+conn.Destination,nil
+}
