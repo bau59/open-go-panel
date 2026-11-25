@@ -29,6 +29,27 @@ APP_ID="$(curl -fsS -b /tmp/recovery-cookies "$BASE/apps" | grep -oE 'href="/app
 test -n "$APP_ID"
 sudo -u ogprecovery sh -c 'printf "recovery-ok\n" > /home/ogprecovery/apps/recovery/proof.txt'
 OLD_UID="$(id -u ogprecovery)"
+post "/apps/$APP_ID/domain" -d 'domain=recovery.example.test'
+sudo -u caddy cat /home/ogprecovery/apps/recovery/proof.txt | grep -qx recovery-ok
+post "/backup/apps/$APP_ID/create"
+APP_BACKUPS="/var/lib/open-go-panel/backups/server/apps/$APP_ID"
+for i in $(seq 1 90); do
+  PROJECT="$(sudo find "$APP_BACKUPS" -mindepth 2 -maxdepth 2 -name manifest.json -print 2>/dev/null | sed -n '1p' || true)"
+  test -n "$PROJECT" && break
+  sleep 1
+done
+test -n "$PROJECT"
+PROJECT_ID="$(basename "$(dirname "$PROJECT")")"
+# The manifest is published just before the worker records completion.
+sleep 2
+sudo -u ogprecovery sh -c 'printf "changed\n" > /home/ogprecovery/apps/recovery/proof.txt'
+post "/backup/apps/$APP_ID/restore-files" -d "id=$PROJECT_ID&confirm=RESTORE"
+for i in $(seq 1 90); do
+  if sudo -u ogprecovery cat /home/ogprecovery/apps/recovery/proof.txt | grep -qx recovery-ok; then break; fi
+  sleep 1
+done
+sudo -u caddy cat /home/ogprecovery/apps/recovery/proof.txt | grep -qx recovery-ok
+sleep 2
 post "/apps/$APP_ID/cron" --data-urlencode 'name=Recovery timer' --data-urlencode 'schedule=0 3 * * *' --data-urlencode 'command=/usr/bin/touch recovery-cron' -d 'enabled=1'
 TASK_ID="$(curl -fsS -b /tmp/recovery-cookies "$BASE/apps/$APP_ID" | grep -oE "/apps/$APP_ID/cron/[0-9]+/run" | sed -n '1s#^.*/cron/\([0-9]\+\)/run#\1#p')"
 test -n "$TASK_ID"
@@ -68,10 +89,12 @@ for i in $(seq 1 30); do curl -fsS "$BASE/health" && break; sleep 1; done
 sudo env MYSQL_PWD=root /usr/local/bin/open-go-panel --restore-server-snapshot "$ID"
 test "$(id -u ogprecovery)" = "$OLD_UID"
 sudo -u ogprecovery cat /home/ogprecovery/apps/recovery/proof.txt | grep -qx recovery-ok
+sudo -u caddy cat /home/ogprecovery/apps/recovery/proof.txt | grep -qx recovery-ok
 test "$(sudo env MYSQL_PWD=root mysql -uroot -N -e 'SELECT id FROM ogprecoverydb.proof')" = 42
 sudo systemctl is-enabled --quiet "open-go-panel-cron-$TASK_ID.timer"
 sudo systemctl is-active --quiet "ogp-bg-$BG_ID.service"
 curl -fsS "$BASE/health" | grep -qx ok
 login
 curl -fsS -b /tmp/recovery-cookies "$BASE/apps/$APP_ID" | grep -q 'Recovery timer'
+curl -fsS -b /tmp/recovery-cookies "$BASE/caddy" | grep -q recovery.example.test
 echo 'Managed-server snapshot recovery passed'
