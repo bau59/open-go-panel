@@ -178,7 +178,21 @@ func (c Client) download(ctx context.Context,remote string)(*http.Response,error
 	if err!=nil||u.Scheme!="https"||u.Hostname()==""||u.User!=nil{return nil,fmt.Errorf("invalid download URL")}
 	req,err:=http.NewRequestWithContext(ctx,"GET",link.Href,nil)
 	if err!=nil{return nil,fmt.Errorf("invalid download request")}
-	res,err:=c.HTTP.Do(req)
+	// The API client rejects redirects to protect OAuth credentials. Signed
+	// download URLs are separate, unauthenticated requests and may redirect
+	// to a storage node. Keep the same transport but permit HTTPS redirects.
+	transfer:=*c.HTTP
+	transfer.CheckRedirect=func(next *http.Request,via []*http.Request)error{
+		if len(via)>=10||next.URL.Scheme!="https"||next.URL.Hostname()==""||next.URL.User!=nil{
+			return fmt.Errorf("unsafe download redirect")
+		}
+		next.Header.Del("Authorization")
+		next.Header.Del("Cookie")
+		next.Header.Del("Referer")
+		return nil
+	}
+	transfer.Jar=nil
+	res,err:=transfer.Do(req)
 	if err!=nil{return nil,fmt.Errorf("disk download failed")}
 	if res.StatusCode!=200{res.Body.Close();if res.StatusCode==404{return nil,ErrNotFound};return nil,fmt.Errorf("disk download: HTTP %d",res.StatusCode)}
 	return res,nil
