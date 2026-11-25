@@ -27,6 +27,9 @@ jobs:
       - name: Shell syntax
         run: bash -n install.sh uninstall.sh
 
+      - name: Browser UI smoke
+        run: bash tests/panel-tabs.sh
+
       - name: Vet
         run: go vet ./...
 

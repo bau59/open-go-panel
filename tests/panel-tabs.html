@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/internal/server/assets/panel.css">
+<script defer src="/internal/server/assets/panel.js"></script></head>
+<body>
+<main data-panel-key="tab-smoke" data-panel-tabs="overview,chatgpt,settings" class="shell">
+  <a href="#chatgpt-access" id="jump">ChatGPT</a>
+  <section data-panel-tab="overview" id="overview">Overview</section>
+  <section data-panel-tab="chatgpt" id="chatgpt-access" class="panel panel-pad">
+    <form action="/test" method="post">
+      <label><input type="checkbox" name="plain" value="1" checked> Plain</label>
+      <label class="setting-row"><span>MySQL</span><span class="switch"><input type="checkbox" name="mysql" value="1" checked><i></i></span></label>
+      <div class="mcp-copy-row"><input readonly value="https://mcp.example.test/mcp/test"><button type="button" class="secondary">Copy URL</button></div>
+    </form>
+  </section>
+  <details data-panel-tab="settings" id="settings"><summary>Settings</summary></details>
+</main>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Run after panel.js' DOMContentLoaded handler.
+  setTimeout(() => {
+    try {
+      const assert = (condition, message) => { if (!condition) throw new Error(message); };
+      const byId = id => document.getElementById(id);
+      const tabs = () => Array.from(document.querySelectorAll('.service-tabs button'));
+      const visible = id => getComputedStyle(byId(id)).display !== 'none';
+      const click = label => tabs().find(b => b.textContent === label).click();
+      const fixture = document.querySelector('main').cloneNode(true);
+      assert(tabs().length === 3 && visible('overview') && !visible('chatgpt-access'), 'initial tabs');
+      click('ChatGPT access');
+      assert(visible('chatgpt-access') && !visible('overview'), 'switch sections');
+      const plain = document.querySelector('input[name=plain]');
+      const box = plain.getBoundingClientRect();
+      assert(box.width <= 18 && box.height <= 18 && box.width >= 14, 'native checkbox sizing');
+      assert(new FormData(plain.form).get('mysql') === '1', 'form values preserved');
+      document.querySelector('input[name=mysql]').checked = false;
+      assert(!new FormData(plain.form).has('mysql'), 'unchecked switch semantics');
+      click('Settings');
+      byId('jump').click();
+      assert(visible('chatgpt-access') && !visible('settings'), 'deep link reveals section');
+      assert(!document.querySelector('input[name=mysql]').checked, 'tab switching preserves form state');
+      // Simulate the real HTMX response event after replacing a page.
+      history.replaceState(null, '', location.pathname);
+      document.querySelector('main').replaceWith(fixture);
+      document.dispatchEvent(new CustomEvent('htmx:afterSwap', {detail:{target:document.body}}));
+      assert(tabs().length === 3 && visible('chatgpt-access'), 'HTMX reinitialization preserves active section');
+      document.dispatchEvent(new CustomEvent('htmx:afterSwap', {detail:{target:document.body}}));
+      assert(tabs().length === 3, 'no duplicate tab controls');
+      assert(document.documentElement.scrollWidth <= innerWidth + 1, 'no horizontal overflow');
+      document.body.dataset.testResult = 'pass';
+    } catch (error) {
+      document.body.dataset.testResult = 'fail';
+      const message = document.createElement('pre');
+      message.textContent = error.message;
+      document.body.appendChild(message);
+    }
+  }, 0);
+});
+</script>
+</body></html>
