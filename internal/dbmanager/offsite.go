@@ -2,7 +2,6 @@ package dbmanager
 
 import (
 	"context"
-	"github.com/bau59/open-go-panel/internal/yandexdisk"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -71,10 +70,10 @@ func (m *Manager) UploadBackup(ctx context.Context, backup Backup) error {
 		return err
 	}
 	if conn := m.OffsiteConnection(); conn.Provider == "yandex" {
-		token,err:=m.savedYandexToken()
+		client,root,err:=m.YandexStorage()
 		if err!=nil{return err}
-		dir:="disk:/"+conn.Destination+"/"+path.Join(backup.Engine,backup.Database,path.Base(backup.Path))
-		_,err=yandexdisk.New(token).UploadArchive(ctx,dir,backup.Path)
+		dir:=root+"/"+path.Join(backup.Engine,backup.Database,path.Base(backup.Path))
+		_,err=client.UploadArchive(ctx,dir,backup.Path)
 		return err
 	}
 	dst := backupRemotePath(remote, backup)
