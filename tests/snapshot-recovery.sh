@@ -76,7 +76,7 @@ if sudo env MYSQL_PWD=root /usr/local/bin/open-go-panel --restore-server-snapsho
   exit 1
 fi
 # Simulate a clean panel on this disposable GitHub-hosted runner only.
-sudo systemctl stop open-go-panel.service "ogp-bg-$BG_ID.service" "open-go-panel-cron-$TASK_ID.timer"
+sudo systemctl stop open-go-panel-mcp.service open-go-panel.service "ogp-bg-$BG_ID.service" "open-go-panel-cron-$TASK_ID.timer"
 sudo systemctl disable "open-go-panel-cron-$TASK_ID.timer"
 sudo rm -f "/etc/systemd/system/open-go-panel-cron-$TASK_ID.timer" "/etc/systemd/system/open-go-panel-cron-$TASK_ID.service"
 sudo systemctl daemon-reload
@@ -84,7 +84,7 @@ sudo userdel -r ogprecovery
 sudo env MYSQL_PWD=root mysql -uroot -e "DROP DATABASE ogprecoverydb; DROP USER 'ogprecoverydbuser'@'localhost';"
 sudo mv /var/lib/open-go-panel/panel.db /tmp/ogp-recovery-original.db
 sudo rm -f /var/lib/open-go-panel/panel.db-wal /var/lib/open-go-panel/panel.db-shm
-sudo systemctl start open-go-panel.service
+sudo systemctl start open-go-panel.service open-go-panel-mcp.service
 for i in $(seq 1 30); do curl -fsS "$BASE/health" && break; sleep 1; done
 sudo env MYSQL_PWD=root /usr/local/bin/open-go-panel --restore-server-snapshot "$ID"
 test "$(id -u ogprecovery)" = "$OLD_UID"
