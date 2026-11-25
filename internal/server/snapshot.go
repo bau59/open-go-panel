@@ -119,7 +119,7 @@ func createServerSnapshot(ctx context.Context,cfg Config)(snapshotIndex,error){
 		if err!=nil{return idx,err}
 		// Read home files with the user's privileges, not as root. GNU tar
 		// preserves symlinks and ownership metadata without following links.
-		cmd:=exec.CommandContext(ctx,"runuser","-u",u.Username,"--","tar","-czf","-","-C",u.Home,".")
+		cmd:=exec.CommandContext(ctx,"runuser","-u",u.Username,"--","/usr/bin/tar","--acls","--xattrs","-czf","-","-C",u.Home,".")
 		cmd.Stdout=f
 		cmd.Stderr=io.Discard
 		runErr:=cmd.Run()
@@ -236,7 +236,7 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 	for _,pattern:=range []string{"/etc/systemd/system/open-go-panel-*.service","/etc/systemd/system/open-go-panel-*.timer","/etc/systemd/journald@open-go-panel-*.conf","/etc/php/*/fpm/pool.d/ogp-app-*.conf","/etc/php/*/mods-available/*ioncube*.ini","/etc/php/*/fpm/conf.d/*ioncube*.ini"}{
 		matches,err:=filepath.Glob(pattern)
 		if err!=nil{return err}
-		paths=append(paths,matches...)
+		for _,name:=range matches{if snapshotSystemPath(strings.TrimPrefix(name,"/")){paths=append(paths,name)}}
 	}
 	for _,name:=range paths{
 		if _,err:=os.Lstat(name);errors.Is(err,os.ErrNotExist){continue}else if err!=nil{return err}
