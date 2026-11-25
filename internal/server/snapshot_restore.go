@@ -167,7 +167,9 @@ func restoreAccount(ctx context.Context,a snapshotAccount,archive string)error{
 		if g==a.PrimaryGroup{continue}
 		if _,err:=user.LookupGroup(g);err!=nil{return fmt.Errorf("required group missing: %s",g)}
 	}
-	groups:=append([]string{"ogp-users"},a.Groups...)
+	groups:=[]string{"ogp-users"}
+	seenGroups:=map[string]bool{"ogp-users":true,a.PrimaryGroup:true}
+	for _,g:=range a.Groups{if !seenGroups[g]{groups=append(groups,g);seenGroups[g]=true}}
 	// useradd assigns the archived UID/GID and the original supplementary
 	// group names; no existing account is modified.
 	args:=[]string{"--uid",a.UID,"--gid",a.PrimaryGroup,"--home-dir",a.Home,"--shell",a.Shell,"--create-home","--groups",strings.Join(groups,","),a.Username}
@@ -188,7 +190,7 @@ func restoreAccount(ctx context.Context,a snapshotAccount,archive string)error{
 	f,err:=os.Open(archive);if err!=nil{return err};defer f.Close()
 	// Extraction runs as the original user, not root. The user cannot
 	// create privileged files or follow a symlink into protected host data.
-	return restoreCommand(ctx,f,"runuser","-u",a.Username,"--","tar","--no-same-owner","--same-permissions","-xzf","-","-C",a.Home)
+	return restoreCommand(ctx,f,"runuser","-u",a.Username,"--","/usr/bin/tar","--acls","--xattrs","--no-same-owner","--same-permissions","-xzf","-","-C",a.Home)
 }
 
 func safeSystemParents(dst string)error{
@@ -260,7 +262,10 @@ func RunServerRestore(ctx context.Context,id string,logger *slog.Logger) (err er
 	if os.Geteuid()!=0||!validSnapshotID(id){return errors.New("restore requires root and a valid snapshot ID")}
 	root:=filepath.Join(snapshotRoot,id)
 	idx,err:=readSnapshotIndex(root,id);if err!=nil{return err}
+	if idx.AppID!=0{return errors.New("expected a full server snapshot")}
+	verified:=map[string]bool{}
 	for _,item:=range idx.Files{
+		verified[item.Path]=true
 		actual,err:=snapshotFileInfo(root,item.Path);if err!=nil{return err}
 		if actual!=item{return fmt.Errorf("snapshot file failed integrity check: %s",item.Path)}
 	}
@@ -275,7 +280,7 @@ func RunServerRestore(ctx context.Context,id string,logger *slog.Logger) (err er
 	if err:=checkRestoreAccounts(accounts);err!=nil{return err}
 	for _,unit:=range units{if !managedUnitRE.MatchString(unit.Name){return errors.New("invalid managed unit name")}}
 	for _,a:=range accounts{
-		if _,err:=os.Stat(filepath.Join(root,"files",a.Username+".tar.gz"));err!=nil{return fmt.Errorf("missing home archive for %s",a.Username)}
+		if !verified["files/"+a.Username+".tar.gz"]{return fmt.Errorf("missing home archive for %s",a.Username)}
 	}
 	saved,err:=state.Open(filepath.Join(dir,"panel.db"));if err!=nil{return err};defer saved.Close()
 	var integrity string
@@ -288,7 +293,7 @@ func RunServerRestore(ctx context.Context,id string,logger *slog.Logger) (err er
 	dbItems,err:=databases.List();if err!=nil{return err}
 	for _,item:=range dbItems{
 		if err:=dbmanager.CheckSnapshotDatabase(ctx,item);err!=nil{return fmt.Errorf("database preflight %s: %w",item.Name,err)}
-		if _,err:=os.Stat(filepath.Join(root,"databases",item.Engine,item.Name+".sql.gz"));err!=nil{return fmt.Errorf("missing dump for %s",item.Name)}
+		if !verified["databases/"+item.Engine+"/"+item.Name+".sql.gz"]{return fmt.Errorf("missing dump for %s",item.Name)}
 	}
 	// Verify supplementary groups and runtimes before creating accounts.
 	for _,a:=range accounts{
