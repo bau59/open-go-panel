@@ -3,6 +3,7 @@ package mcpsandbox
 import (
     "errors"
     "fmt"
+    "io"
     "os"
     "path/filepath"
     "runtime"
@@ -37,8 +38,8 @@ func bind(source,target string,dir,readonly,device bool)error{
 // PID 1 is the command process: its exit kills all remaining descendants.
 func RunHelper(args []string)error{
     runtime.LockOSThread()
-    if len(args)!=8||os.Geteuid()!=0||os.Getpid()!=1{return errors.New("sandbox helper requires a private PID namespace and root setup")}
-    stage,owner,uidText,gidText,groupText,workdir,operation,command:=args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]
+    if len(args)!=9||os.Geteuid()!=0||os.Getpid()!=1{return errors.New("sandbox helper requires a private PID namespace and root setup")}
+    stage,projectPath,owner,uidText,gidText,groupText,workdir,operation,command:=args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]
     if filepath.Dir(stage)!=stagingRoot||!strings.HasPrefix(filepath.Base(stage),"run-")||!validWorkDir(workdir)||strings.ContainsAny(owner,":\r\n"){return errors.New("invalid sandbox parameters")}
     uid,err:=strconv.Atoi(uidText);if err!=nil||uid<1000{return errors.New("invalid UID")}
     gid,err:=strconv.Atoi(gidText);if err!=nil||gid<=0{return errors.New("invalid GID")}
@@ -46,12 +47,35 @@ func RunHelper(args []string)error{
     for _,value:=range strings.Split(groupText,","){n,err:=strconv.Atoi(value);if err!=nil||n<=0{return errors.New("invalid group")};groups=append(groups,n)}
     if err:=unix.Mount("","/","",unix.MS_REC|unix.MS_PRIVATE,"");err!=nil{return fmt.Errorf("private mount namespace: %w",err)}
     if err:=unix.Mount("tmpfs",stage,"tmpfs",unix.MS_NOSUID|unix.MS_NODEV,"size=384m,mode=0755");err!=nil{return fmt.Errorf("sandbox root: %w",err)}
-    // These kernel magic links refer to the pinned FDs opened by the parent,
-    // not to a path supplied by the model or a replaceable project symlink.
-    if err:=bind("/proc/self/fd/3",stage+"/workspace",true,false,false);err!=nil{return fmt.Errorf("bind project: %w",err)}
-    if err:=bind("/proc/self/fd/4",stage+"/ogp-helper",false,true,false);err!=nil{return fmt.Errorf("bind helper: %w",err)}
+    // Inherited descriptors refer to mounts in the parent's namespace.
+    // Reopen within this namespace without following symlinks and compare
+    // inode identities against the still-pinned originals before mounting.
+    base,err:=unix.Open("/",unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC,0)
+    if err!=nil{return err}
+    if !filepath.IsAbs(projectPath)||filepath.Clean(projectPath)!=projectPath||projectPath=="/"{return errors.New("invalid project path")}
+    projectFD,err:=unix.Openat2(base,strings.TrimPrefix(projectPath,"/"),&unix.OpenHow{
+        Flags:unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC,
+        Resolve:unix.RESOLVE_BENEATH|unix.RESOLVE_NO_SYMLINKS,
+    })
+    unix.Close(base)
+    if err!=nil{return fmt.Errorf("reopen project: %w",err)}
+    var original,local unix.Stat_t
+    if err:=unix.Fstat(3,&original);err!=nil{return err}
+    if err:=unix.Fstat(projectFD,&local);err!=nil{return err}
+    if original.Dev!=local.Dev||original.Ino!=local.Ino{return errors.New("project root changed during sandbox setup")}
+    if err:=bind(fmt.Sprintf("/proc/self/fd/%d",projectFD),stage+"/workspace",true,false,false);err!=nil{return fmt.Errorf("bind project: %w",err)}
+    unix.Close(projectFD)
+    // Copy the pinned executable into the private tmpfs. This avoids mounting
+    // a file from the parent's mount namespace or racing a panel upgrade.
+    executable:=os.NewFile(4,"panel helper")
+    target,err:=os.OpenFile(stage+"/ogp-helper",os.O_WRONLY|os.O_CREATE|os.O_EXCL,0555)
+    if err!=nil{return err}
+    _,copyErr:=io.Copy(target,io.LimitReader(executable,128<<20))
+    closeErr:=target.Close()
+    executable.Close()
+    if copyErr!=nil{return copyErr}
+    if closeErr!=nil{return closeErr}
     if err:=unix.Close(3);err!=nil{return err}
-    if err:=unix.Close(4);err!=nil{return err}
     if err:=bind("/usr",stage+"/usr",true,true,false);err!=nil{return err}
     for _,name:=range []string{"bin","sbin","lib","lib64"}{
         source:="/"+name

@@ -75,7 +75,7 @@ func Run(ctx context.Context,owner,root,workdir,operation,command string,input i
     outputLimit:=4<<20
     if operation=="run_command"{deadline=120*time.Second;outputLimit=256<<10}
     childCtx,cancel:=context.WithTimeout(ctx,deadline);defer cancel()
-    cmd:=exec.CommandContext(childCtx,"/proc/self/exe","--mcp-sandbox-helper",stage,owner,strconv.Itoa(uid),strconv.Itoa(gid),strings.Join(groups,","),workdir,operation,command)
+    cmd:=exec.CommandContext(childCtx,"/proc/self/exe","--mcp-sandbox-helper",stage,root,owner,strconv.Itoa(uid),strconv.Itoa(gid),strings.Join(groups,","),workdir,operation,command)
     cmd.Env=[]string{"PATH=/usr/bin:/bin","LANG=C.UTF-8"}
     cmd.Dir="/"
     cmd.ExtraFiles=[]*os.File{project,binary}
