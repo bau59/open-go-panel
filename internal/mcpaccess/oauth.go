@@ -128,7 +128,7 @@ func (o *OAuth) continueAuthorization(w http.ResponseWriter,r *http.Request){
     poll:=r.PostForm.Get("poll")
     if len(poll)!=43{oauthError(w,400,"invalid_request");return}
     code,err:=o.store.Poll(r.Context(),c.ID,poll)
-    if errors.Is(err,ErrPending){renderApproval(w,c,poll,"");return}
+    if errors.Is(err,ErrPending){renderApproval(w,c,poll,code.RequestID);return}
     if err!=nil&&!errors.Is(err,ErrDenied){
         if errors.Is(err,ErrUnauthorized){oauthError(w,400,"invalid_request")}else{oauthError(w,500,"server_error")};return
     }

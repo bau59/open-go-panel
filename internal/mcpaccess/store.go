@@ -58,6 +58,7 @@ type AuthorizationRequest struct {
 }
 
 type AuthorizationCode struct {
+    RequestID string
     Code string
     RedirectURI string
     State string
@@ -208,6 +209,7 @@ func (s *Store) Poll(ctx context.Context,connectionID,poll string)(Authorization
         JOIN apps a ON a.id=c.app_id AND a.owner=c.owner AND a.root=c.root AND a.created_at=c.app_created_at
         WHERE c.connection_id=? AND r.poll_hash=? AND r.expires_at>? AND c.revoked_at=0`,connectionID,hash(poll),now).Scan(&id,&clientID,&challenge,&decision,&out.RedirectURI,&out.State)
     if errors.Is(err,sql.ErrNoRows){return out,ErrUnauthorized};if err!=nil{return out,err}
+    out.RequestID=id
     if decision=="pending"{return out,ErrPending}
     if _,err:=tx.ExecContext(ctx,"DELETE FROM mcp_requests WHERE request_id=?",id);err!=nil{return out,err}
     if decision=="denied"{if err:=tx.Commit();err!=nil{return out,err};return out,ErrDenied}
