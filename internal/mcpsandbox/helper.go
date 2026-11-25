@@ -38,8 +38,16 @@ func bind(source,target string,dir,readonly,device bool)error{
 // PID 1 is the command process: its exit kills all remaining descendants.
 func RunHelper(args []string)error{
     runtime.LockOSThread()
-    if len(args)!=9||os.Geteuid()!=0||os.Getpid()!=1{return errors.New("sandbox helper requires a private PID namespace and root setup")}
+    if len(args)!=10||os.Geteuid()!=0||os.Getpid()!=1{return errors.New("sandbox helper requires a private PID namespace and root setup")}
     stage,projectPath,owner,uidText,gidText,groupText,workdir,operation,command:=args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]
+    network:=args[9]=="database"&&operation=="run_command"
+    if args[9]!="off"&&!network{return errors.New("invalid sandbox network mode")}
+    if network{
+        ready:=os.NewFile(5,"database network readiness")
+        var signal [1]byte
+        _,err:=io.ReadFull(ready,signal[:]);ready.Close()
+        if err!=nil||signal[0]!=1{return errors.New("database network setup failed")}
+    }
     if filepath.Dir(stage)!=stagingRoot||!strings.HasPrefix(filepath.Base(stage),"run-")||!validWorkDir(workdir)||strings.ContainsAny(owner,":\r\n"){return errors.New("invalid sandbox parameters")}
     uid,err:=strconv.Atoi(uidText);if err!=nil||uid<1000{return errors.New("invalid UID")}
     gid,err:=strconv.Atoi(gidText);if err!=nil||gid<=0{return errors.New("invalid GID")}
@@ -99,6 +107,7 @@ func RunHelper(args []string)error{
     if err:=unix.Mount("tmpfs",stage+"/tmp","tmpfs",unix.MS_NOSUID|unix.MS_NODEV,"size=256m,mode=1777");err!=nil{return err}
     if err:=os.Mkdir(stage+"/tmp/home",0700);err!=nil{return err}
     if err:=os.Chown(stage+"/tmp/home",uid,gid);err!=nil{return err}
+    if err:=os.WriteFile(stage+"/etc/hosts",[]byte("127.0.0.1 localhost\n"),0644);err!=nil{return err}
     if err:=os.WriteFile(stage+"/etc/passwd",[]byte(fmt.Sprintf("%s:x:%d:%d:App owner:/tmp/home:/bin/sh\n",owner,uid,gid)),0644);err!=nil{return err}
     if err:=os.WriteFile(stage+"/etc/group",[]byte(fmt.Sprintf("%s:x:%d:\n",owner,gid)),0644);err!=nil{return err}
     if err:=unix.Chroot(stage);err!=nil{return err}
@@ -118,7 +127,7 @@ func RunHelper(args []string)error{
     if err:=syscall.Setresuid(uid,uid,uid);err!=nil{return err}
     if os.Geteuid()!=uid||os.Getegid()!=gid{return errors.New("failed to drop sandbox privileges")}
     if err:=unix.Prctl(unix.PR_SET_NO_NEW_PRIVS,1,0,0,0);err!=nil{return err}
-    if err:=restrictSyscalls();err!=nil{return err}
+    if err:=restrictSyscalls(network);err!=nil{return err}
     // openat2 forbids changing the initial cwd through an escaping symlink.
     root,err:=unix.Open("/workspace",unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC,0);if err!=nil{return err}
     if workdir==""{workdir="."}
@@ -136,7 +145,7 @@ func RunHelper(args []string)error{
 
 // Prevent access to external filesystem Unix sockets, namespace changes and
 // io_uring's alternate syscall path. Local socketpairs remain available.
-func restrictSyscalls()error{
+func restrictSyscalls(network bool)error{
     var arch uint32
     switch runtime.GOARCH{case "amd64":arch=unix.AUDIT_ARCH_X86_64;case "arm64":arch=unix.AUDIT_ARCH_AARCH64;default:return errors.New("unsupported sandbox architecture")}
     load:=uint16(unix.BPF_LD|unix.BPF_W|unix.BPF_ABS)
@@ -148,8 +157,24 @@ func restrictSyscalls()error{
         {Code:load,K:0},
         {Code:uint16(unix.BPF_JMP|unix.BPF_JGE|unix.BPF_K),Jf:1,K:0x40000000},{Code:ret,K:denied},
     }
-    for _,nr:=range []uint32{unix.SYS_SOCKET,unix.SYS_IO_URING_SETUP,unix.SYS_UNSHARE,unix.SYS_SETNS}{
+    for _,nr:=range []uint32{unix.SYS_IO_URING_SETUP,unix.SYS_UNSHARE,unix.SYS_SETNS}{
         filter=append(filter,unix.SockFilter{Code:jeq,Jf:1,K:nr},unix.SockFilter{Code:ret,K:denied})
+    }
+    if network{
+        // Only IPv4 sockets in the isolated namespace. No filesystem Unix
+        // sockets, netlink, raw sockets or packet sockets are exposed.
+        filter=append(filter,
+            unix.SockFilter{Code:jeq,Jf:8,K:unix.SYS_SOCKET},
+            unix.SockFilter{Code:load,K:16},
+            unix.SockFilter{Code:jeq,Jt:1,K:unix.AF_INET},
+            unix.SockFilter{Code:ret,K:denied},
+            unix.SockFilter{Code:load,K:24},
+            unix.SockFilter{Code:uint16(unix.BPF_ALU|unix.BPF_AND|unix.BPF_K),K:15},
+            unix.SockFilter{Code:jeq,Jt:1,K:unix.SOCK_STREAM},
+            unix.SockFilter{Code:ret,K:denied},
+            unix.SockFilter{Code:ret,K:unix.SECCOMP_RET_ALLOW})
+    }else{
+        filter=append(filter,unix.SockFilter{Code:jeq,Jf:1,K:unix.SYS_SOCKET},unix.SockFilter{Code:ret,K:denied})
     }
     filter=append(filter,unix.SockFilter{Code:jeq,Jf:1,K:unix.SYS_CLONE3},unix.SockFilter{Code:ret,K:uint32(unix.SECCOMP_RET_ERRNO)|uint32(unix.ENOSYS)})
     // clone() remains available for threads and child processes, but no

@@ -22,7 +22,7 @@ import (
 const ListenAddr="127.0.0.1:18443"
 const DomainSetting="mcp.domain"
 
-type Runner func(context.Context,string,string,string,string,string,io.Reader)(mcpsandbox.Result,error)
+type Runner func(context.Context,string,string,string,string,string,io.Reader,mcpsandbox.NetworkAccess)(mcpsandbox.Result,error)
 
 type Server struct {
     grants *Store
@@ -166,7 +166,7 @@ func tools()[]any{
         tool("edit_file","Replace file content only if its read_file version still matches.",false,true,map[string]any{"path":p(),"content":property("string","Complete replacement file content"),"version":property("string","Version returned by read_file")},"path","content","version"),
         tool("create_directory","Create one new directory under the project.",false,false,map[string]any{"path":p()},"path"),
         tool("delete_path","Delete one file or empty directory. Recursive deletion must be explicitly enabled.",false,true,map[string]any{"path":p(),"recursive":property("boolean","Explicit recursive deletion")},"path"),
-        tool("run_command","Run a noninteractive command in the isolated project. No network or host home directories.",false,true,map[string]any{"command":property("string","Shell command"),"workdir":p(),"timeout_seconds":property("integer","Timeout, 1–120 seconds; default 120")},"command"),
+        tool("run_command","Run a noninteractive command in the isolated project. Only administrator-enabled local database TCP endpoints; no general network or host home directories.",false,true,map[string]any{"command":property("string","Shell command"),"workdir":p(),"timeout_seconds":property("integer","Timeout, 1–120 seconds; default 120")},"command"),
     }
 }
 
@@ -236,7 +236,12 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
     if params.Name=="run_command"{workdir=relative}
     var input io.Reader=bytes.NewReader(params.Arguments)
     if params.Name=="run_command"{input=nil}
-    result,err:=s.run(ctx,current.Owner,current.Root,workdir,params.Name,command,input)
+    access:=mcpsandbox.NetworkAccess{}
+    if params.Name=="run_command"{
+        access,err=s.grants.NetworkAccess(current)
+        if err!=nil{toolFailure(w,req.ID,"database access settings unavailable");return}
+    }
+    result,err:=s.run(ctx,current.Owner,current.Root,workdir,params.Name,command,input,access)
     failed:=err!=nil||result.ExitCode!=0||result.TimedOut
     if params.Name!="run_command"&&result.Truncated{failed=true}
     auditCtx,cancelAudit:=context.WithTimeout(context.Background(),3*time.Second)

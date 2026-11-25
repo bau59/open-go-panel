@@ -7,6 +7,9 @@ import json
 import os
 import re
 import secrets
+import shlex
+import socketserver
+import threading
 import subprocess
 import time
 import urllib.error
@@ -142,6 +145,47 @@ def call(conn,name,args,failed=False):
         # Only test-generated file contents/commands appear in this runner.
         raise AssertionError(f"{name}: expected failure={failed}; got {detail}")
     return result["structuredContent"]
+
+# Test the real kernel namespace and TCP forwarding with disposable host
+# endpoints. No application credentials or live databases are used.
+class DatabaseProbe(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.sendall(str(self.server.server_address[1]).encode())
+
+def probe(port):
+    source=f"import socket; s=socket.create_connection(('127.0.0.1',{port}),2); print(s.recv(32).decode()); s.close()"
+    return {"command":"python3 -c "+shlex.quote(source)}
+
+# Hosted runners sometimes start preinstalled database services.
+# These are disposable machines, guarded by the assertions at the top.
+for service in ("mysql.service","redis-server.service"):
+    subprocess.run(["sudo","systemctl","stop",service],check=False,capture_output=True)
+fixtures=[]
+try:
+    for port in (3306,6379,19090):
+        endpoint=socketserver.ThreadingTCPServer(("127.0.0.1",port),DatabaseProbe)
+        fixtures.append(endpoint)
+        threading.Thread(target=endpoint.serve_forever,daemon=True).start()
+    call(a_conn,"run_command",probe(3306),failed=True)
+    post(f"/apps/{a}/chatgpt/network",{"mysql":"1"})
+    assert call(a_conn,"run_command",probe(3306))["output"].strip()=="3306"
+    call(a_conn,"run_command",probe(6379),failed=True)
+    call(a_conn,"run_command",probe(19090),failed=True)
+    call(b_conn,"run_command",probe(3306),failed=True)
+    post(f"/apps/{a}/chatgpt/network",{"mysql":"1","redis":"1"})
+    assert call(a_conn,"run_command",probe(6379))["output"].strip()=="6379"
+    for source in (
+        "import socket; socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)",
+        "import socket; socket.socket(socket.AF_INET,socket.SOCK_DGRAM)",
+        "import socket; socket.create_connection(('192.0.2.1',3306),1)",
+    ):
+        call(a_conn,"run_command",{"command":"python3 -c "+shlex.quote(source)},failed=True)
+    post(f"/apps/{a}/chatgpt/network",{})
+    call(a_conn,"run_command",probe(3306),failed=True)
+finally:
+    for endpoint in fixtures:
+        endpoint.shutdown()
+        endpoint.server_close()
 
 assert len(rpc(a_conn,"tools/list")["result"]["tools"])==8
 assert rpc(a_conn,"initialize",{"protocolVersion":"2025-11-25"})["result"]["protocolVersion"]=="2025-11-25"

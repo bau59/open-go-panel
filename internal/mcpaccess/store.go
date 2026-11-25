@@ -17,6 +17,7 @@ import (
     "time"
 
     "github.com/bau59/open-go-panel/internal/state"
+    "github.com/bau59/open-go-panel/internal/mcpsandbox"
 )
 
 var ErrUnauthorized = errors.New("invalid or revoked MCP authorization")
@@ -290,4 +291,30 @@ func (s *Store) HasRefresh(ctx context.Context,connectionID string)(bool,error){
         JOIN mcp_connections c ON c.connection_id=cl.connection_id WHERE c.connection_id=? AND c.revoked_at=0 AND t.refresh_expires_at>?)`,
         connectionID,time.Now().Unix()).Scan(&active)
     return active,err
+}
+
+// Use the random grant ID, never a reusable application ID, for permission
+// settings. Revoking/recreating a grant cannot inherit database access.
+func (s *Store) NetworkAccess(c Connection)(mcpsandbox.NetworkAccess,error){
+    var access mcpsandbox.NetworkAccess
+    if c.RevokedAt!=0||!challengeRE.MatchString(c.ID){return access,ErrUnauthorized}
+    value,_,err:=s.state.Setting("mcp.network."+c.ID)
+    if err!=nil{return access,err}
+    switch value{
+    case "","off":
+    case "mysql":access.MySQL=true
+    case "redis":access.Redis=true
+    case "mysql,redis":access.MySQL=true;access.Redis=true
+    default:return access,errors.New("invalid database network policy")
+    }
+    return access,nil
+}
+
+func (s *Store) SetNetworkAccess(ctx context.Context,appID int64,mysql,redis bool)error{
+    c,err:=s.Connection(ctx,appID)
+    if err!=nil{return err}
+    if c.RevokedAt!=0{return ErrUnauthorized}
+    value:="off"
+    if mysql&&redis{value="mysql,redis"}else if mysql{value="mysql"}else if redis{value="redis"}
+    return s.state.SetSetting("mcp.network."+c.ID,value)
 }

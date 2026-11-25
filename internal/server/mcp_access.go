@@ -74,6 +74,12 @@ func registerMCPRoutes(mux *http.ServeMux,sessions *sessionStore,cfg Config){
         cfg.State.Audit(r.Context(),"mcp.enable",fmt.Sprintf("app:%d",id),"awaiting authorization")
         return nil
     })
+    post("network",func(r *http.Request,id int64)error{
+        mysql,redis:=r.FormValue("mysql")=="1",r.FormValue("redis")=="1"
+        if err:=grants.SetNetworkAccess(r.Context(),id,mysql,redis);err!=nil{return err}
+        cfg.State.Audit(r.Context(),"mcp.network",fmt.Sprintf("app:%d",id),fmt.Sprintf("mysql=%t redis=%t",mysql,redis))
+        return nil
+    })
     post("revoke",func(r *http.Request,id int64)error{
         if err:=grants.Revoke(r.Context(),id);err!=nil{return err}
         cfg.State.Audit(r.Context(),"mcp.revoke",fmt.Sprintf("app:%d",id),"access and refresh tokens revoked")
@@ -120,6 +126,14 @@ func mcpAppBlock(ctx context.Context,cfg Config,a panelapp.App)string{
     pending,err:=grants.Pending(ctx,a.ID)
     if err!=nil{out.WriteString(`<p class="alert">Unable to load pending requests.</p>`)}else if len(pending)>0{label="Authorization request received"}
     fmt.Fprintf(&out,`<p><strong>%s</strong></p><label>Plugin name<input id="mcp-plugin-name" readonly value="%s" onclick="this.select()"></label><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('mcp-plugin-name').value)">Copy name</button><label>MCP URL<input id="mcp-plugin-url" readonly value="%s" onclick="this.select()"></label><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('mcp-plugin-url').value)">Copy URL</button><p class="note">In ChatGPT on the web: Plugins → + → Add custom MCP server. Use this URL, choose OAuth with dynamic registration, create and install the plugin. Approve only the request ID shown in the OAuth browser.</p>`,html.EscapeString(label),html.EscapeString("Open Go Panel — "+strings.ToUpper(a.Name)),html.EscapeString(c.Resource))
+    if access,err:=grants.NetworkAccess(c);err!=nil{
+        out.WriteString(`<p class="alert">Unable to load database network permissions.</p>`)
+    }else{
+        mysqlChecked,redisChecked:="",""
+        if access.MySQL{mysqlChecked=" checked"}
+        if access.Redis{redisChecked=" checked"}
+        fmt.Fprintf(&out,`<form method="post" action="/apps/%d/chatgpt/network"><h3>Database network access</h3><label><input type="checkbox" name="mysql" value="1"%s> MySQL — 127.0.0.1:3306</label><label><input type="checkbox" name="redis" value="1"%s> Redis — 127.0.0.1:6379</label><p class="note">MySQL uses normal database credentials. Redis is shared by applications; enabling it may grant access to other applications' keys unless Redis ACLs are configured. No other network endpoints are opened. Changes apply to the next command.</p><button class="secondary">Save database access</button></form>`,a.ID,mysqlChecked,redisChecked)
+    }
     if c.LastSuccessAt>0{fmt.Fprintf(&out,`<p class="note">Last successful call: %s</p>`,time.Unix(c.LastSuccessAt,0).UTC().Format("2006-01-02 15:04:05 UTC"))}
     for _,req:=range pending{
         fmt.Fprintf(&out,`<div class="snapshot-fact"><strong>Pending authorization</strong><code>%s</code><span>Expires %s. Permissions: read/write project files and isolated commands.</span><form method="post" action="/apps/%d/chatgpt/decide"><input type="hidden" name="request_id" value="%s"><div class="actions"><button class="button" name="decision" value="approve">Approve</button><button class="danger" name="decision" value="deny">Deny</button></div></form></div>`,html.EscapeString(req.ID),time.Unix(req.ExpiresAt,0).UTC().Format("15:04 UTC"),a.ID,html.EscapeString(req.ID))

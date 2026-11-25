@@ -50,7 +50,7 @@ func validWorkDir(value string)bool{
     return true
 }
 
-func Run(ctx context.Context,owner,root,workdir,operation,command string,input io.Reader)(Result,error){
+func Run(ctx context.Context,owner,root,workdir,operation,command string,input io.Reader,access NetworkAccess)(Result,error){
     result:=Result{ExitCode:-1}
     if os.Geteuid()!=0{return result,errors.New("MCP sandbox requires the privileged panel service")}
     if !validWorkDir(workdir){return result,errors.New("working directory must be relative to the application")}
@@ -75,7 +75,11 @@ func Run(ctx context.Context,owner,root,workdir,operation,command string,input i
     outputLimit:=4<<20
     if operation=="run_command"{deadline=120*time.Second;outputLimit=256<<10}
     childCtx,cancel:=context.WithTimeout(ctx,deadline);defer cancel()
-    cmd:=exec.CommandContext(childCtx,"/proc/self/exe","--mcp-sandbox-helper",stage,root,owner,strconv.Itoa(uid),strconv.Itoa(gid),strings.Join(groups,","),workdir,operation,command)
+    var ports []int
+    if operation=="run_command"{ports=access.ports()}
+    networkFlag:="off"
+    if len(ports)>0{networkFlag="database"}
+    cmd:=exec.CommandContext(childCtx,"/proc/self/exe","--mcp-sandbox-helper",stage,root,owner,strconv.Itoa(uid),strconv.Itoa(gid),strings.Join(groups,","),workdir,operation,command,networkFlag)
     cmd.Env=[]string{"PATH=/usr/bin:/bin","LANG=C.UTF-8"}
     cmd.Dir="/"
     cmd.ExtraFiles=[]*os.File{project,binary}
@@ -84,7 +88,22 @@ func Run(ctx context.Context,owner,root,workdir,operation,command string,input i
     output:=&cappedOutput{limit:outputLimit}
     cmd.Stdout=output;cmd.Stderr=output
     cmd.WaitDelay=3*time.Second
-    err=cmd.Run()
+    if len(ports)==0{
+        err=cmd.Run()
+    }else{
+        ready,signal,e:=os.Pipe()
+        if e!=nil{return result,e}
+        defer ready.Close();defer signal.Close()
+        cmd.ExtraFiles=append(cmd.ExtraFiles,ready)
+        if e=cmd.Start();e!=nil{return result,e}
+        ready.Close()
+        stop,e:=startDatabaseRelay(childCtx,cmd.Process.Pid,ports)
+        if e!=nil{signal.Close();_ = cmd.Process.Kill();_ = cmd.Wait();return result,e}
+        defer stop()
+        if _,e=signal.Write([]byte{1});e!=nil{signal.Close();_ = cmd.Process.Kill();_ = cmd.Wait();return result,e}
+        signal.Close()
+        err=cmd.Wait()
+    }
     result.Output=output.buffer.String();result.Truncated=output.truncated
     result.TimedOut=errors.Is(childCtx.Err(),context.DeadlineExceeded)
     if cmd.ProcessState!=nil{result.ExitCode=cmd.ProcessState.ExitCode()}

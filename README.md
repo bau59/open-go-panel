@@ -552,8 +552,13 @@ forwarded.
 Commands and file helpers execute under the application owner inside a
 separate Linux mount/PID/network/IPC namespace. Only the selected project
 (`/workspace`), read-only system runtimes and private temporary files are
-visible. Network sockets are disabled; dependency downloads and host-user
-caches are intentionally unavailable. File tools reject access to individual hardlinked files because their inode
+visible. Network access is disabled by default. In an application's ChatGPT access
+settings, enable MySQL (127.0.0.1:3306) or Redis (127.0.0.1:6379) explicitly.
+Only the selected IPv4 TCP endpoints are relayed to the host loopback;
+no host network interface, Unix socket, Internet or other port is exposed.
+Use MySQL TCP mode and the application's credentials. Redis is shared unless
+ACLs are configured; enabling it is not key-level isolation. Dependency
+downloads and host-user caches remain intentionally unavailable. File tools reject access to individual hardlinked files because their inode
 may also be visible in another project. Shell commands check the entire
 project for hardlinks, streaming directory entries without a fixed total
 file-count limit; this check counts toward the command timeout. Use vendored
