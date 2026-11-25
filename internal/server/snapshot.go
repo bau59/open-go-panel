@@ -37,6 +37,9 @@ type snapshotFile struct {
 type snapshotIndex struct {
 	Version int `json:"version"`
 	ID string `json:"id"`
+	AppID int64 `json:"app_id,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	Application string `json:"application,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	Files []snapshotFile `json:"files"`
 }
@@ -73,6 +76,7 @@ func validSnapshotPath(name string) bool {
 
 func validateSnapshotIndex(idx snapshotIndex,id string) error {
 	if idx.Version!=1||idx.ID!=id||!snapshotIDPattern.MatchString(id)||len(idx.Files)==0{return errors.New("invalid server snapshot index")}
+	if idx.AppID<0 || (idx.AppID>0 && (!backupUsername.MatchString(idx.Owner)||!snapshotSegment.MatchString(idx.Application))) {return errors.New("invalid snapshot application")}
 	seen:=map[string]bool{}
 	for _,f:=range idx.Files {
 		hash,err:=hex.DecodeString(f.SHA256)
@@ -136,6 +140,10 @@ func createServerSnapshot(ctx context.Context,cfg Config)(snapshotIndex,error){
 			names=append(names,name)
 		}
 	}
+	return publishSnapshot(ctx,idx,dir,snapshotRoot,names)
+}
+
+func publishSnapshot(ctx context.Context,idx snapshotIndex,dir,root string,names []string)(snapshotIndex,error){
 	for _,name:=range names{
 		if err:=ctx.Err();err!=nil{return idx,err}
 		item,err:=snapshotFileInfo(dir,name)
@@ -144,7 +152,7 @@ func createServerSnapshot(ctx context.Context,cfg Config)(snapshotIndex,error){
 	}
 	if err:=validateSnapshotIndex(idx,idx.ID);err!=nil{return idx,err}
 	if err:=writeSnapshotIndex(dir,idx);err!=nil{return idx,err}
-	return idx,os.Rename(dir,filepath.Join(snapshotRoot,idx.ID))
+	return idx,os.Rename(dir,filepath.Join(root,idx.ID))
 }
 
 func writeSnapshotIndex(dir string,idx snapshotIndex)error{
@@ -162,14 +170,16 @@ func readSnapshotIndex(dir,id string)(snapshotIndex,error){
 	return idx,validateSnapshotIndex(idx,id)
 }
 
-func localSnapshots()([]snapshotIndex,error){
-	entries,err:=os.ReadDir(snapshotRoot)
+func localSnapshots()([]snapshotIndex,error){return snapshotsAt(snapshotRoot)}
+
+func snapshotsAt(root string)([]snapshotIndex,error){
+	entries,err:=os.ReadDir(root)
 	if errors.Is(err,os.ErrNotExist){return nil,nil}
 	if err!=nil{return nil,err}
 	var result []snapshotIndex
 	for _,entry:=range entries{
 		if !entry.IsDir()||!snapshotIDPattern.MatchString(entry.Name()){continue}
-		idx,err:=readSnapshotIndex(filepath.Join(snapshotRoot,entry.Name()),entry.Name())
+		idx,err:=readSnapshotIndex(filepath.Join(root,entry.Name()),entry.Name())
 		if err==nil{result=append(result,idx)}
 	}
 	sort.Slice(result,func(i,j int)bool{return result[i].ID>result[j].ID})
