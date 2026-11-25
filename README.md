@@ -1,37 +1,51 @@
 # Open Go Panel
 
-Lightweight open-source Linux server control panel written in Go.
+**Self-hosted Linux server management and project-scoped AI access.**
 
-> Production baseline for single-administrator, developer-managed Ubuntu servers. The panel runs privileged server-management operations and is intended to be accessed through an SSH tunnel, not exposed as a public multi-tenant hosting panel.
+Open Go Panel is a lightweight control panel written in Go for developers who manage their own Ubuntu VPS. It manages native Linux services, application deployments, databases, Docker workloads and disaster recovery from one interface. An independent Model Context Protocol (MCP) service lets ChatGPT work directly with an explicitly authorized application on the server.
 
-## Included
+The administrative panel is designed for a single administrator and normally stays behind an SSH tunnel. You can close the panel without stopping websites or the separate MCP service.
 
-- single Go binary;
-- SQLite panel state;
-- Linux users and SSH keys;
-- applications with systemd services, resource limits and live journal logs;
-- PHP web applications through per-user PHP-FPM pools and Caddy FastCGI routing;
-- per-application file browser/editor with upload, download, mkdir, rename/move, copy, delete and ZIP/TAR.GZ extraction;
-- application health checks;
-- Git deploy, one-step rollback and optional automatic deployment when the configured branch changes;
-- domains, automatic TLS and per-domain Caddy configuration;
-- MySQL and PostgreSQL provisioning;
-- Redis installation, metrics, key browser and cache controls;
-- one-time remote MySQL/PostgreSQL snapshot import with automatic pre-import safety backup;
-- application ↔ database attachments;
-- MySQL, PostgreSQL and Redis runtime metrics plus resource-aware MySQL tuning preset;
-- database backups, restore and daily retention schedule;
-- upload and import `.sql` / `.sql.gz` files into managed MySQL and PostgreSQL databases, with safety snapshots;
-- Adminer behind the panel session;
-- CrowdSec Security Engine and nftables firewall bouncer;
-- UFW recommended firewall policy;
-- structured CrowdSec decisions, allowlist and alerts;
-- audit log for successful panel changes;
-- system-wide software management for Docker, Node.js LTS, PHP-FPM, Tailwind CLI, Go, Air, Git, build tools and common CLI utilities;
-- Docker container management: pull/run from image or registry URL, list, start, stop, restart, remove and autostart policy;
-- authenticated web terminal with root and managed-user shells; SSH tunnel remains the recommended access method;
-- release checksum verification, post-update health checks and automatic binary rollback;
-- Linux amd64 and arm64 release builds.
+[Download releases](https://github.com/bau59/open-go-panel/releases) · [Build and test status](https://github.com/bau59/open-go-panel/actions) · [Report an issue](https://github.com/bau59/open-go-panel/issues)
+
+> This is a privileged server-management tool for trusted administrators, not a public multi-tenant hosting platform. MCP isolates direct project tools; it is not a replacement for isolating deployed applications from one another.
+
+## Features at a glance
+
+| Area | Capabilities |
+| --- | --- |
+| Applications | Go, Node.js, PHP and static sites; Linux accounts, SSH keys, systemd lifecycle, environment, resource limits, health checks, journal logs |
+| Deployment | Git deploy, configurable auto-deploy intervals, staged atomic directory exchange, rollback, Go Air development → prebuilt production binary |
+| Files | Project-scoped editor, uploads/downloads, bulk move/delete, archive extraction, collision checks |
+| AI / MCP | Separate OAuth connection per app, eight project tools, version-checked editing, isolated shell commands, optional MySQL and Redis TCP access |
+| Automation | Per-app cron expressions backed by systemd timers, manual runs and task logs; independent background terminal commands |
+| Web infrastructure | Caddy domains, automatic TLS, static files, PHP FastCGI, reverse proxy, per-domain configuration and global defaults |
+| Data | MySQL and PostgreSQL provisioning, app attachments, SQL imports, safety backups, Adminer; Redis metrics, key browser and slow commands |
+| Containers | Docker image/registry launch, private GitHub builds with deploy keys, rebuilds, rollback containers, environment and persistent mounts |
+| Backups | SQL backup schedules, local and cloud application/server snapshots, Yandex Disk, rclone off-site SQL backups, fresh-server recovery and exports |
+| Observability | CPU/RAM/task counters, app and Caddy journals, on-demand HTTP latency reports, database slow logs, configurable optional logging and retention |
+| Security | CrowdSec, nftables bouncer, UFW, trusted addresses, CSRF protection, authenticated terminals, audit history |
+| Runtime management | Go, Air, Node.js LTS, PHP-FPM, PHP extensions and ionCube, isolated legacy PHP 7.4, Tailwind CLI, Git and build utilities |
+| Operations | One Go executable, SQLite state, Linux amd64/arm64 binaries, SHA-256 verified updates, service health checks and automatic binary rollback |
+
+The server-rendered web UI uses HTMX for navigation and updates, shared CSS and small vanilla JavaScript helpers. Applications, databases, Redis, Caddy, Docker, Software, Security, Performance and Log retention use section tabs; the Backups page separates server/application snapshots, SQL backups and cloud storage. Native forms remain available without JavaScript.
+
+## Contents
+
+- [Install and connect](#install)
+- [AI access: ChatGPT and MCP](#ai-access-chatgpt-and-mcp)
+- [Applications and PHP runtimes](#php-74-for-legacy-ioncube-sites-per-application)
+- [Application files](#application-files)
+- [Configuration and managed infrastructure](#configuration)
+- [Git deployment safety](#git-deployment-safety)
+- [Database and off-site backups](#off-site-database-backup-storage)
+- [Server and application recovery](#yandex-disk-and-server-recovery)
+- [Docker builds and updates](#build-docker-containers-from-private-github-repositories)
+- [Go development to production](#go-development-air--production-binary)
+- [Scheduled tasks and background commands](#application-scheduled-tasks-cron)
+- [Observability](#observability-and-log-retention)
+- [Service, update and uninstall](#service)
+- [Security model and release safety](#security-model)
 
 ## Install
 
@@ -51,40 +65,9 @@ managed application users can find Go without manual PATH changes.
 
 For PHP websites, install **Software → PHP + PHP-FPM** first, create a **PHP web app**, then deploy files and connect a domain. The domain form lets you choose the `public/` directory (Laravel/frameworks) or the application root (WordPress/plain PHP). Each app runs in an on-demand PHP-FPM pool under its Linux user, with a dedicated Unix socket for Caddy; no application HTTP port or per-app systemd service is created. Configure PHP application secrets in its project configuration or `.env`, not via the systemd environment editor. PHP-FPM daemon CPU/memory use is shared across sites.
 
-To install additional PHP extensions, open **Software → PHP + PHP-FPM → Manage PHP extensions**. The panel offers an allowlist of Ubuntu extensions (GD, Intl, BCMath, SOAP, SQLite3, Redis, Imagick, APCu, OPcache) and the third-party **ionCube Loader**. Packages are installed for the detected PHP-FPM major/minor version, not arbitrary system PHP versions. Extensions affect **every application using that PHP-FPM runtime**; this is not a per-app toggle. Installation is asynchronous and PHP-FPM is reloaded only after a configuration test.
+To install additional PHP extensions, open **Software → PHP runtimes → PHP + PHP-FPM → Manage PHP extensions**. The panel offers an allowlist of Ubuntu extensions (GD, Intl, BCMath, SOAP, SQLite3, Redis, Imagick, APCu, OPcache) and the third-party **ionCube Loader**. Packages are installed for the detected PHP-FPM major/minor version, not arbitrary system PHP versions. Extensions affect **every application using that PHP-FPM runtime**; this is not a per-app toggle. Installation is asynchronous and PHP-FPM is reloaded only after a configuration test.
 
 ionCube is a proprietary PHP Zend extension downloaded via HTTPS from the [official ionCube Linux Loaders](https://www.ioncube.com/loaders.php) for the panel's AMD64 or ARM64 architecture. The panel selects only the library matching the active PHP version, verifies its ELF architecture, checks that PHP can load it, and validates PHP-FPM before reload. It restores the previous managed configuration on test/reload failure. It does not bypass ionCube licensing or PHP-version compatibility: protected files must be compatible with the installed PHP runtime. If the official download stalls or its connection closes mid-transfer, the panel retries up to three times with a short backoff; partial archives are discarded and never installed. Network failures leave the PHP-FPM configuration unchanged.
-
-## PHP 7.4 for legacy ionCube sites (per application)
-
-PHP files encoded for PHP 7.4 cannot execute under PHP 8.3, even when the latest ionCube Loader is correctly installed. Open Go Panel can run such sites in **separate PHP 7.4 Docker containers** while leaving modern PHP-FPM sites unchanged.
-
-1. Install **Software → Docker Engine**, if it is not already installed.
-2. In **Software → PHP 7.4 (isolated / legacy)**, choose **Install** to build the local `open-go-panel/php74:local` image. This is an asynchronous Docker build using the archived official `php:7.4-fpm-bullseye` base image, with `mysqli`, `pdo_mysql`, `gd`, `zip`, `mbstring`, `intl`, `imagick` and other common extensions. Errors appear in the Software task status.
-3. Download the matching official Linux [ionCube Loader archive](https://www.ioncube.com/loaders.php) onto your computer. Upload that archive via **Software → PHP 7.4 → Upload PHP 7.4 Loader**. The panel extracts only the PHP 7.4 ELF library; **no direct ionCube download from the VPS is performed**.
-4. Open the PHP app under **Applications → PHP runtime**, choose **PHP 7.4 + ionCube (isolated Docker)** and click **Apply PHP version**. The panel checks the Loader inside the PHP 7.4 image, starts an app-owned container and switches only that domain's Caddy FastCGI upstream.
-5. Revisit the site and check **PHP errors** if the application still fails. To return to the current system PHP-FPM, choose **System PHP-FPM** in the same app settings.
-
-For an already copied ionCube archive on the host, the panel also accepts an admin-prepared loader at `/usr/local/lib/open-go-panel/ioncube/amd64/ioncube_loader_lin_7.4.so` (or corresponding ARM64 path); use only the official vendor archive.
-
-**Security and compatibility:** PHP 7.4 and the Bullseye base image have reached end-of-life. The Docker runtime runs as the site's unprivileged UID/GID, mounts only the site's files, its private PHP error log, the Loader and (when present) the host MySQL socket directory, and publishes its FastCGI listener **only to 127.0.0.1**. Containers have dropped Linux capabilities, read-only root filesystems and memory/CPU/PID limits. They still have bridge-network access for application HTTP requests, so this is not a security substitute for upgrading old code.
-
-When MySQL runs on the host via the default `/run/mysqld/mysqld.sock`, that socket is passed into the container for ordinary `localhost` MySQL connections. An application explicitly configured to use `127.0.0.1:3306` or other host-local TCP services must be reconfigured: inside a container, `127.0.0.1` is the container itself. The Docker host gateway is available as `host.docker.internal` if the host database allows bridge connections.
-
-The image build requires reachable Docker image/package registries. Unavailable old Debian repositories or incompatible legacy dependencies are reported as build errors; Open Go Panel does not downgrade or install PHP 7.4 into the host operating system.
-
-## Application files
-
-Open **Applications → Files** (or **Files** in an application's header). Every filesystem operation runs in a short-lived process as the application's Linux user, using that user's normal filesystem permissions; the root-owned panel does not read or modify app files directly. The manager remains confined to the selected application's root. It supports:
-
-- browsing directories and editing UTF-8 text files (up to 2 MiB);
-- uploading a file (up to 1 GiB), downloading files, creating files or folders;
-- moving/renaming files and folders, copying individual files, deleting files or directories;
-- selecting multiple files/folders for a bulk move or delete (up to 400 visible entries at once), with no overwrite on name collisions;
-- moving **all contents of a folder one level up** in a single action, including entries not visible on the page (up to 100,000 direct children); subfolders move as trees, and the source folder remains empty for optional deletion;
-- extracting ZIP, TAR.GZ and TGZ archives without overwriting existing files.
-
-Uploads are streamed to temporary disk storage with a maximum of 1 GiB per file. Make sure the server has enough free disk space for the temporary upload, the destination file, and any database safety backup. Editing and archive extraction are one-time operations, not background tasks. Bulk moves preflight every target name and refuse collisions; if a filesystem error interrupts the batch, the panel attempts to roll back moved entries. Bulk deletions are permanent and may be partially completed if an error occurs. A destination folder is entered relative to the application root (`.` means the root). Archive extraction is limited to 100,000 entries and 4 GiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible. On upload, the panel compares the browser-selected file size with the HTTP multipart payload, then verifies SHA-256 of the streamed bytes against the file read back from disk under the application's Linux user. A mismatch fails the upload and deletes the unverified destination. ZIP extraction accepts valid ZIP indexes even when non-ZIP bytes were appended after the ZIP end record. Unsupported formats (including RAR/7z renamed to .zip) and damaged ZIP indexes are rejected with a format-specific diagnostic. If the source is invalid, verify it with `unzip -t` and compare its SHA-256 to the original; the panel never attempts unsafe extraction or modifies a corrupt archive.
 
 New installations bind the panel to localhost:
 
@@ -107,6 +90,115 @@ http://127.0.0.1:8443
 The installer enables OpenSSH, installs Caddy when needed, downloads the latest release binary, creates the panel service and generates the initial admin password.
 
 Existing installations keep their current `OGP_LISTEN_ADDR` during updates.
+
+## AI access: ChatGPT and MCP
+
+Open Go Panel exposes a real remote MCP server, not an SSH command wrapper that gives an AI unrestricted server access. Each connection grants access to **one application**. The assistant can inspect a live project, read source files, make controlled edits, run local commands and, when separately permitted, work with local databases using the project's existing credentials.
+
+### Connect an application
+
+1. Open **Infrastructure → ChatGPT access** in the private panel. Set a dedicated HTTPS hostname (for example, `mcp.example.com`) with DNS pointing to the VPS. The panel configures Caddy; use **Test HTTPS connection** to verify it.
+2. Open the target application → **ChatGPT access** tab → **Enable connection**. Copy its plugin name and MCP URL.
+3. In ChatGPT on the web, open **Plugins → + → Add custom MCP server** (availability and UI labels depend on the account). Use the supplied MCP URL and OAuth with dynamic registration.
+4. Match the request ID on the OAuth browser page with the pending request shown in the private application panel. Approve that request, then click **Continue after approval** in the OAuth browser.
+5. Select the installed plugin with `@` in a chat. Start with a read-only inspection, and approve changes deliberately.
+
+Each additional project requires its own connection. The application's **Revoke access** action invalidates its authorization. Existing authorizations survive panel restarts and in-place updates.
+
+### MCP tools: machine-readable contract
+
+The service advertises these eight tools through MCP `tools/list`. Tool arguments are JSON objects. Paths are relative to the selected application root, which is mounted at `/workspace` inside the sandbox. Use `.` for the root directory.
+
+| Tool | Arguments | Behavior |
+| --- | --- | --- |
+| `list_directory` | `path?` | List directory entries; reports truncation (up to 400 entries) |
+| `search_files` | `query`, `path?`, `context_lines?` | Literal text search with paths, line numbers and up to three context lines; bounded scan and output |
+| `read_file` | `path`, `start_line?`, `end_line?` | Read UTF-8 text or a 1-based inclusive line range; returns a version for editing |
+| `create_file` | `path`, `content` | Create a new text file; never overwrite an existing file |
+| `edit_file` | `path`, `content`, `version` | Replace complete file content only if its read version still matches |
+| `create_directory` | `path` | Create one directory; parent must exist |
+| `delete_path` | `path`, `recursive?` | Delete a file or empty directory; recursive deletion requires explicit opt-in |
+| `run_command` | `command`, `workdir?`, `timeout_seconds?` | Run a noninteractive shell command as the Linux app owner; returns output, exit code, timeout and truncation flags |
+
+`?` denotes an optional argument. The server rejects unknown parameters and paths that escape the project. Read/edit text files are limited to 2 MiB. Commands have a maximum 120-second runtime and 256 KiB output. Search results are bounded; a truncated result is not proof that there are no additional matches. There is no fixed total project-file limit. Shell startup still checks for preexisting hardlinks, and that check counts toward the timeout.
+
+The HTTP transport uses JSON-RPC and JSON responses. The public resource URL is generated by the panel; it is not a generic root-shell endpoint. OAuth uses authorization code with S256 PKCE, dynamic registration, short-lived access tokens and rotating refresh tokens. The current implementation validates the ChatGPT callback rather than advertising unrestricted OAuth-client compatibility.
+
+### Optional database network access
+
+Open the application → **ChatGPT access → Database network access**. Enable only the required service, then save.
+
+| Permission | Endpoint inside sandbox | Scope |
+| --- | --- | --- |
+| MySQL | `127.0.0.1:3306` | Host-local MySQL TCP service; database permissions depend on supplied credentials |
+| Redis | `127.0.0.1:6379` | Host-local Redis TCP service; actual key permissions depend on Redis ACLs |
+
+Both permissions are disabled by default. Settings are associated with the individual MCP grant and apply to subsequent commands. The sandbox uses a private network namespace and relays only the selected IPv4 TCP endpoints. There is no general host network, arbitrary Unix-socket access, Internet access or PostgreSQL relay.
+
+Example **inside an authorized MCP command**, assuming the required CLI is installed:
+
+```bash
+mysql --protocol=TCP -h 127.0.0.1 -u APP_DB_USER -p
+redis-cli -h 127.0.0.1 -p 6379 PING
+```
+
+The MySQL example requires interactive password input and is intended as a connection reference: for actual noninteractive MCP commands, use the application's existing authorized credential configuration without printing passwords or passing them in the prompt. Prefer read-only SQL for diagnosis. For authenticated Redis, use the application's configured credentials.
+
+**Redis may be shared by multiple applications.** Enabling access does not provide key-level isolation by itself. Use Redis ACLs and least-privilege SQL accounts; selecting a Redis database number is not a security boundary. Do not enable these permissions if access to the shared service is unacceptable.
+
+### Suggested instructions for an AI working on a project
+
+Copy or adapt this prompt after selecting the appropriate project plugin:
+
+> Work only in the connected application. Inspect the existing files and project conventions first. Use relative paths, read a file before editing, pass its current version, and preserve unrelated code. Do not expose .env values, credentials or private keys in responses. Start database diagnostics with read-only queries. Ask before destructive file operations, schema changes, data deletion or production-impacting commands. Run available local tests and report the files changed, checks performed and any failures. Do not claim success when tools return an error or truncated output.
+
+Useful first requests include inspecting `go.mod` or `package.json`, mapping application modules, diagnosing a build failure, reviewing a query, making a small version-checked change, or running an existing local test. Dependencies must already be available inside the project or read-only system runtime; ordinary network downloads and host-user caches are intentionally unavailable. The AI receives no panel-wide deployment, root terminal or administrator API through this plugin.
+
+### Isolation and service lifecycle
+
+The installer runs `open-go-panel-mcp.service` independently using the same Go binary in MCP mode, listening on `127.0.0.1:18443`. Caddy exposes only MCP, OAuth discovery/authorization and health routes on the dedicated HTTPS domain. The administrative panel remains private.
+
+Each command or file helper executes under the app's Linux UID/GID in separate mount, PID, network and IPC namespaces. Only the project, read-only system runtimes and private temporary files are exposed. File tools reject individual hardlinked files; shell commands check the project tree for hardlinks. There is no unisolated fallback. Concurrent operations are bounded (one operation per app, up to four globally). Audit records include operation, path, timing and result when audit logging is enabled, not command text or file contents.
+
+The plugin grants real read/write/execute access to project files, including secrets accessible to the owner. Use only trusted AI clients and grant access only to projects you intend to expose. Direct tool isolation is not isolation of the separately deployed application itself. Closing the panel does not stop MCP. OAuth grants are excluded from server snapshots so restoring a backup cannot reactivate revoked access; authorize again on a recovered server.
+
+```bash
+systemctl status open-go-panel-mcp.service
+journalctl -u open-go-panel-mcp.service -n 100 --no-pager
+```
+
+Use the panel to configure and revoke connections. Do not expose the local listener directly or disable sandbox checks to work around a connection failure.
+
+## PHP 7.4 for legacy ionCube sites (per application)
+
+PHP files encoded for PHP 7.4 cannot execute under PHP 8.3, even when the latest ionCube Loader is correctly installed. Open Go Panel can run such sites in **separate PHP 7.4 Docker containers** while leaving modern PHP-FPM sites unchanged.
+
+1. Install **Software → Docker Engine**, if it is not already installed.
+2. In **Software → PHP runtimes → PHP 7.4 (isolated / legacy)**, choose **Install** to build the local `open-go-panel/php74:local` image. This is an asynchronous Docker build using the archived official `php:7.4-fpm-bullseye` base image, with `mysqli`, `pdo_mysql`, `gd`, `zip`, `mbstring`, `intl`, `imagick` and other common extensions. Errors appear in the Software task status.
+3. Download the matching official Linux [ionCube Loader archive](https://www.ioncube.com/loaders.php) onto your computer. Upload that archive via **Software → PHP runtimes → PHP 7.4 → Upload PHP 7.4 Loader**. The panel extracts only the PHP 7.4 ELF library; **no direct ionCube download from the VPS is performed**.
+4. Open the PHP app under **Applications → Settings → PHP runtime**, choose **PHP 7.4 + ionCube (isolated Docker)** and click **Apply PHP version**. The panel checks the Loader inside the PHP 7.4 image, starts an app-owned container and switches only that domain's Caddy FastCGI upstream.
+5. Revisit the site and check **PHP errors** if the application still fails. To return to the current system PHP-FPM, choose **System PHP-FPM** in the same app settings.
+
+For an already copied ionCube archive on the host, the panel also accepts an admin-prepared loader at `/usr/local/lib/open-go-panel/ioncube/amd64/ioncube_loader_lin_7.4.so` (or corresponding ARM64 path); use only the official vendor archive.
+
+**Security and compatibility:** PHP 7.4 and the Bullseye base image have reached end-of-life. The Docker runtime runs as the site's unprivileged UID/GID, mounts only the site's files, its private PHP error log, the Loader and (when present) the host MySQL socket directory, and publishes its FastCGI listener **only to 127.0.0.1**. Containers have dropped Linux capabilities, read-only root filesystems and memory/CPU/PID limits. They still have bridge-network access for application HTTP requests, so this is not a security substitute for upgrading old code.
+
+When MySQL runs on the host via the default `/run/mysqld/mysqld.sock`, that socket is passed into the container for ordinary `localhost` MySQL connections. An application explicitly configured to use `127.0.0.1:3306` or other host-local TCP services must be reconfigured: inside a container, `127.0.0.1` is the container itself. The Docker host gateway is available as `host.docker.internal` if the host database allows bridge connections.
+
+The image build requires reachable Docker image/package registries. Unavailable old Debian repositories or incompatible legacy dependencies are reported as build errors; Open Go Panel does not downgrade or install PHP 7.4 into the host operating system.
+
+## Application files
+
+Open **Applications → Files** (or **Files** in an application's header). Every filesystem operation runs in a short-lived process as the application's Linux user, using that user's normal filesystem permissions; the root-owned panel does not read or modify app files directly. The manager remains confined to the selected application's root. It supports:
+
+- browsing directories and editing UTF-8 text files (up to 2 MiB);
+- uploading a file (up to 1 GiB), downloading files, creating files or folders;
+- moving/renaming files and folders, copying individual files, deleting files or directories;
+- selecting multiple files/folders for a bulk move or delete (up to 400 visible entries at once), with no overwrite on name collisions;
+- moving **all contents of a folder one level up** in a single action, including entries not visible on the page (up to 100,000 direct children); subfolders move as trees, and the source folder remains empty for optional deletion;
+- extracting ZIP, TAR.GZ and TGZ archives without overwriting existing files.
+
+Uploads are streamed to temporary disk storage with a maximum of 1 GiB per file. Make sure the server has enough free disk space for the temporary upload, the destination file, and any database safety backup. Editing and archive extraction are one-time operations, not background tasks. Bulk moves preflight every target name and refuse collisions; if a filesystem error interrupts the batch, the panel attempts to roll back moved entries. Bulk deletions are permanent and may be partially completed if an error occurs. A destination folder is entered relative to the application root (`.` means the root). Archive extraction is limited to 100,000 entries and 4 GiB total uncompressed data. Unpacking may leave already-extracted files in place if a later entry fails; existing files are never replaced. Symbolic links can be seen and moved/deleted as entries, but are never followed. Paths are relative to the app's root; server configuration outside that root is deliberately inaccessible. On upload, the panel compares the browser-selected file size with the HTTP multipart payload, then verifies SHA-256 of the streamed bytes against the file read back from disk under the application's Linux user. A mismatch fails the upload and deletes the unverified destination. ZIP extraction accepts valid ZIP indexes even when non-ZIP bytes were appended after the ZIP end record. Unsupported formats (including RAR/7z renamed to .zip) and damaged ZIP indexes are rejected with a format-specific diagnostic. If the source is invalid, verify it with `unzip -t` and compare its SHA-256 to the original; the panel never attempts unsafe extraction or modifies a corrupt archive.
 
 ## Configuration
 
@@ -140,7 +232,7 @@ Legacy JSON state is migrated into SQLite automatically and is not deleted durin
 
 ## Managed infrastructure
 
-Open Go Panel uses native Linux components instead of containers:
+Open Go Panel manages native Linux components directly. Docker is available for container workloads and isolated legacy PHP runtimes:
 
 ```text
 OpenSSH
@@ -233,7 +325,7 @@ container. Public Docker ports may bypass UFW policy, so protect them separately
 The panel normally listens on `127.0.0.1:8443`, reachable through an SSH tunnel.
 Use **Close panel** in the top navigation to schedule a stop of
 `open-go-panel.service`. The action also disables its autostart on reboot.
-Your websites, managed services, containers, Caddy, and databases are not stopped.
+Your websites, managed services, containers, Caddy, databases, independent MCP service, scheduled app timers and already started background commands are not stopped. Panel-process tasks, including Git auto-deploy checks and ongoing Docker builds, do not continue while the panel is closed.
 
 To reopen it on demand, connect with SSH and run:
 
@@ -253,7 +345,7 @@ running the panel installer/upgrade enables and starts the panel again.
 
 ## Build Docker containers from private GitHub repositories
 
-In **Docker → Build from GitHub**, enter your `owner/repository` and click
+In **Docker → Create container → Build from GitHub**, enter your `owner/repository` and click
 **Generate SSH deploy key**. Copy the displayed **public key** into the
 matching GitHub repository's **Settings → Deploy keys → Add deploy key**.
 Leave write access **disabled**. GitHub deploy keys are repository-specific;
@@ -329,15 +421,15 @@ an application data migration cannot automatically be undone. Special
 networking, privileges and unsupported mount configurations are rejected
 rather than silently lost.
 
-The Docker landing page lists containers before creation controls. It samples
-CPU and memory from Docker every ten seconds. **Run container** and
-**Build from GitHub** creation forms are collapsed until their buttons are
-clicked. Closing the panel interrupts an in-progress rebuild, so wait for the
+The Docker page opens with the Containers tab and samples CPU and memory
+from Docker every ten seconds. Use **Create container** for Run container
+and Build from GitHub, and **Previous versions** to inspect rollback containers
+when available. Closing the panel interrupts an in-progress rebuild, so wait for the
 build task to finish before using **Close panel**.
 
 ## Per-app Git auto-deploy intervals
 
-On an application's **Deploy** card, enable **Auto deploy** and enter the
+On an application's **Deploy** tab, enable **Auto deploy** and enter the
 **Check interval (seconds)**. Supported values are **30–86400 seconds**:
 `30` checks every 30 seconds, `60` every minute and `300` every
 5 minutes (the default for existing installations). You can set a different
@@ -360,14 +452,14 @@ Production** from a separate development application.
 
 Create two **Go** applications with separate roots and ports:
 
-1. Set your development application's Service settings → **Go: Air live
+1. Set your development application's Settings → Service settings → **Go: Air live
    reload (development)**. It runs `air` directly and reloads the local
    source code. Git updates to an Air app no longer run a separate `go mod
    download` staging step; Air is responsible for its own runtime build.
-2. Create a separate production application. Set Service settings →
+2. Create a separate production application. Set Settings → Service settings →
    **Go: prebuilt production binary**. Keep its own environment variables,
    Caddy domain, port, persistent data and autostart settings.
-3. Open the **development** application → **Dev → Production**. Select the
+3. Open the **development** application → **Deploy → Dev → Production**. Select the
    production application and the Go main-package directory (normally `.`,
    or `./cmd/server`). Click **Build → Production**.
 
@@ -460,19 +552,11 @@ During an update the previous binary is kept at:
 
 After replacement the installer restarts Open Go Panel and checks `/health`. If the new binary fails to start or does not become healthy, the previous binary is restored automatically.
 
-Release builds are gated by Go tests/vet plus an Ubuntu 24.04 production smoke test that installs the panel, authenticates through the web UI, creates a Linux user and app, checks self-hosted terminal assets, exercises Redis access, and verifies automatic rollback with an intentionally broken update.
-
-## Next
-
-- persistent background-job history and richer progress UI;
-- richer deployment history;
-- optional file manager;
-- broader real-server integration coverage for MySQL/PostgreSQL/CrowdSec/Docker.
-
+Release builds are gated by Go tests/vet, browser regression checks for section tabs and checkbox geometry, Ubuntu 24.04 production smoke tests, managed-server snapshot recovery tests and MCP integration tests. The production smoke exercises installation, authentication, managed users/apps, terminal assets, background commands, PHP extension checks, SQL imports and automatic binary rollback. MCP tests cover OAuth, filesystem isolation, large projects, revocation and permitted database TCP relays. These checks do not replace a restore drill or testing your own application.
 
 ## Application scheduled tasks (cron)
 
-Open an application and expand **Scheduled tasks**. Each application may have
+Open an application → **Scheduled tasks**. Each application may have
 multiple jobs with a name, command, five-field cron schedule and enable switch.
 Presets such as `@hourly`, `@daily`, `@weekly` and `@monthly` are supported.
 Examples:
@@ -497,7 +581,21 @@ and other app types execute as the managed Linux user on the host. Switching
 the PHP runtime refreshes scheduled command runners.
 
 
-### Yandex Disk and server recovery
+## Background commands
+
+Use **Background commands** in the panel to launch a noninteractive command under a chosen Linux account and working directory, without leaving a browser terminal open. The panel stores the command definition and starts a separate transient systemd service. View status and journal output, stop the service and its child processes, or remove its saved record after it stops.
+
+Already-started commands survive browser closure and panel restarts. They do not restart automatically after a normal server reboot. For recurring work use per-app scheduled tasks; for always-on workloads use a managed application service. Interactive terminal sessions and MCP shell commands are separate features.
+
+## Observability and log retention
+
+The dashboard shows managed application and Docker resource use. Application health checks, live/historical journals, Caddy access logs, database slow-query views and Redis SLOWLOG provide diagnostics without requiring a separate monitoring stack.
+
+**Performance** generates reports on demand from existing Caddy logs, with duration trends, slow-route percentiles and request details. It does not continuously import requests into SQLite. Caddy durations are not isolated application CPU time or browser latency.
+
+**Logs & retention** manages journal retention, optional Caddy access logs, managed app stdout/stderr, supported database slow-query logging, Redis SLOWLOG and the panel audit trail. Turning off optional logging does not disable essential system or security messages. App output logging changes take effect on the next service restart; existing records remain subject to retention. Custom web-server configuration or database-specific overrides may still log.
+
+## Yandex Disk and server recovery
 
 In **Backups → Cloud storage**, select **Yandex Disk**, enter the OAuth token with access to the chosen Disk scope, and specify a dedicated remote directory. Prefer application-folder access (`app:/`). The token is kept in a root-only credential file, not in the panel database.
 
@@ -513,7 +611,7 @@ Completed snapshots are published under:
 <remote>/projects/<user>/<app>/<UTC timestamp>/...
 ```
 
-Archives are transferred in 900 MiB parts with SHA-256 verification. Interrupted cloud jobs retain the local pending snapshot for retry; verified remote parts are reused. The final snapshot manifest is published only after all archives complete. Splitting files does not bypass overall Disk quotas.
+File archives preserve ACLs, extended attributes and symbolic links. A changing live tree is retried up to three times on tar exit code 1; a failed partial archive is discarded and diagnostics are reported. Archives are transferred in 900 MiB parts with SHA-256 verification. Interrupted cloud jobs retain the local pending snapshot for retry; verified remote parts are reused. The final snapshot manifest is published only after all archives complete. Splitting files does not bypass overall Disk quotas.
 
 For managed-server recovery, install the panel on a clean Ubuntu host with the required database engines and application runtimes. Reconnect the same Disk folder, find cloud restore points in Backups, download and verify the desired snapshot, then confirm **Restore on fresh server**. Recovery refuses existing managed resources and conflicting Linux or SQL accounts. The panel stops and restarts during recovery; inspect `journalctl -u open-go-panel-restore.service`.
 
@@ -522,53 +620,3 @@ The server snapshot includes consistent SQLite state, Linux accounts and home di
 Archives contain passwords, environment files and other secrets in their original form. They are not encrypted at rest by the panel. Restrict access to the cloud folder and only recover from trusted snapshots. Keep a separate copy of critical data.
 
 Database backup schedules and history are under **Backups → Databases**. The Databases page retains quick local actions. Open **Cloud copies** for a database to list its remote SQL archives and retrieve a copy to the server; retrieval never changes the live database. Restore explicitly from local history after retrieval.
-
-
-### ChatGPT access (MCP)
-
-The installer delivers one independent `open-go-panel-mcp.service` using the
-same panel binary in `mcp` mode. It listens on `127.0.0.1:18443`. Closing the
-administrative panel does not stop MCP.
-
-1. In **Infrastructure → ChatGPT access**, set a dedicated HTTPS hostname
-   (for example, `mcp.example.com`) with DNS pointing to this VPS. The panel
-   configures Caddy; test HTTPS before connecting an application.
-2. In an application, open **ChatGPT access**, enable the connection and copy
-   its plugin name and MCP URL.
-3. In ChatGPT on the web, open **Plugins → + → Add custom MCP server**.
-   Use the displayed URL, OAuth with dynamic registration, and install the
-   personal plugin. Match the authorization request ID shown in the OAuth
-   browser against the private panel request; approve it there, then continue
-   in the OAuth browser.
-4. In a new chat, select that plugin with `@`. A different application needs
-   a different connection. Revoke access from the application's page.
-
-The MCP service uses per-application OAuth authorization-code + S256 PKCE,
-short-lived access tokens and rotating refresh tokens. Tokens are stored as
-hashes, and deleting an application removes its grants. The public Caddy
-site exposes only OAuth, MCP and health routes; no administrative route is
-forwarded.
-
-Commands and file helpers execute under the application owner inside a
-separate Linux mount/PID/network/IPC namespace. Only the selected project
-(`/workspace`), read-only system runtimes and private temporary files are
-visible. Network access is disabled by default. In an application's ChatGPT access
-settings, enable MySQL (127.0.0.1:3306) or Redis (127.0.0.1:6379) explicitly.
-Only the selected IPv4 TCP endpoints are relayed to the host loopback;
-no host network interface, Unix socket, Internet or other port is exposed.
-Use MySQL TCP mode and the application's credentials. Redis is shared unless
-ACLs are configured; enabling it is not key-level isolation. Dependency
-downloads and host-user caches remain intentionally unavailable. File tools reject access to individual hardlinked files because their inode
-may also be visible in another project. Shell commands check the entire
-project for hardlinks, streaming directory entries without a fixed total
-file-count limit; this check counts toward the command timeout. Use vendored
-dependencies or prepare dependencies through the normal deployment process.
-There is no unisolated fallback. File edits require the version returned by
-`read_file`; conflicting edits are rejected. Commands time out within 120
-seconds and output is bounded to 256 KiB. This is direct tool isolation, not
-isolation of the separately deployed application itself.
-
-OAuth authorizations survive service restarts and panel updates. They are
-excluded from full-server backups to prevent a restore from reviving revoked
-access; authorize again on a recovered VPS. Real ChatGPT compatibility
-requires completing the OAuth flow from the user's own web account.
