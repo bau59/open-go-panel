@@ -1,5 +1,5 @@
 /* Open Go Panel: progressive HTMX enhancement and page-local controls.
-   No framework or persistent browser data. Native links/forms remain the fallback. */
+   No framework. Only the selected section is kept in session storage; native links/forms remain the fallback. */
 (() => {
   'use strict';
 
@@ -232,7 +232,8 @@
     if (!main || tabControllers.has(main)) return;
     const panels = Array.from(main.querySelectorAll('[data-panel-tab]'));
     const keys = main.dataset.panelTabs.split(',').filter(key => panels.some(panel => panel.dataset.panelTab === key));
-    if (keys.length < 2) return;
+    main.querySelectorAll(':scope > .service-tabs').forEach(nav => nav.remove());
+    if (keys.length < 2) { panels.forEach(panel => { panel.hidden = false; }); return; }
     const storageKey = 'ogp.tab.' + main.dataset.panelKey;
     const nav = document.createElement('nav');
     nav.className = 'backup-tabs service-tabs';
@@ -277,7 +278,8 @@
     let saved = '';
     try { saved = sessionStorage.getItem(storageKey) || ''; } catch (_) {}
     const fragment = fragmentTab(main);
-    select(keys.includes(fragment) ? fragment : keys.includes(saved) ? saved : keys[0], false);
+    const initial = main.dataset.panelInitial;
+    select(keys.includes(fragment) ? fragment : keys.includes(initial) ? initial : keys.includes(saved) ? saved : keys[0]);
     tabControllers.set(main, {select, keys});
   }
   function revealTabFragment() {

@@ -1140,7 +1140,7 @@ label:has(>input:is([type="checkbox"],[type="radio"])){
 .mcp-network-form{border-top:1px solid var(--border);padding-top:16px;margin:16px 0}
 .mcp-network-form h3{margin:0 0 12px;font-size:15px}
 .mcp-network-form .settings-list{max-width:620px}
-.mcp-network-form .setting-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.mcp-network-form .setting-row{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);cursor:pointer}
 .mcp-network-form .setting-row small{display:block;color:var(--muted);font-weight:400;margin-top:4px}
 .mcp-network-form>.note{max-width:75ch;margin:12px 0}
 @media(max-width:640px){

@@ -390,7 +390,12 @@ func securityPage(data securityPageData) string {
 	}
 
 	return pageHead("Security") + `<body>` + appHeader("security") + `
-	<main class="shell" data-panel-key="security" data-panel-tabs="blocked,alerts,trusted,settings">
+	<main class="shell" data-panel-key="security" data-panel-tabs="blocked,alerts,trusted,settings" data-panel-initial="` + func() string {
+            if data.Query.Has("trust_q") || data.Query.Has("trust_page") { return "trusted" }
+            if data.Query.Has("alert_q") || data.Query.Has("alerts_page") || data.Query.Has("alerts_since") { return "alerts" }
+            if data.Query.Has("decision_q") || data.Query.Has("decisions_page") { return "blocked" }
+            return ""
+        }() + `">
 		<div class="page-head">
 			<div><p class="eyebrow">Ubuntu security</p><h1>Security</h1><p class="sub">CrowdSec handles detection and dynamic bans. UFW controls the static inbound perimeter.</p></div>
 		</div>
