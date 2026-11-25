@@ -40,6 +40,7 @@ type Manifest struct {
 func (c Client) request(ctx context.Context, method, endpoint, remote string, out any) error {
 	values := url.Values{"path":{remote}}
 	if endpoint=="/upload" { values.Set("overwrite","true") }
+	if method=="DELETE" { values.Set("permanently","true") }
 	u := "https://cloud-api.yandex.net/v1/disk/resources"+endpoint+"?"+values.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u, nil)
 	if err != nil { return err }
@@ -86,11 +87,22 @@ func (c Client) upload(ctx context.Context, remote string, size int64, reader io
 	req, err := http.NewRequestWithContext(ctx,"PUT",link.Href,reader)
 	if err != nil { return fmt.Errorf("invalid upload request") }
 	req.ContentLength = size
+	h:=sha256.New()
+	req.Body=io.NopCloser(io.TeeReader(reader,h))
 	res, err := c.HTTP.Do(req)
 	if err != nil { return fmt.Errorf("disk upload failed") }
 	defer res.Body.Close()
-	if res.StatusCode != 201 && res.StatusCode != 200 { return fmt.Errorf("disk upload: HTTP %d",res.StatusCode) }
-	return nil
+	if res.StatusCode != 201 && res.StatusCode != 200 && res.StatusCode != 202 { return fmt.Errorf("disk upload: HTTP %d",res.StatusCode) }
+	res.Body.Close()
+	want:=hex.EncodeToString(h.Sum(nil))
+	for attempt:=0;attempt<10;attempt++ {
+		var existing struct { Size int64 `json:"size"`; SHA256 string `json:"sha256"` }
+		if c.request(ctx,"GET","",remote,&existing)==nil && existing.Size==size && strings.EqualFold(existing.SHA256,want){return nil}
+		if attempt==9{break}
+		timer:=time.NewTimer(2*time.Second)
+		select{case <-ctx.Done():timer.Stop();return ctx.Err();case <-timer.C:}
+	}
+	return fmt.Errorf("uploaded file checksum or size could not be verified")
 }
 
 // UploadArchive publishes a manifest only after all parts have been uploaded.
@@ -214,4 +226,11 @@ func (c Client) ListDirectories(ctx context.Context,remote string)([]string,erro
 		offset+=len(data.Embedded.Items)
 		if len(data.Embedded.Items)==0||offset>=data.Embedded.Total{return names,nil}
 	}
+}
+
+// DeleteDirectory removes a caller-validated snapshot directory.
+func (c Client) DeleteDirectory(ctx context.Context,remote string)error{
+	if !strings.HasPrefix(remote,"disk:/")&&!strings.HasPrefix(remote,"app:/"){return fmt.Errorf("invalid remote directory")}
+	if strings.Count(remote,"/")<3{return fmt.Errorf("refusing to delete storage root")}
+	return c.request(ctx,"DELETE","",remote,nil)
 }
