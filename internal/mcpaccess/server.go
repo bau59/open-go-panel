@@ -137,6 +137,7 @@ func tool(name,description string,readOnly,destructive bool,props map[string]any
     return map[string]any{"name":name,"description":description,
         "inputSchema":map[string]any{"type":"object","properties":props,"required":required,"additionalProperties":false},
         "annotations":map[string]any{"readOnlyHint":readOnly,"destructiveHint":destructive,"openWorldHint":false,"idempotentHint":readOnly},
+        "securitySchemes":[]any{map[string]any{"type":"oauth2","scopes":[]string{Scope}}},
         "_meta":map[string]any{"securitySchemes":[]any{map[string]any{"type":"oauth2","scopes":[]string{Scope}}}}}
 }
 
@@ -218,7 +219,9 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
     if timeout>0{var cancel context.CancelFunc;ctx,cancel=context.WithTimeout(ctx,time.Duration(timeout)*time.Second);defer cancel()}
     workdir:=""
     if params.Name=="run_command"{workdir=relative}
-    result,err:=s.run(ctx,current.Owner,current.Root,workdir,params.Name,command,bytes.NewReader(params.Arguments))
+    var input io.Reader=bytes.NewReader(params.Arguments)
+    if params.Name=="run_command"{input=nil}
+    result,err:=s.run(ctx,current.Owner,current.Root,workdir,params.Name,command,input)
     failed:=err!=nil||result.ExitCode!=0||result.TimedOut
     if params.Name!="run_command"&&result.Truncated{failed=true}
     auditCtx,cancelAudit:=context.WithTimeout(context.Background(),3*time.Second)

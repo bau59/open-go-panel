@@ -321,10 +321,18 @@ func RunServerRestore(ctx context.Context,id string,logger *slog.Logger) (err er
 		if err:=saved.SetSetting(key,"");err!=nil{fresh.Close();return err}
 	}
 	if err:=fresh.Close();err!=nil{return err}
+	// OAuth grants are host-local. Also clear them when restoring a snapshot.
+	if _,err:=saved.DB().ExecContext(ctx,"DELETE FROM mcp_connections");err!=nil{return err}
 	ready:=filepath.Join(dir,"ready.db")
 	if _,err:=saved.DB().ExecContext(ctx,"VACUUM INTO ?",ready);err!=nil{return err}
 	if err:=saved.Close();err!=nil{return err}
 	logger.Info("restore preflight passed","snapshot",id)
+	// Stop the independent SQLite client before replacing the panel database.
+	mcpWasActive:=exec.CommandContext(ctx,"systemctl","is-active","--quiet","open-go-panel-mcp.service").Run()==nil
+	if mcpWasActive{
+		if err:=restoreCommand(ctx,nil,"systemctl","stop","open-go-panel-mcp.service");err!=nil{return err}
+		defer func(){restartCtx,cancel:=context.WithTimeout(context.Background(),30*time.Second);defer cancel();if e:=restoreCommand(restartCtx,nil,"systemctl","start","open-go-panel-mcp.service");err==nil{err=e}}()
+	}
 	if err:=restoreCommand(ctx,nil,"systemctl","stop","open-go-panel.service");err!=nil{return err}
 	defer func(){
 		// A failed operation leaves the safety copy and journal available. Do

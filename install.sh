@@ -8,6 +8,7 @@ CONFIG_DIR="/etc/open-go-panel"
 STATE_DIR="/var/lib/open-go-panel"
 ENV_FILE="${CONFIG_DIR}/open-go-panel.env"
 SERVICE_FILE="/etc/systemd/system/open-go-panel.service"
+MCP_SERVICE_FILE="/etc/systemd/system/open-go-panel-mcp.service"
 PREVIOUS_BIN="${BIN_PATH}.previous"
 WEB_ASSET_DIR="${STATE_DIR}/web-assets/xterm"
 RELEASE_BASE_URL="${OGP_RELEASE_BASE_URL:-https://github.com/${REPO}/releases/latest/download}"
@@ -211,6 +212,12 @@ NoNewPrivileges=false
 WantedBy=multi-user.target
 EOF
 
+MCP_HAD_SERVICE=false
+if [ -f "${MCP_SERVICE_FILE}" ]; then
+  MCP_HAD_SERVICE=true
+  cp -a "${MCP_SERVICE_FILE}" "${TMP_DIR}/previous-mcp.service"
+fi
+
 systemctl daemon-reload
 systemctl enable open-go-panel
 
@@ -220,9 +227,21 @@ rollback_binary() {
     cp -f "${PREVIOUS_BIN}" "${BIN_PATH}"
     chmod 0755 "${BIN_PATH}"
     systemctl restart open-go-panel.service || true
+    if [ "${MCP_HAD_SERVICE}" = true ]; then
+      cp -a "${TMP_DIR}/previous-mcp.service" "${MCP_SERVICE_FILE}"
+      systemctl daemon-reload
+      systemctl restart open-go-panel-mcp.service || true
+    else
+      systemctl disable --now open-go-panel-mcp.service 2>/dev/null || true
+      rm -f "${MCP_SERVICE_FILE}"
+      systemctl daemon-reload
+    fi
     echo "Previous binary restored."
   else
     systemctl stop open-go-panel.service 2>/dev/null || true
+    systemctl disable --now open-go-panel-mcp.service 2>/dev/null || true
+    rm -f "${MCP_SERVICE_FILE}"
+    systemctl daemon-reload
     rm -f "${BIN_PATH}"
     echo "No previous binary existed; the failed installation was removed."
   fi
@@ -248,6 +267,44 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 if [ "${HEALTH_OK}" != true ]; then
+  rollback_binary
+  exit 1
+fi
+
+# Install the independent MCP service only after the core panel passes health.
+# No public MCP domain is enabled by default.
+cat > "${MCP_SERVICE_FILE}" <<EOF
+[Unit]
+Description=Open Go Panel MCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=${BIN_PATH} mcp
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+if ! systemctl enable open-go-panel-mcp.service || ! systemctl restart open-go-panel-mcp.service; then
+  rollback_binary
+  exit 1
+fi
+MCP_OK=false
+for _ in $(seq 1 20); do
+  if curl -fsS --max-time 2 http://127.0.0.1:18443/health | grep -qx ok; then
+    MCP_OK=true
+    break
+  fi
+  sleep 0.5
+done
+if [ "${MCP_OK}" != true ]; then
   rollback_binary
   exit 1
 fi

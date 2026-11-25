@@ -10,6 +10,7 @@ import (
     "database/sql"
     "encoding/base64"
     "errors"
+    "fmt"
     "net/url"
     "regexp"
     "strings"
@@ -28,9 +29,9 @@ const codeLifetime = 2*time.Minute
 const accessLifetime = time.Hour
 const refreshLifetime = 30*24*time.Hour
 
-type Store struct { db *sql.DB }
+type Store struct { db *sql.DB; state *state.Store }
 
-func New(s *state.Store) *Store { return &Store{db:s.DB()} }
+func New(s *state.Store) *Store { return &Store{db:s.DB(),state:s} }
 
 type Connection struct {
     AppID int64
@@ -245,7 +246,9 @@ func (s *Store) Exchange(ctx context.Context,connectionID,clientID,resource,redi
     if _,err:=tx.ExecContext(ctx,"DELETE FROM mcp_codes WHERE code_hash=?",hash(code));err!=nil{return Tokens{},err}
     tokens,err:=mint(ctx,tx,clientID,now);if err!=nil{return Tokens{},err}
     if _,err:=tx.ExecContext(ctx,"UPDATE mcp_connections SET authorized_at=? WHERE connection_id=?",now,connectionID);err!=nil{return Tokens{},err}
-    if err:=tx.Commit();err!=nil{return Tokens{},err};return tokens,nil
+    if err:=tx.Commit();err!=nil{return Tokens{},err}
+    if conn,err:=s.ByID(ctx,connectionID);err==nil{s.state.Audit(ctx,"mcp.authorized",fmt.Sprintf("app:%d",conn.AppID),"OAuth authorization completed")}
+    return tokens,nil
 }
 
 func (s *Store) Refresh(ctx context.Context,connectionID,clientID,resource,refresh string)(Tokens,error){
@@ -278,4 +281,13 @@ func (s *Store) RecordSuccess(ctx context.Context,conn Connection)error{
 
 func (s *Store) ByID(ctx context.Context,id string)(Connection,error){
     return readConnection(s.db.QueryRowContext(ctx,connectionQuery+" WHERE c.connection_id=? AND c.revoked_at=0",id))
+}
+
+
+func (s *Store) HasRefresh(ctx context.Context,connectionID string)(bool,error){
+    var active bool
+    err:=s.db.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM mcp_tokens t JOIN mcp_clients cl ON cl.client_id=t.client_id
+        JOIN mcp_connections c ON c.connection_id=cl.connection_id WHERE c.connection_id=? AND c.revoked_at=0 AND t.refresh_expires_at>?)`,
+        connectionID,time.Now().Unix()).Scan(&active)
+    return active,err
 }
