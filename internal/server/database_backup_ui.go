@@ -164,7 +164,7 @@ func databaseBackupSections(data databasePageData) string {
         <section class="panel panel-pad db-backup-section" id="db-local-backups">
             <div class="section-title"><div>
                 <p class="eyebrow">1 · Local storage</p>
-                <h2>Local backup history</h2>
+                <h2>Local SQL schedule</h2>
                 <p class="note">Create compressed SQL snapshots on this server. Each database keeps its own versions. External storage failures never affect local retention.</p>
             </div></div>
             <div class="db-backup-destination">
@@ -237,7 +237,7 @@ func databaseBackupHistory(cfg Config, r *http.Request) string {
     items,err:=cfg.Databases.List()
     if err!=nil { return `<div class="alert">`+html.EscapeString(err.Error())+`</div>` }
     var out strings.Builder
-    out.WriteString(`<section class="panel panel-pad"><h2>SQL backup history</h2><p class="note">Local and cloud copies are separate. Download a cloud copy to the server before restoring it.</p>`)
+    out.WriteString(`<section class="panel panel-pad"><div class="section-title"><h2>SQL backup history</h2><a class="secondary" href="/backup?section=databases">Refresh history</a></div><p class="note">Local and cloud copies are separate. Download a cloud copy to the server before restoring it.</p>`)
     for _,item:=range items{
         backups,err:=cfg.Databases.Backups(item.ID)
         open:=""

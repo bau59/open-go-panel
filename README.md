@@ -212,7 +212,7 @@ sudo rclone lsd s3:
 Choose the backend and credentials for **your** off-server storage when
 configuring the `s3` remote. The remote name can differ.
 
-In **Databases → Automatic backups → Off-site database backups**, enter a
+In **Backups → Cloud storage**, enter a
 destination such as `s3:my-backup-bucket/open-go-panel` and save. New database
 snapshots are uploaded under `mysql/<database>/<timestamp>.sql.gz` or
 `postgres/<database>/<timestamp>.sql.gz`. An upload failure leaves the local
@@ -499,7 +499,7 @@ the PHP runtime refreshes scheduled command runners.
 
 ### Yandex Disk and server recovery
 
-In **Databases → Offsite backups**, select **Yandex Disk**, enter the OAuth token with access to the chosen Disk scope, and specify a dedicated remote directory. Prefer application-folder access (`app:/`). The token is kept in a root-only credential file, not in the panel database.
+In **Backups → Cloud storage**, select **Yandex Disk**, enter the OAuth token with access to the chosen Disk scope, and specify a dedicated remote directory. Prefer application-folder access (`app:/`). The token is kept in a root-only credential file, not in the panel database.
 
 In **Backups**, configure the server and each application's local and cloud policies independently. Intervals are in days, hours are UTC, zero disables a schedule. Cloud retention of zero means unlimited. Existing database backup settings are independent of these policies.
 
@@ -520,3 +520,5 @@ For managed-server recovery, install the panel on a clean Ubuntu host with the r
 The server snapshot includes consistent SQLite state, Linux accounts and home directories, managed SQL databases and credentials, managed Caddy and service configuration, application cron jobs and previously running background command definitions. Active commands are restarted, not resumed from process memory. This is not a full operating-system image: Docker inspect metadata is exported, but Docker containers/volumes, arbitrary external mounts, unmanaged databases and operating-system packages are not automatically restored. Install required runtimes first. File and SQL snapshots are taken online and are not a single cross-service atomic point in time. A failed recovery may require a fresh host; the operation is not transactional across Linux and database engines.
 
 Archives contain passwords, environment files and other secrets in their original form. They are not encrypted at rest by the panel. Restrict access to the cloud folder and only recover from trusted snapshots. Keep a separate copy of critical data.
+
+Database backup schedules and history are under **Backups → Databases**. The Databases page retains quick local actions. Open **Cloud copies** for a database to list its remote SQL archives and retrieve a copy to the server; retrieval never changes the live database. Restore explicitly from local history after retrieval.

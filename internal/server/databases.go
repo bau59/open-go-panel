@@ -567,7 +567,7 @@ func databasesPage(data databasePageData) string {
 			}
 		}
 
-		backupRows := databaseBackupRows(item,data.Backups[item.ID],data.BackupRemote!="",false)+fmt.Sprintf(`<a class="secondary db-cloud-link" href="/backup?section=databases&amp;database=%d">Local &amp; cloud backup history</a>`,item.ID)
+		backupRows := databaseBackupRows(item,data.Backups[item.ID],data.BackupRemote!="",false)+fmt.Sprintf(`<div class="snapshot-actions"><a class="secondary" href="/backup?section=databases&amp;database=%d">Backup history</a><a class="secondary" href="/backup/databases/%d/cloud">Cloud copies</a></div>`,item.ID,item.ID)
 
 		fmt.Fprintf(&rows, `
 		<tr>
