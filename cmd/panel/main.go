@@ -15,6 +15,7 @@ import (
 	"github.com/bau59/open-go-panel/internal/adminer"
 	"github.com/bau59/open-go-panel/internal/app"
 	"github.com/bau59/open-go-panel/internal/filemanager"
+	"github.com/bau59/open-go-panel/internal/mcpsandbox"
 	panelcaddy "github.com/bau59/open-go-panel/internal/caddy"
 	"github.com/bau59/open-go-panel/internal/config"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
@@ -27,6 +28,8 @@ import (
 )
 
 func main() {
+	if len(os.Args)>1&&os.Args[1]=="--mcp-sandbox-helper"{if err:=mcpsandbox.RunHelper(os.Args[2:]);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};return}
+	if len(os.Args)==3&&os.Args[1]=="--mcp-file-helper"{if err:=filemanager.RunMCPHelper(os.Args[2],os.Stdin,os.Stdout);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};return}
 	if len(os.Args)==3 && os.Args[1]=="--restore-server-snapshot" {
 		logger:=slog.New(slog.NewTextHandler(os.Stdout,nil))
 		if err:=server.RunServerRestore(context.Background(),os.Args[2],logger);err!=nil{logger.Error("restore failed","err",err);os.Exit(1)}
