@@ -9,7 +9,7 @@ server=$!
 work="$(mktemp -d)"
 trap 'kill "$server" 2>/dev/null || true; rm -rf "$work"' EXIT
 for attempt in $(seq 1 20); do
-  if curl -fsS http://127.0.0.1:18888/tests/$fixture.html >/dev/null; then break; fi
+  if curl -fsS http://127.0.0.1:18888/tests/panel-tabs.html >/dev/null; then break; fi
   sleep 1
 done
 for fixture in panel-tabs code-editor; do
