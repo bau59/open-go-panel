@@ -1,0 +1,4 @@
+CodeMirror 5.65.18 (MIT)
+https://github.com/codemirror/codemirror5/tree/5.65.18
+Distribution: https://github.com/cdnjs/cdnjs/tree/master/ajax/libs/codemirror/5.65.18
+Core, language modes, edit/search/dialog addons (see source headers).
