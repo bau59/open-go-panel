@@ -17,6 +17,24 @@ var htmxScript string
 //go:embed assets/panel.js
 var panelScript string
 
+//go:embed assets/editor-core.js
+var editorCore string
+
+//go:embed assets/editor-modes.js
+var editorModes string
+
+//go:embed assets/editor-addons.js
+var editorAddons string
+
+//go:embed assets/editor.js
+var editorScript string
+
+//go:embed assets/editor-core.css
+var editorCoreCSS string
+
+//go:embed assets/editor-dialog.css
+var editorDialogCSS string
+
 func registerUIAssets(mux *http.ServeMux) {
 	assets := []struct {
 		path, mime, content string
@@ -24,6 +42,8 @@ func registerUIAssets(mux *http.ServeMux) {
 		{"/assets/panel.css", "text/css; charset=utf-8", baseStyles},
 		{"/assets/htmx.min.js", "text/javascript; charset=utf-8", htmxScript},
 		{"/assets/panel.js", "text/javascript; charset=utf-8", panelScript},
+		{"/assets/editor.js", "text/javascript; charset=utf-8", editorCore + "\n;\n" + editorModes + "\n;\n" + editorAddons + "\n;\n" + editorScript},
+		{"/assets/editor.css", "text/css; charset=utf-8", editorCoreCSS + "\n" + editorDialogCSS},
 	}
 	for _, asset := range assets {
 		asset := asset

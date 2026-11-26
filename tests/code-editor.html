@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/internal/server/assets/panel.css">
+<link rel="stylesheet" href="/internal/server/assets/editor-core.css">
+<link rel="stylesheet" href="/internal/server/assets/editor-dialog.css">
+<script defer src="/internal/server/assets/editor-core.js"></script>
+<script defer src="/internal/server/assets/editor-modes.js"></script>
+<script defer src="/internal/server/assets/editor-addons.js"></script>
+<script defer src="/internal/server/assets/editor.js"></script></head>
+<body><main class="shell"><section class="panel panel-pad fileman-panel code-editor-panel">
+            <div class="section-title"><h2>Edit config.json</h2><span class="note">UTF-8 · Max 2 MiB</span></div>
+            <form method="post" action="/test" data-code-editor hx-boost="false">
+                <input type="hidden" name="name" value="config.json"><input type="hidden" name="base_sha256" value="revision">
+                <div class="code-editor-toolbar" data-editor-tools hidden>
+                    <label>Language <select data-editor-mode aria-label="Editor language">
+                        <option value="text">Plain text</option><option value="html">HTML</option><option value="json">JSON</option>
+                        <option value="js">JavaScript</option><option value="ts">TypeScript</option><option value="css">CSS</option><option value="xml">XML / SVG</option>
+                        <option value="php">PHP</option><option value="go">Go</option><option value="python">Python</option><option value="shell">Shell</option>
+                        <option value="yaml">YAML</option><option value="sql">SQL</option><option value="markdown">Markdown</option><option value="ini">INI / env</option>
+                    </select></label>
+                    <div class="code-editor-actions">
+                        <button type="button" class="secondary" data-editor-action="find">Find</button>
+                        <button type="button" class="secondary" data-editor-action="replace">Replace</button>
+                        <button type="button" class="secondary" data-editor-action="format" title="Format JSON or reindent existing lines">Format / indent</button>
+                        <button type="button" class="secondary" data-editor-action="undo">Undo</button>
+                        <button type="button" class="secondary" data-editor-action="redo">Redo</button>
+                    </div>
+                    <label class="check-row"><input type="checkbox" data-editor-wrap>Wrap lines</label>
+                </div>
+                <textarea name="content" class="codearea fileman-editor" spellcheck="false" maxlength="2097152" data-eol="crlf">
+{"big":900719925474099312345,"big":2,"s":"\u0041","html":"&lt;/textarea&gt;"}
+</textarea>
+                <div class="code-editor-footer"><span data-editor-status role="status"></span><span data-editor-size></span></div>
+                <div class="actions" style="justify-content:flex-start;margin-top:14px">
+                    <button class="button" type="submit">Save file</button>
+                    <a class="secondary" href="#cancel">Cancel</a>
+                </div>
+            </form>
+        </section></main>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    window.ogpInitCodeEditors();
+    const form = document.querySelector('form[data-code-editor]');
+    const assert = (condition,message) => {if(!condition)throw Error(message);};
+    const cm = form.querySelector('.CodeMirror').CodeMirror;
+    assert(cm.getOption('mode') === 'application/json' && cm.getOption('lineNumbers'), 'JSON mode and line numbers');
+    const button = action => form.querySelector('[data-editor-action='+action+']');
+    button('format').click();
+    const result = cm.getValue();
+    assert(result.includes('900719925474099312345') && result.match(/"big"/g).length === 2 && result.includes('\\u0041') && result.includes('\n  "big": '), 'lossless JSON formatting');
+    const data = new FormData(form);
+    assert(data.get('content_encoding')==='base64' && atob(data.get('content'))===cm.getValue('\r\n') && data.get('base_sha256')==='revision', 'encoded form data and revision');
+    button('undo').click();
+    assert(!cm.getValue().includes('\n  "big"'), 'undo formatting');
+    cm.setValue('{broken');
+    button('format').click();
+    assert(cm.getValue()==='{broken' && form.querySelector('[data-editor-status]').classList.contains('editor-error'), 'invalid JSON not modified');
+    const selector=form.querySelector('[data-editor-mode]');
+    selector.value='html';selector.dispatchEvent(new Event('change'));
+    cm.setValue('<html>\n<body>\n<script>var a=1;<\/script>\n</body>\n</html>');
+    assert(cm.getOption('mode')==='htmlmixed', 'HTML mode');
+    button('format').click();
+    assert(cm.getValue().includes('var a=1;'), 'HTML indentation preserves source');
+    button('find').click();
+    assert(!!form.querySelector('.CodeMirror-dialog'), 'search dialog');
+    assert(document.documentElement.scrollWidth <= innerWidth+1,'no horizontal overflow');
+    window.ogpInitCodeEditors();
+    assert(form.querySelectorAll('.CodeMirror').length===1,'no duplicate editor');
+    document.body.dataset.testResult='pass';
+  } catch(error) {
+    document.body.dataset.testResult='fail';
+    const el=document.createElement('pre');el.textContent=error.stack||error.message;document.body.append(el);
+  }
+});
+</script></body></html>

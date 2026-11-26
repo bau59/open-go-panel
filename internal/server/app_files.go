@@ -2,6 +2,7 @@ package server
 
 import (
     "crypto/sha256"
+    "encoding/base64"
     "errors"
     "time"
     "fmt"
@@ -101,6 +102,11 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         name := r.FormValue("name")
         action := r.FormValue("action")
         var err error
+        editorText := ""
+        if action == "save" || action == "create" {
+            editorText, err = fileEditorText(r)
+            if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return nil }
+        }
         count := 0
         uploadedNames := []string{}
         redirectFolder := folder
@@ -109,7 +115,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
         case "mkdir":
             err = files.Mkdir(folder, name)
         case "create":
-            err = files.Save(folder, name, r.FormValue("content"), true)
+            err = files.Save(folder, name, editorText, true)
         case "save":
             current, readErr := files.ReadText(folder, name)
             if readErr != nil {
@@ -119,7 +125,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
                 if r.FormValue("base_sha256") != digest {
                     err = fmt.Errorf("file changed since it was opened; copy your edits before reloading")
                 } else {
-                    err = files.Save(folder, name, r.FormValue("content"), false)
+                    err = files.Save(folder, name, editorText, false)
                 }
             }
         case "move":
@@ -274,7 +280,7 @@ func registerAppFileRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) 
             var page string
             var renderErr error
             if action == "save" || action == "create" {
-                page, renderErr = fileManagerPage(app, files, folder, edit, newFile, err.Error(), "", r.FormValue("content"), r.FormValue("base_sha256"))
+                page, renderErr = fileManagerPage(app, files, folder, edit, newFile, err.Error(), "", editorText, r.FormValue("base_sha256"))
             } else {
                 page, renderErr = fileManagerPage(app, files, folder, "", false, err.Error(), "")
             }
@@ -309,6 +315,36 @@ func openAppFiles(w http.ResponseWriter, r *http.Request, cfg Config) (panelapp.
         return panelapp.App{}, nil, false
     }
     return app, files, true
+}
+
+// Enhanced editors send UTF-8 as base64 to avoid browser newline conversion.
+func fileEditorText(r *http.Request) (string, error) {
+    value := r.FormValue("content")
+    switch r.FormValue("content_encoding") {
+    case "":
+        return value, nil
+    case "base64":
+        if len(value) > base64.StdEncoding.EncodedLen(filemanager.MaxEditBytes) {
+            return "", errors.New("file exceeds 2 MiB editor limit")
+        }
+        decoded, err := base64.StdEncoding.DecodeString(value)
+        if err != nil || len(decoded) > filemanager.MaxEditBytes {
+            return "", errors.New("invalid or oversized editor content")
+        }
+        return string(decoded), nil
+    default:
+        return "", errors.New("unsupported editor content encoding")
+    }
+}
+
+func fileEditorEOL(source string) string {
+    crlf := strings.Count(source, "\r\n")
+    cr := strings.Count(source, "\r")
+    lf := strings.Count(source, "\n")
+    if cr == 0 { return "lf" }
+    if crlf == cr && crlf == lf { return "crlf" }
+    if lf == 0 { return "cr" }
+    return "mixed"
 }
 
 func fileHidden(action, folder, name string) string {
@@ -394,17 +430,35 @@ func fileManagerPage(app panelapp.App, files fileBrowser, folder, editName strin
             filenameField = `<label>Filename</label><input name="name" maxlength="255" required placeholder="index.php" value="`+html.EscapeString(editName)+`">`
             title = "New text file"
         }
-        fmt.Fprintf(&content, `<section class="panel panel-pad fileman-panel">
-            <h2>%s</h2>
-            <form method="post" action="%s">
+        fmt.Fprintf(&content, `<section class="panel panel-pad fileman-panel code-editor-panel">
+            <div class="section-title"><h2>%s</h2><span class="note">UTF-8 · Max 2 MiB</span></div>
+            <form method="post" action="%s" data-code-editor hx-boost="false">
                 %s%s%s
-                <textarea name="content" class="codearea fileman-editor" spellcheck="false" maxlength="%d">%s</textarea>
+                <div class="code-editor-toolbar" data-editor-tools hidden>
+                    <label>Language <select data-editor-mode aria-label="Editor language">
+                        <option value="text">Plain text</option><option value="html">HTML</option><option value="json">JSON</option>
+                        <option value="js">JavaScript</option><option value="ts">TypeScript</option><option value="css">CSS</option><option value="xml">XML / SVG</option>
+                        <option value="php">PHP</option><option value="go">Go</option><option value="python">Python</option><option value="shell">Shell</option>
+                        <option value="yaml">YAML</option><option value="sql">SQL</option><option value="markdown">Markdown</option><option value="ini">INI / env</option>
+                    </select></label>
+                    <div class="code-editor-actions">
+                        <button type="button" class="secondary" data-editor-action="find">Find</button>
+                        <button type="button" class="secondary" data-editor-action="replace">Replace</button>
+                        <button type="button" class="secondary" data-editor-action="format" title="Format JSON or reindent existing lines">Format / indent</button>
+                        <button type="button" class="secondary" data-editor-action="undo">Undo</button>
+                        <button type="button" class="secondary" data-editor-action="redo">Redo</button>
+                    </div>
+                    <label class="check-row"><input type="checkbox" data-editor-wrap>Wrap lines</label>
+                </div>
+                <textarea name="content" class="codearea fileman-editor" spellcheck="false" maxlength="%d" data-eol="%s">
+%s</textarea>
+                <div class="code-editor-footer"><span data-editor-status role="status"></span><span data-editor-size></span></div>
                 <div class="actions" style="justify-content:flex-start;margin-top:14px">
                     <button class="button" type="submit">Save file</button>
                     <a class="secondary" href="%s">Cancel</a>
                 </div>
             </form>
-        </section>`, html.EscapeString(title), actionURL, fileHidden(operation, folder, ""), filenameField, checksumField, filemanager.MaxEditBytes, html.EscapeString(source), base)
+        </section>`, html.EscapeString(title), actionURL, fileHidden(operation, folder, ""), filenameField, checksumField, filemanager.MaxEditBytes, fileEditorEOL(source), html.EscapeString(source), base)
     } else {
         var rows strings.Builder
         if folder != "" && folder != "." {

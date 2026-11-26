@@ -1149,3 +1149,21 @@ label:has(>input:is([type="checkbox"],[type="radio"])){
  .mcp-copy-row{grid-template-columns:minmax(0,1fr) auto}
  .mcp-copy-row .secondary{padding:0 9px}
 }
+
+/* File source editor — assets loaded only on edit/create pages. */
+.code-editor-panel{min-width:0}
+.code-editor-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0 10px}
+.code-editor-toolbar[hidden]{display:none}
+.code-editor-toolbar>label{display:flex;align-items:center;gap:8px;margin:0}
+.code-editor-toolbar select{width:auto;min-width:138px;height:34px}
+.code-editor-actions{display:flex;flex-wrap:wrap;gap:6px}
+.code-editor-actions button{height:34px;padding:0 10px;font-size:12px}
+.code-editor-panel .CodeMirror{width:100%;height:clamp(300px,60vh,800px);font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;border:1px solid var(--border-strong);border-radius:9px;background:var(--surface);color:var(--text)}
+.code-editor-panel .CodeMirror-gutters{background:var(--surface-2);border-right:1px solid var(--border)}
+.code-editor-panel .CodeMirror-linenumber{color:var(--muted);padding:0 8px}
+.code-editor-panel .CodeMirror-lines{padding:10px 0}
+.code-editor-panel .CodeMirror pre.CodeMirror-line,.code-editor-panel .CodeMirror pre.CodeMirror-line-like{padding:0 10px}
+.code-editor-panel .CodeMirror-dialog input{width:auto;height:28px;max-width:60%;padding:0 6px}
+.code-editor-footer{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:12px;color:var(--muted)}
+.code-editor-footer .editor-error{color:#b91c1c}
+@media(max-width:640px){.code-editor-toolbar{gap:8px}.code-editor-panel .CodeMirror{font-size:12px}.code-editor-footer{flex-wrap:wrap}}

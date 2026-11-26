@@ -303,6 +303,27 @@
   document.addEventListener('htmx:afterSettle', revealTabFragment);
   document.addEventListener('htmx:historyRestore', () => { initPageTabs(); revealTabFragment(); });
 
+  let editorLoad;
+  function initCodeEditor() {
+    if (!document.querySelector('form[data-code-editor]')) return;
+    if (window.ogpInitCodeEditors) { window.ogpInitCodeEditors(); return; }
+    if (!editorLoad) {
+      const stylesheet = document.createElement('link');
+      stylesheet.rel = 'stylesheet'; stylesheet.href = '/assets/editor.css';
+      const script = document.createElement('script');
+      script.src = '/assets/editor.js';
+      editorLoad = Promise.all([
+        new Promise((resolve,reject) => { stylesheet.onload=resolve; stylesheet.onerror=reject; document.head.appendChild(stylesheet); }),
+        new Promise((resolve,reject) => { script.onload=resolve; script.onerror=reject; document.head.appendChild(script); })
+      ]).catch(() => {
+        stylesheet.remove(); script.remove(); editorLoad = null;
+        // Keep the original textarea usable if assets cannot load.
+        return false;
+      });
+    }
+    editorLoad.then(result => { if (result !== false) window.ogpInitCodeEditors?.(); });
+  }
+
   function initUI(root = document) {
     enhanceLinks(root);
     initTables(root);
@@ -311,6 +332,7 @@
     initFileSelection(root);
     initDatabaseOffsiteForm(root);
     initPageTabs();
+    initCodeEditor();
   }
 
   document.addEventListener('click', (event) => {
