@@ -155,7 +155,7 @@ func mcpViewImage(m *Manager,folder,name string)(any,error){
     if len(data)>maxBytes{return nil,errors.New("image exceeds 2 MiB limit")}
     cfg,format,err:=image.DecodeConfig(bytes.NewReader(data))
     if err!=nil{return nil,errors.New("expected a PNG, JPEG or GIF image")}
-    if cfg.Width<=0||cfg.Height<=0||int64(cfg.Width)*int64(cfg.Height)>16000000{return nil,errors.New("image exceeds 16 megapixel limit")}
+    if cfg.Width<=0||cfg.Height<=0||cfg.Width>16000000/cfg.Height{return nil,errors.New("image exceeds 16 megapixel limit")}
     mime:=map[string]string{"png":"image/png","jpeg":"image/jpeg","gif":"image/gif"}[format]
     if mime==""{return nil,errors.New("unsupported raster image format")}
     if _,_,err:=image.Decode(bytes.NewReader(data));err!=nil{return nil,errors.New("invalid or truncated image")}

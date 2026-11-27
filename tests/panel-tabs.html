@@ -14,7 +14,7 @@
       <div class="mcp-copy-row"><input readonly value="https://mcp.example.test/mcp/test"><button type="button" class="secondary">Copy URL</button></div>
     </form>
   </section>
-  <details data-panel-tab="settings" id="settings"><summary>Settings</summary></details>
+  <section class="panel panel-pad" data-panel-tab="settings" id="settings"><h2>System service dependencies</h2><form method="post" action="/apps/1/dependencies" data-dependency-form><datalist id="dependency-units"><option value="mysql.service" label="active / running"></option><option value="redis-server.service" label="inactive / dead"></option></datalist><div class="dependency-rows" data-dependency-rows><div class="dependency-row"><label>Service<input name="dependency_unit" list="dependency-units"></label><label>Dependency<select name="dependency_mode"><option value="required">Required</option><option value="optional">Optional</option></select></label><span class="note dependency-state" data-dependency-state></span><button type="button" class="secondary compact-action" data-dependency-remove>Remove</button></div></div><template data-dependency-template><div class="dependency-row"><label>Service<input name="dependency_unit" list="dependency-units"></label><label>Dependency<select name="dependency_mode"><option value="required">Required</option><option value="optional">Optional</option></select></label><span class="note dependency-state" data-dependency-state></span><button type="button" class="secondary compact-action" data-dependency-remove>Remove</button></div></template><button type="button" data-dependency-add>Add service</button><button type="submit">Save dependencies</button></form></section>
 </main>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
@@ -37,6 +37,20 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelector('input[name=mysql]').checked = false;
       assert(!new FormData(plain.form).has('mysql'), 'unchecked switch semantics');
       click('Settings');
+      const deps = byId('settings').querySelector('form');
+      deps.querySelector('[data-dependency-add]').click();
+      let dependencyRows = deps.querySelectorAll('.dependency-row');
+      assert(dependencyRows.length === 2, 'add dependency row');
+      dependencyRows[0].querySelector('input').value = 'mysql.service';
+      dependencyRows[0].querySelector('input').dispatchEvent(new Event('input',{bubbles:true}));
+      assert(dependencyRows[0].querySelector('[data-dependency-state]').textContent === 'active / running', 'live service state label');
+      dependencyRows[1].querySelector('input').value = 'redis-server.service';
+      dependencyRows[1].querySelector('select').value = 'optional';
+      const depData = new FormData(deps);
+      assert(depData.getAll('dependency_unit').join(',') === 'mysql.service,redis-server.service' && depData.getAll('dependency_mode').join(',') === 'required,optional','multiple dependency rows');
+      dependencyRows[0].querySelector('[data-dependency-remove]').click();
+      assert(new FormData(deps).getAll('dependency_unit').join(',') === 'redis-server.service','remove dependency row');
+      assert(document.documentElement.scrollWidth <= innerWidth + 1, 'dependency form has no horizontal overflow');
       byId('jump').click();
       assert(visible('chatgpt-access') && !visible('settings'), 'deep link reveals section');
       assert(!document.querySelector('input[name=mysql]').checked, 'tab switching preserves form state');
