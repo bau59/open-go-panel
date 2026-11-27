@@ -806,8 +806,8 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 		_ = conn.Close()
 	}
 
-	if app.Type != "php" && app.Type != "static" {
-		health.Availability = runtimeAvailability(health.ProcessStatus, true, health.PortListening, activeAge(ctx, id))
+	if app.Type != "php" && app.Type != "static" && health.ProcessStatus=="active" && !health.PortListening {
+		health.Availability = runtimeAvailability(health.ProcessStatus, true, false, activeAge(ctx, id))
 	}
 	if !health.PortListening { return health }
 	// Local HTTP diagnostics must never follow a redirect to a public site.

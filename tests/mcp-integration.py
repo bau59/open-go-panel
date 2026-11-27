@@ -181,7 +181,7 @@ finally:
     endpoint.shutdown()
     endpoint.server_close()
 
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==16
 assert rpc(a_conn,"initialize",{"protocolVersion":"2025-11-25"})["result"]["protocolVersion"]=="2025-11-25"
 data=call(a_conn,"read_file",{"path":"demo.txt"})
 assert data["content"]=="original\n"
@@ -267,7 +267,7 @@ finally:
     sudo("-u",USER,"rm",root_a+"/hardlink")
 live=call(a_conn,"terminal_start",{"command":"sleep 3; printf 'survived-panel-close\\n'"})["session_id"]
 sudo("systemctl","stop","open-go-panel.service")
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==16
 out,code=collect(a_conn,live)
 assert code==0 and "survived-panel-close" in out
 sudo("systemctl","start","open-go-panel.service")
@@ -277,7 +277,7 @@ page,_=request(PANEL,"/")
 csrf=re.search(r'name="ogp_csrf" value="([^"]+)"',page).group(1)
 sudo("systemctl","restart","open-go-panel-mcp.service")
 wait_health(MCP)
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==16
 sudo("systemctl","is-enabled","open-go-panel-mcp.service")
 # Grant policy changes revoke both OAuth tokens and all associated sessions.
 old=a_conn
@@ -308,7 +308,7 @@ long=call(a_conn,"terminal_start",{"command":"sleep 120"})["session_id"]
 post(f"/apps/{a}/chatgpt/revoke")
 assert subprocess.run(["sudo","systemctl","is-active","--quiet",f"ogp-mcp-terminal-{long}.service"]).returncode!=0
 rpc(a_conn,"tools/list",expected=401)
-assert len(rpc(b_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(b_conn,"tools/list")["result"]["tools"])==16
 request(MCP,a_conn[1]+"/token",{"grant_type":"refresh_token","client_id":a_conn[3],"resource":a_conn[2],"refresh_token":a_conn[4]["refresh_token"]},expected=404)
 request(MCP,"/admin",expected=404)
 print("MCP OAuth, file isolation, host PTY, downloads, sudo/root, policy rotation and revocation passed")

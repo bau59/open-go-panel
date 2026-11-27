@@ -29,6 +29,38 @@ import (
 const livePanelDB = "/var/lib/open-go-panel/panel.db"
 
 var managedUnitRE=regexp.MustCompile(`^open-go-panel-(app-[0-9]+\.service|cron-[0-9]+\.(service|timer))$`)
+var managedDependencyRE=regexp.MustCompile(`^open-go-panel-app-[0-9]+\.service\.d/50-ogp-dependencies\.confpackage server
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/bau59/open-go-panel/internal/app"
+	"github.com/bau59/open-go-panel/internal/dbmanager"
+	"github.com/bau59/open-go-panel/internal/linuxuser"
+	"github.com/bau59/open-go-panel/internal/phpfpm"
+	"github.com/bau59/open-go-panel/internal/state"
+	"github.com/bau59/open-go-panel/internal/terminal"
+)
+
+const livePanelDB = "/var/lib/open-go-panel/panel.db"
+
+var managedUnitRE=regexp.MustCompile(`^open-go-panel-(app-[0-9]+\.service|cron-[0-9]+\.(service|timer))$`)
+)
 var journalConfigRE=regexp.MustCompile(`^etc/systemd/journald@open-go-panel-[A-Za-z0-9_-]+\.conf$`)
 var phpConfigRE=regexp.MustCompile(`^etc/php/[0-9]+\.[0-9]+/(fpm/pool\.d/ogp-app-[0-9]+\.conf|mods-available/[A-Za-z0-9_-]*ioncube[A-Za-z0-9_-]*\.ini|fpm/conf\.d/[A-Za-z0-9_-]*ioncube[A-Za-z0-9_-]*\.ini)$`)
 var groupNameRE=regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
@@ -38,7 +70,8 @@ func snapshotSystemPath(name string)bool{
 		if name==prefix||strings.HasPrefix(name,prefix+"/"){return true}
 	}
 	if strings.HasPrefix(name,"etc/systemd/system/"){
-		return managedUnitRE.MatchString(strings.TrimPrefix(name,"etc/systemd/system/"))
+		relative:=strings.TrimPrefix(name,"etc/systemd/system/")
+		return managedUnitRE.MatchString(relative)||managedDependencyRE.MatchString(relative)
 	}
 	return name=="etc/mysql/mysql.conf.d/99-open-go-panel.cnf"||journalConfigRE.MatchString(name)||phpConfigRE.MatchString(name)
 }
@@ -74,6 +107,7 @@ func extractSnapshotConfig(ctx context.Context,archive,dir string)error{
 		name,err:=cleanArchiveName(h.Name)
 		if err!=nil{return err}
 		if !snapshotConfigEntry(name)||seen[name]{return fmt.Errorf("unexpected configuration entry: %s",name)}
+		if managedDependencyRE.MatchString(strings.TrimPrefix(name,"system/etc/systemd/system/"))&&h.Typeflag!=tar.TypeReg&&h.Typeflag!=tar.TypeRegA{return errors.New("managed dependency drop-in must be a regular file")}
 		seen[name]=true
 		dst:=filepath.Join(dir,filepath.FromSlash(name))
 		if err:=os.MkdirAll(filepath.Dir(dst),0700);err!=nil{return err}
