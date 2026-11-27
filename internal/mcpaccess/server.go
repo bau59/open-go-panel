@@ -30,11 +30,16 @@ type Server struct {
     run Runner
     mu sync.Mutex
     active map[int64]bool
+    terminals *TerminalManager
 }
 
 func NewHandler(s *state.Store,runner Runner)http.Handler{
+    return NewHandlerWithTerminals(s,runner,NewTerminalManager(s))
+}
+
+func NewHandlerWithTerminals(s *state.Store,runner Runner,terminals *TerminalManager)http.Handler{
     if runner==nil{runner=mcpsandbox.Run}
-    server:=&Server{grants:New(s),state:s,run:runner,active:map[int64]bool{}}
+    server:=&Server{grants:New(s),state:s,run:runner,active:map[int64]bool{},terminals:terminals}
     mux:=http.NewServeMux()
     oauth:=NewOAuth(server.grants)
     mux.Handle("/oauth/",oauth)
@@ -129,7 +134,7 @@ func (s *Server) mcp(w http.ResponseWriter,r *http.Request){
         switch version{case "2025-03-26","2025-06-18","2025-11-25":default:version="2025-11-25"}
         rpcResult(w,req.ID,map[string]any{"protocolVersion":version,"capabilities":map[string]any{"tools":map[string]any{"listChanged":false}},
             "serverInfo":map[string]any{"name":"open-go-panel","version":"1.0.0"},
-            "instructions":"This connection is limited to one project. Use relative paths; read a file before editing and supply its version. Commands are noninteractive and isolated. The project root is /workspace."})
+            "instructions":"File tools remain project-scoped at /workspace; use relative paths and version-checked edits. Terminal tools execute on the host as "+c.TerminalMode()+" ("+c.Owner+" for project-user modes), with normal Linux permissions and network. Use terminal_start, terminal_write and terminal_read to reconnect to sessions. The host project path is "+c.Root+"."})
     case "ping":
         rpcResult(w,req.ID,map[string]any{})
     case "tools/list":
@@ -158,7 +163,7 @@ func tool(name,description string,readOnly,destructive bool,props map[string]any
 
 func tools()[]any{
     p:=func()map[string]any{return property("string","Path relative to the selected project. No absolute paths or parent traversal.")}
-    return []any{
+    return append([]any{
         tool("list_directory","List files and directories; reports truncation.",true,false,map[string]any{"path":p()}),
         tool("search_files","Find literal text with file paths, line numbers and nearby lines.",true,false,map[string]any{"path":p(),"query":property("string","Literal search text"),"context_lines":property("integer","Nearby lines, 0–3")},"query"),
         tool("read_file","Read a UTF-8 file or line range; returns the version required for edits.",true,false,map[string]any{"path":p(),"start_line":property("integer","First line, starting at 1"),"end_line":property("integer","Last line, inclusive")},"path"),
@@ -166,8 +171,8 @@ func tools()[]any{
         tool("edit_file","Replace file content only if its read_file version still matches.",false,true,map[string]any{"path":p(),"content":property("string","Complete replacement file content"),"version":property("string","Version returned by read_file")},"path","content","version"),
         tool("create_directory","Create one new directory under the project.",false,false,map[string]any{"path":p()},"path"),
         tool("delete_path","Delete one file or empty directory. Recursive deletion must be explicitly enabled.",false,true,map[string]any{"path":p(),"recursive":property("boolean","Explicit recursive deletion")},"path"),
-        tool("run_command","Run a noninteractive command in the isolated project. Only administrator-enabled local database TCP endpoints; no general network or host home directories.",false,true,map[string]any{"command":property("string","Shell command"),"workdir":p(),"timeout_seconds":property("integer","Timeout, 1–120 seconds; default 120")},"command"),
-    }
+        terminalTool("run_command","Start a host shell command in a managed terminal session. Returns initial output and session ID; a running command is not killed when the response returns.",false,true,map[string]any{"command":property("string","Shell command"),"workdir":property("string","Absolute or project-relative host working directory"),"timeout_seconds":property("integer","Initial output wait in seconds, 0–10 (not an execution timeout)")},"command"),
+    },terminalTools()...)
 }
 
 func validRelative(value string)bool{
@@ -216,34 +221,20 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
         }
     }
     for _,key:=range schema["required"].([]string){if _,ok:=args[key];!ok{rpcError(w,req.ID,-32602,"missing required argument");return}}
-    var relative,command string
-    var timeout int
-    if params.Name=="run_command"{
-        _=json.Unmarshal(args["command"],&command)
-        _=json.Unmarshal(args["workdir"],&relative)
-        _=json.Unmarshal(args["timeout_seconds"],&timeout)
-        if command==""||len(command)>16384||timeout<0||timeout>120{toolFailure(w,req.ID,"invalid command or timeout");return}
-    }else{_=json.Unmarshal(args["path"],&relative)}
+    if params.Name=="run_command"||strings.HasPrefix(params.Name,"terminal_"){
+        s.callTerminal(w,r,req,c,token,params.Name,args)
+        return
+    }
+    var relative string
+    _=json.Unmarshal(args["path"],&relative)
     if !validRelative(relative){toolFailure(w,req.ID,"path must remain within the project");return}
     if !s.acquire(c.AppID){toolFailure(w,req.ID,"project busy; retry when the current operation completes");return}
     defer s.release(c.AppID)
     current,err:=s.grants.Authenticate(r.Context(),c.ID,c.Resource,token)
     if err!=nil{toolFailure(w,req.ID,"authorization no longer valid");return}
     started:=time.Now()
-    ctx:=r.Context()
-    if timeout>0{var cancel context.CancelFunc;ctx,cancel=context.WithTimeout(ctx,time.Duration(timeout)*time.Second);defer cancel()}
-    workdir:=""
-    if params.Name=="run_command"{workdir=relative}
-    var input io.Reader=bytes.NewReader(params.Arguments)
-    if params.Name=="run_command"{input=nil}
-    access:=mcpsandbox.NetworkAccess{}
-    if params.Name=="run_command"{
-        access,err=s.grants.NetworkAccess(current)
-        if err!=nil{toolFailure(w,req.ID,"database access settings unavailable");return}
-    }
-    result,err:=s.run(ctx,current.Owner,current.Root,workdir,params.Name,command,input,access)
-    failed:=err!=nil||result.ExitCode!=0||result.TimedOut
-    if params.Name!="run_command"&&result.Truncated{failed=true}
+    result,err:=s.run(r.Context(),current.Owner,current.Root,"",params.Name,"",bytes.NewReader(params.Arguments),mcpsandbox.NetworkAccess{})
+    failed:=err!=nil||result.ExitCode!=0||result.TimedOut||result.Truncated
     auditCtx,cancelAudit:=context.WithTimeout(context.Background(),3*time.Second)
     defer cancelAudit()
     status:="success";if failed{status="failed"}
@@ -251,10 +242,6 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
     detail:=fmt.Sprintf("path=%q duration_ms=%d result=%s exit_code=%d timeout=%t",relative,time.Since(started).Milliseconds(),status,result.ExitCode,result.TimedOut)
     s.state.Audit(auditCtx,"mcp."+params.Name,fmt.Sprintf("app:%d",c.AppID),detail)
     if err!=nil{toolFailure(w,req.ID,err.Error());return}
-    if params.Name=="run_command"{
-        if !failed{_=s.grants.RecordSuccess(auditCtx,current)}
-        toolResult(w,req.ID,result,failed);return
-    }
     if failed{toolFailure(w,req.ID,strings.TrimSpace(result.Output));return}
     var value map[string]any
     if err:=json.Unmarshal([]byte(result.Output),&value);err!=nil||value==nil{toolFailure(w,req.ID,"invalid file helper response");return}
