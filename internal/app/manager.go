@@ -41,6 +41,7 @@ var (
 )
 
 type ServiceConfig struct {
+	Dependencies []ServiceDependency `json:"dependencies,omitempty"`
 	Mode             string `json:"mode,omitempty"`
 	RunMode          string `json:"run_mode,omitempty"`
 	Command          string `json:"command,omitempty"`
@@ -94,6 +95,7 @@ type DeployKeyInfo struct {
 }
 
 type RuntimeHealth struct {
+	Availability string
 	ProcessStatus string
 	PortListening bool
 	HTTPReachable bool
@@ -854,6 +856,7 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	if app.Type != "static" && app.Type != "php" {
 		_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", serviceName(id)).Run()
 	}
+	if err := m.removeDependencyFile(id); err != nil { return err }
 	_ = os.Remove(filepath.Join(m.serviceDir, serviceName(id)))
 	_ = os.Remove(runnerPath(m.runnerDir, id))
 	_ = os.Remove(envPath(m.envDir, id))
@@ -1142,6 +1145,8 @@ func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceCon
 		return errors.New("static and PHP apps do not use per-app systemd services")
 	}
 
+	// Dependency settings are edited independently of the service form.
+	cfg.Dependencies = apps[index].Service.Dependencies
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
 	if cfg.Mode == "" {
 		cfg.Mode = "form"

@@ -166,6 +166,7 @@ func tools()[]any{
     return append([]any{
         tool("list_directory","List files and directories; reports truncation.",true,false,map[string]any{"path":p()}),
         tool("search_files","Find literal text with file paths, line numbers and nearby lines.",true,false,map[string]any{"path":p(),"query":property("string","Literal search text"),"context_lines":property("integer","Nearby lines, 0–3")},"query"),
+        tool("view_image","Return a project-relative PNG, JPEG or GIF as native MCP ImageContent. Up to 2 MiB and 16 megapixels.",true,false,map[string]any{"path":p()},"path"),
         tool("read_file","Read a UTF-8 file or line range; returns the version required for edits.",true,false,map[string]any{"path":p(),"start_line":property("integer","First line, starting at 1"),"end_line":property("integer","Last line, inclusive")},"path"),
         tool("create_file","Create a new UTF-8 file; refuses to overwrite.",false,false,map[string]any{"path":p(),"content":property("string","Complete new file content")},"path","content"),
         tool("edit_file","Replace file content only if its read_file version still matches.",false,true,map[string]any{"path":p(),"content":property("string","Complete replacement file content"),"version":property("string","Version returned by read_file")},"path","content","version"),
@@ -246,6 +247,12 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
     var value map[string]any
     if err:=json.Unmarshal([]byte(result.Output),&value);err!=nil||value==nil{toolFailure(w,req.ID,"invalid file helper response");return}
     _=s.grants.RecordSuccess(auditCtx,current)
+    if params.Name=="view_image"{
+        mime,ok:=value["mimeType"].(string);data,valid:=value["data"].(string)
+        if !ok||!valid||data==""||(mime!="image/png"&&mime!="image/jpeg"&&mime!="image/gif"){toolFailure(w,req.ID,"invalid image helper response");return}
+        rpcResult(w,req.ID,map[string]any{"content":[]any{map[string]any{"type":"image","data":data,"mimeType":mime}},"isError":false})
+        return
+    }
     toolResult(w,req.ID,value,false)
 }
 
