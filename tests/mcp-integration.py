@@ -163,7 +163,7 @@ def collect(conn, session_id, timeout=20):
         if result["status"]=="exited" and offset==result["end_offset"]:
             return data.decode(errors="replace"),result["exit_code"]
         time.sleep(.15)
-    raise AssertionError("terminal did not finish")
+    raise AssertionError(f"terminal did not finish; test output: {data[-4096:]!r}")
 
 def command(conn, text):
     result=call(conn,"terminal_start",{"command":text})

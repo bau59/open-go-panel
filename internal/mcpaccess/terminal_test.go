@@ -26,14 +26,14 @@ func TestTerminalPolicyInvalidatesTokens(t *testing.T){
 }
 func TestTerminalCommandArguments(t *testing.T){
     c:=Connection{Owner:"demo",Root:"/home/demo/apps/app",TerminalPolicy:"user"}
-    args,err:=terminalArgs(c,strings.Repeat("a",43),"echo $HOME; sleep 600","../other")
+    args,err:=terminalArgs(c,strings.Repeat("a",43),"echo $HOME; sleep 600","../other","/dev/pts/4")
     if err!=nil{t.Fatal(err)}
     joined:=strings.Join(args,"\n")
-    for _,want:=range []string{"--property=User=demo","--property=WorkingDirectory=/home/demo/apps/other","--expand-environment=no","--property=KillMode=control-group","echo $HOME; sleep 600"}{
+    for _,want:=range []string{"--property=User=demo","--property=WorkingDirectory=/home/demo/apps/other","--expand-environment=no","--property=KillMode=control-group","--property=StandardInput=tty-force","--property=TTYPath=/dev/pts/4","echo $HOME; sleep 600"}{
         if !strings.Contains(joined,want){t.Fatalf("missing argument %s",want)}
     }
     c.TerminalPolicy="root:random"
-    args,err=terminalArgs(c,strings.Repeat("a",43),"","");if err!=nil{t.Fatal(err)}
+    args,err=terminalArgs(c,strings.Repeat("a",43),"","","/dev/pts/4");if err!=nil{t.Fatal(err)}
     if !strings.Contains(strings.Join(args,"\n"),"--property=User=root"){t.Fatal("root not selected")}
 }
 func TestTerminalOutputOffsets(t *testing.T){

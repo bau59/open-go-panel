@@ -11,6 +11,8 @@ import (
     "net/http"
     "os"
     "os/exec"
+    "os/user"
+    "strconv"
     "path/filepath"
     "strings"
     "sort"
@@ -32,6 +34,7 @@ type TerminalInfo struct {
     User string `json:"user"`
     Mode string `json:"mode"`
     StartedAt time.Time `json:"started_at"`
+    EndedAt *time.Time `json:"ended_at,omitempty"`
     Status string `json:"status"`
     ExitCode *int `json:"exit_code"`
 }
@@ -95,18 +98,23 @@ func (s *terminalSession) read(offset int64) map[string]any {
         "stdout":string(data),"stderr":"","output":string(data),"output_base64":base64.StdEncoding.EncodeToString(data),
         "merged_streams":true,"offset":offset,"next_offset":next,"oldest_offset":s.base,"end_offset":end,"truncated":lost}
 }
+type terminalOutput struct{s *terminalSession}
+func (w terminalOutput) Write(p []byte)(int,error){w.s.append(p);return len(p),nil}
+
 func terminalUnit(id string) string {return "ogp-mcp-terminal-"+id+".service"}
-func terminalArgs(c Connection,id,command,workdir string)([]string,error){
+func terminalArgs(c Connection,id,command,workdir,ttyPath string)([]string,error){
     if !challengeRE.MatchString(id){return nil,errors.New("invalid session ID")}
     username,err:=c.TerminalUser();if err!=nil{return nil,err}
     if workdir==""{workdir=c.Root}else if !filepath.IsAbs(workdir){workdir=filepath.Join(c.Root,workdir)}
     if strings.ContainsAny(workdir,"\x00\r\n")||strings.ContainsRune(command,0){return nil,errors.New("invalid command or working directory")}
     // Disable systemd's variable/specifier expansion on user-provided arguments.
     // The target service receives the selected user's normal host permissions.
-    args:=[]string{"--quiet","--pty","--wait","--collect","--service-type=exec","--expand-environment=no",
+    args:=[]string{"--quiet","--wait","--collect","--service-type=exec","--expand-environment=no","--description=Open Go Panel MCP terminal",
         "--unit="+terminalUnit(id),"--property=User="+username,"--property=WorkingDirectory="+strings.ReplaceAll(workdir,"%","%%"),
         "--property=KillMode=control-group","--property=TimeoutStopSec=5s","--property=BindsTo=open-go-panel-mcp.service",
-        "--property=After=open-go-panel-mcp.service","--setenv=TERM=xterm-256color","--","/bin/bash","-l"}
+        "--property=After=open-go-panel-mcp.service","--setenv=TERM=xterm-256color",
+        "--property=TTYPath="+ttyPath,"--property=StandardInput=tty-force","--property=StandardOutput=tty","--property=StandardError=tty",
+        "--property=TTYReset=no","--property=TTYVHangup=no","--property=TTYVTDisallocate=no","--","/bin/bash","-l"}
     if command!=""{args=append(args,"-c",command)}
     return args,nil
 }
@@ -118,30 +126,44 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     // Bound retained output, not execution time. Finished sessions are kept
     // for reconnect/read until evicted by the next start.
     for id,s:=range m.sessions {
-        if s.snapshot().Status!="running"&&s.snapshot().Status!="starting"&&time.Since(s.info.StartedAt)>time.Hour{delete(m.sessions,id)}
+        if info:=s.snapshot();info.EndedAt!=nil&&time.Since(*info.EndedAt)>time.Hour{delete(m.sessions,id)}
     }
     if len(m.sessions)>=128{
         var oldest *terminalSession
-        for _,s:=range m.sessions{if s.snapshot().Status=="exited"&&(oldest==nil||s.info.StartedAt.Before(oldest.info.StartedAt)){oldest=s}}
+        for _,s:=range m.sessions{if info:=s.snapshot();info.EndedAt!=nil&&(oldest==nil||info.EndedAt.Before(*oldest.snapshot().EndedAt)){oldest=s}}
         if oldest!=nil{delete(m.sessions,oldest.info.ID)}else{return nil,errors.New("too many active terminal sessions")}
     }
     id,err:=secret();if err!=nil{return nil,err}
-    args,err:=terminalArgs(current,id,command,workdir);if err!=nil{return nil,err}
-    user,err:=current.TerminalUser();if err!=nil{return nil,err}
+    username,err:=current.TerminalUser();if err!=nil{return nil,err}
+    account,err:=user.Lookup(username);if err!=nil{return nil,err}
+    uid,err:=strconv.Atoi(account.Uid);if err!=nil{return nil,err}
+    gid,err:=strconv.Atoi(account.Gid);if err!=nil{return nil,err}
+    // One real PTY, attached directly by PID 1 to the transient service.
+    // The local systemd-run client only waits for its exit status.
+    tty,slave,err:=pty.Open();if err!=nil{return nil,err}
+    closePTY:=func(){_ = slave.Close();_ = tty.Close()}
+    if err=slave.Chown(uid,gid);err!=nil{closePTY();return nil,err}
+    if err=slave.Chmod(0600);err!=nil{closePTY();return nil,err}
+    if err=pty.Setsize(tty,&pty.Winsize{Rows:24,Cols:120});err!=nil{closePTY();return nil,err}
+    args,err:=terminalArgs(current,id,command,workdir,slave.Name());if err!=nil{closePTY();return nil,err}
     cmd:=exec.Command("systemd-run",args...)
     cmd.Env=[]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","TERM=xterm-256color"}
-    tty,err:=pty.StartWithSize(cmd,&pty.Winsize{Rows:24,Cols:120});if err!=nil{return nil,err}
-    s:=&terminalSession{conn:current,info:TerminalInfo{ID:id,AppID:c.AppID,User:user,Mode:current.TerminalMode(),StartedAt:time.Now().UTC(),Status:"starting"},cmd:cmd,tty:tty,done:make(chan struct{}),input:make(chan []byte,16)}
+    s:=&terminalSession{conn:current,info:TerminalInfo{ID:id,AppID:c.AppID,User:username,Mode:current.TerminalMode(),StartedAt:time.Now().UTC(),Status:"starting"},cmd:cmd,tty:tty,done:make(chan struct{}),input:make(chan []byte,16)}
+    // Keep diagnostic output from systemd-run, not in the service journal.
+    cmd.Stdout=terminalOutput{s};cmd.Stderr=terminalOutput{s}
+    if err=cmd.Start();err!=nil{closePTY();return nil,err}
     m.sessions[id]=s
     drained:=make(chan struct{})
     go func(){defer close(drained);buf:=make([]byte,8192);for{n,err:=tty.Read(buf);if n>0{s.append(buf[:n])};if err!=nil{return}}}()
     go func(){for{select{case <-s.done:return;case data:=<-s.input:if _,err:=tty.Write(data);err!=nil{return}}}}()
     go func(){
         err:=cmd.Wait()
+        _=slave.Close()
         select{case <-drained:case <-time.After(time.Second):_ = tty.Close();<-drained}
         _=tty.Close()
         code:=0;if err!=nil{code=-1;var exit *exec.ExitError;if errors.As(err,&exit){code=exit.ExitCode()}}
-        s.mu.Lock();s.info.Status="exited";s.info.ExitCode=&code;s.mu.Unlock()
+        ended:=time.Now().UTC()
+        s.mu.Lock();s.info.Status="exited";s.info.ExitCode=&code;s.info.EndedAt=&ended;s.mu.Unlock()
         close(s.done)
         m.audit(s,"exit",fmt.Sprintf("exit_code=%d",code))
     }()
@@ -150,13 +172,14 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     readyCtx,cancel:=context.WithTimeout(context.Background(),8*time.Second);defer cancel()
     for {
         select{case <-s.done:m.audit(s,"start","command exited");return s,nil;default:}
-        out,e:=exec.CommandContext(readyCtx,"systemctl","show","--property=LoadState","--value",terminalUnit(id)).Output()
-        if e==nil&&strings.TrimSpace(string(out))=="loaded" {
+        out,e:=exec.CommandContext(readyCtx,"systemctl","show","--property=ActiveState","--value",terminalUnit(id)).Output()
+        if e==nil&&strings.TrimSpace(string(out))=="active" {
+            _=slave.Close()
             s.mu.Lock();if s.info.Status=="starting"{s.info.Status="running"};s.mu.Unlock()
             m.audit(s,"start","");return s,nil
         }
         select{case <-s.done:return s,nil;case <-readyCtx.Done():
-            _=cmd.Process.Kill();_ = s.tty.Close()
+            _=cmd.Process.Kill();_ = slave.Close();_ = s.tty.Close()
             stopCtx,stopCancel:=context.WithTimeout(context.Background(),10*time.Second)
             _=exec.CommandContext(stopCtx,"systemctl","stop",terminalUnit(id)).Run();stopCancel()
             return nil,errors.New("terminal unit failed to start")
