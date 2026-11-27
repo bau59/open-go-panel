@@ -124,7 +124,10 @@ func mcpAppBlock(ctx context.Context,cfg Config,a panelapp.App)string{
     if errors.Is(err,mcpaccess.ErrUnauthorized)||err==nil&&c.RevokedAt!=0{
         label:="Disabled"
         if err==nil{label="Revoked "+time.Unix(c.RevokedAt,0).UTC().Format("2006-01-02 15:04 UTC")}
-        fmt.Fprintf(&out,`<p><strong>%s</strong></p><form method="post" action="/apps/%d/chatgpt/enable"><button class="button">Enable connection</button></form><p class="note"><a href="/settings/chatgpt">Server MCP settings</a></p></section>`,html.EscapeString(label),a.ID)
+        fmt.Fprintf(&out,`<p><strong>%s</strong></p><form method="post" action="/apps/%d/chatgpt/enable"><button class="button">Enable connection</button></form><p class="note"><a href="/settings/chatgpt">Server MCP settings</a></p>`,html.EscapeString(label),a.ID)
+        // A failed revoke must not hide sessions that still need to be stopped.
+        if err==nil { out.WriteString(mcpTerminalSessions(ctx,a.ID)) }
+        out.WriteString("</section>")
         return out.String()
     }
     if err!=nil{out.WriteString(`<p class="alert">Unable to load connection status.</p></section>`);return out.String()}

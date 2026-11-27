@@ -13,6 +13,8 @@ import (
     "os/exec"
     "path/filepath"
     "strings"
+    "sort"
+    "syscall"
     "sync"
     "time"
 
@@ -40,7 +42,9 @@ type terminalSession struct {
     tty *os.File
     mu sync.Mutex
     data []byte
+    head int
     base int64
+    stopMu sync.Mutex
     done chan struct{}
     input chan []byte
 }
@@ -56,12 +60,23 @@ func NewTerminalManager(s *state.Store)*TerminalManager {
 func (s *terminalSession) snapshot() TerminalInfo {
     s.mu.Lock();defer s.mu.Unlock();return s.info
 }
+// Circular byte buffer: high-volume output must not copy the full
+// retained history on every PTY read.
 func (s *terminalSession) append(p []byte){
     s.mu.Lock();defer s.mu.Unlock()
-    s.data=append(s.data,p...)
-    if n:=len(s.data)-terminalHistory;n>0 {
-        copy(s.data,s.data[n:]);s.data=s.data[:terminalHistory];s.base+=int64(n)
+    if len(p)>=terminalHistory{
+        s.base+=int64(len(s.data)+len(p)-terminalHistory)
+        s.data=append(s.data[:0],p[len(p)-terminalHistory:]...);s.head=0;return
     }
+    if free:=terminalHistory-len(s.data);free>0{
+        n:=len(p);if n>free{n=free}
+        s.data=append(s.data,p[:n]...);p=p[n:]
+    }
+    if len(p)==0{return}
+    n:=copy(s.data[s.head:],p)
+    copy(s.data,p[n:])
+    s.head=(s.head+len(p))%terminalHistory
+    s.base+=int64(len(p))
 }
 func (s *terminalSession) read(offset int64) map[string]any {
     s.mu.Lock();defer s.mu.Unlock()
@@ -70,7 +85,12 @@ func (s *terminalSession) read(offset int64) map[string]any {
     end:=s.base+int64(len(s.data))
     if offset>end {offset=end}
     next:=offset+terminalChunk;if next>end{next=end}
-    data:=s.data[offset-s.base:next-s.base]
+    data:=make([]byte,int(next-offset))
+    if len(data)>0{
+        start:=(s.head+int(offset-s.base))%len(s.data)
+        n:=copy(data,s.data[start:])
+        copy(data[n:],s.data)
+    }
     return map[string]any{"session_id":s.info.ID,"status":s.info.Status,"exit_code":s.info.ExitCode,
         "stdout":string(data),"stderr":"","output":string(data),"output_base64":base64.StdEncoding.EncodeToString(data),
         "merged_streams":true,"offset":offset,"next_offset":next,"oldest_offset":s.base,"end_offset":end,"truncated":lost}
@@ -146,48 +166,65 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
 func (m *TerminalManager) audit(s *terminalSession,action,detail string){
     ctx,cancel:=context.WithTimeout(context.Background(),3*time.Second);defer cancel()
     m.state.Audit(ctx,"mcp.terminal."+action,fmt.Sprintf("app:%d",s.conn.AppID),
-        fmt.Sprintf("grant=%s session=%s user=%s mode=%s %s",s.conn.ID,s.info.ID,s.info.User,s.info.Mode,detail))
+        fmt.Sprintf("grant=%s client=%s session=%s user=%s mode=%s %s",s.conn.ID,s.conn.ClientID,s.info.ID,s.info.User,s.info.Mode,detail))
 }
-func (m *TerminalManager) list(appID int64,grant string)[]TerminalInfo{
+func (m *TerminalManager) list(appID int64,grant,client,policy string)[]TerminalInfo{
     m.mu.Lock();defer m.mu.Unlock()
     out:=[]TerminalInfo{}
-    for _,s:=range m.sessions{if (appID==0||s.conn.AppID==appID)&&(grant==""||s.conn.ID==grant){out=append(out,s.snapshot())}}
+    for _,s:=range m.sessions{if (appID==0||s.conn.AppID==appID)&&(grant==""||s.conn.ID==grant)&&(client==""||(s.conn.ClientID==client&&s.conn.TerminalPolicy==policy)){out=append(out,s.snapshot())}}
+    sort.Slice(out,func(i,j int)bool{return out[i].StartedAt.After(out[j].StartedAt)})
     return out
 }
 func (m *TerminalManager) get(c Connection,id string)(*terminalSession,error){
     m.mu.Lock();defer m.mu.Unlock()
-    s:=m.sessions[id];if s==nil||s.conn.ID!=c.ID||s.conn.TerminalPolicy!=c.TerminalPolicy{return nil,errors.New("terminal session not found")}
+    s:=m.sessions[id];if s==nil||s.conn.ID!=c.ID||s.conn.ClientID!=c.ClientID||s.conn.TerminalPolicy!=c.TerminalPolicy{return nil,errors.New("terminal session not found")}
     return s,nil
 }
 func (m *TerminalManager) stop(s *terminalSession)error{
+    s.stopMu.Lock();defer s.stopMu.Unlock()
     select{case <-s.done:return nil;default:}
     ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second);defer cancel()
     out,err:=exec.CommandContext(ctx,"systemctl","stop",terminalUnit(s.info.ID)).CombinedOutput()
     if err!=nil{select{case <-s.done:return nil;default:return fmt.Errorf("stop terminal: %w: %s",err,strings.TrimSpace(string(out)))}}
     select{case <-s.done:m.audit(s,"stop","");return nil;case <-ctx.Done():return errors.New("terminal stop not confirmed")}
 }
+func (m *TerminalManager) stopAll(sessions []*terminalSession)error{
+    errs:=make(chan error,len(sessions))
+    for _,s:=range sessions{go func(s *terminalSession){errs<-m.stop(s)}(s)}
+    var failures []error
+    for range sessions{if err:=<-errs;err!=nil{failures=append(failures,err)}}
+    return errors.Join(failures...)
+}
 func (m *TerminalManager) stopMatching(appID int64,id,grant string)error{
-    m.mu.Lock();defer m.mu.Unlock()
-    var errs []error
+    // Serialize the lookup with startup, but never hold the manager lock
+    // while waiting for systemd to terminate a process group.
+    m.mu.Lock()
+    var sessions []*terminalSession
     for _,s:=range m.sessions{
-        if s.conn.AppID==appID&&(id==""||s.info.ID==id)&&(grant==""||s.conn.ID==grant){if err:=m.stop(s);err!=nil{errs=append(errs,err)}}
+        if s.conn.AppID==appID&&(id==""||s.info.ID==id)&&(grant==""||s.conn.ID==grant){sessions=append(sessions,s)}
     }
-    return errors.Join(errs...)
+    m.mu.Unlock()
+    if id!=""&&len(sessions)==0{return errors.New("terminal session not found")}
+    return m.stopAll(sessions)
 }
 func (m *TerminalManager) Monitor(ctx context.Context){
     ticker:=time.NewTicker(time.Second);defer ticker.Stop()
     for{select{case <-ctx.Done():return;case <-ticker.C:
         m.mu.Lock()
-        for _,s:=range m.sessions{
-            if s.snapshot().Status=="exited"{continue}
+        var sessions []*terminalSession
+        for _,s:=range m.sessions{if s.snapshot().Status!="exited"{sessions=append(sessions,s)}}
+        m.mu.Unlock()
+        var invalid []*terminalSession
+        for _,s:=range sessions{
+            if ctx.Err()!=nil{return}
             c,err:=m.grants.ByID(ctx,s.conn.ID)
             if err==nil&&c.TerminalPolicy==s.conn.TerminalPolicy {
-                var active bool;active,err=m.grants.HasRefresh(ctx,c.ID);if err==nil&&active{continue}
+                var active bool;active,err=m.grants.HasClientRefresh(ctx,c.ID,s.conn.ClientID);if err==nil&&active{continue}
             }
             // Fail closed on loss of grant or inability to verify it.
-            _=m.stop(s)
+            invalid=append(invalid,s)
         }
-        m.mu.Unlock()
+        _=m.stopAll(invalid)
     }}
 }
 
@@ -197,6 +234,7 @@ func (m *TerminalManager) ServeAdmin(ctx context.Context)(func(),error){
     dir:=filepath.Dir(terminalSocket)
     if err:=os.MkdirAll(dir,0700);err!=nil{return nil,err}
     info,err:=os.Lstat(dir);if err!=nil||!info.IsDir()||info.Mode().Perm()!=0700{return nil,errors.New("invalid MCP control directory")}
+    if stat,ok:=info.Sys().(*syscall.Stat_t);!ok||stat.Uid!=0{return nil,errors.New("MCP control directory must be root-owned")}
     if err:=os.Remove(terminalSocket);err!=nil&&!errors.Is(err,os.ErrNotExist){return nil,err}
     ln,err:=net.Listen("unix",terminalSocket);if err!=nil{return nil,err}
     if err:=os.Chmod(terminalSocket,0600);err!=nil{ln.Close();return nil,err}
@@ -206,7 +244,7 @@ func (m *TerminalManager) ServeAdmin(ctx context.Context)(func(),error){
         r.Body=http.MaxBytesReader(w,r.Body,4096)
         if json.NewDecoder(r.Body).Decode(&req)!=nil||req.AppID<=0{http.Error(w,"invalid request",400);return}
         switch req.Action{
-        case "list":jsonResponse(w,200,m.list(req.AppID,""))
+        case "list":jsonResponse(w,200,m.list(req.AppID,"","",""))
         case "stop":
             if !challengeRE.MatchString(req.ID){http.Error(w,"invalid session",400);return}
             if err:=m.stopMatching(req.AppID,req.ID,"");err!=nil{http.Error(w,err.Error(),500);return};jsonResponse(w,200,map[string]bool{"ok":true})

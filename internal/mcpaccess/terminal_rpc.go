@@ -52,7 +52,7 @@ func (s *Server) callTerminal(w http.ResponseWriter,r *http.Request,req rpcReque
             result=output
         }else{result=session.snapshot()}
     }else if name=="terminal_list"{
-        list:=m.list(current.AppID,current.ID)
+        list:=m.list(current.AppID,current.ID,current.ClientID,current.TerminalPolicy)
         result=map[string]any{"sessions":list}
     }else{
         session,e:=m.get(current,text("session_id"));if e!=nil{toolFailure(w,req.ID,e.Error());return}
