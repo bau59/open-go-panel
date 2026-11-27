@@ -336,6 +336,28 @@
   }
 
   document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-dependency-add], [data-dependency-remove]');
+    if (!button) return;
+    const form = button.closest('[data-dependency-form]');
+    if (!form) return;
+    if (button.hasAttribute('data-dependency-remove')) {
+      button.closest('.dependency-row')?.remove();
+    } else {
+      const rows = form.querySelector('[data-dependency-rows]');
+      if (rows.children.length >= 128) return;
+      rows.append(form.querySelector('[data-dependency-template]').content.cloneNode(true));
+      rows.lastElementChild.querySelector('input')?.focus();
+    }
+  });
+  document.addEventListener('input', (event) => {
+    const input = event.target.closest('[data-dependency-form] input[name=dependency_unit]');
+    if (!input) return;
+    const option = Array.from(input.list?.options || []).find(o => o.value === input.value);
+    const status = input.closest('.dependency-row').querySelector('[data-dependency-state]');
+    status.textContent = option?.label || (input.value ? 'not found in list' : '');
+  });
+
+  document.addEventListener('click', (event) => {
     if (!event.target.closest('.topbar') || event.target.closest('.nav a')) closeMobileNav();
     if (!event.target.closest('.fileman-more, .db-action-menu')) closeMenus();
   });

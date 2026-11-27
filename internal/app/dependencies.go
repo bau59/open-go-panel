@@ -44,15 +44,14 @@ func SystemServices(ctx context.Context)([]SystemService,error){
     return out,nil
 }
 
-type unitEdges struct { ID string; After,Requires,Wants []string }
+type unitEdges struct { ID,LoadState string; After,Requires,Wants []string }
 func readUnitEdges(ctx context.Context,name string)(unitEdges,error){
     var u unitEdges
-    out,err:=exec.CommandContext(ctx,"systemctl","show","--property=Id,LoadState,After,Requires,Wants","--",name).Output()
-    if err!=nil{return u,fmt.Errorf("inspect %s: %w",name,err)}
+    out,err:=exec.CommandContext(ctx,"systemctl","show","--property=Id,LoadState,After,Requires,Wants,Requisite,BindsTo","--",name).Output()
     props:=map[string]string{}
     for _,line:=range strings.Split(string(out),"\n"){k,v,ok:=strings.Cut(line,"=");if ok{props[k]=v}}
-    if props["LoadState"]!="loaded"||props["Id"]==""{return u,fmt.Errorf("service %s is not loaded or available (%s)",name,props["LoadState"])}
-    u.ID=props["Id"];u.After=strings.Fields(props["After"]);u.Requires=strings.Fields(props["Requires"]);u.Wants=strings.Fields(props["Wants"])
+    if props["Id"]==""||props["LoadState"]==""{return u,fmt.Errorf("inspect %s: %v",name,err)}
+    u.ID=props["Id"];u.LoadState=props["LoadState"];u.After=strings.Fields(props["After"]);u.Requires=append(strings.Fields(props["Requires"]),strings.Fields(props["Requisite"])...);u.Requires=append(u.Requires,strings.Fields(props["BindsTo"])...);u.Wants=strings.Fields(props["Wants"])
     return u,nil
 }
 type edgeReader func(context.Context,string)(unitEdges,error)
@@ -68,6 +67,7 @@ func normalizeDependencies(ctx context.Context,self string,deps []ServiceDepende
     for _,d:=range deps{
         if !validServiceUnit(d.Unit){return nil,fmt.Errorf("invalid service name: %q",d.Unit)}
         u,err:=load(d.Unit);if err!=nil{return nil,err}
+        if u.LoadState!="loaded"{return nil,fmt.Errorf("service %s is not available (%s)",d.Unit,u.LoadState)}
         if !validServiceUnit(u.ID){return nil,fmt.Errorf("invalid canonical service: %q",u.ID)}
         if u.ID==self{return nil,errors.New("application cannot depend on itself")}
         normalized[u.ID]=normalized[u.ID]||d.Required

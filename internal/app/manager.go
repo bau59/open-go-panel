@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/bau59/open-go-panel/internal/journal"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/phpfpm"
@@ -792,6 +794,7 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 		return RuntimeHealth{Error: err.Error()}
 	}
 	health := RuntimeHealth{ProcessStatus: m.Status(ctx, id)}
+	health.Availability = health.ProcessStatus
 	if app.Port <= 0 {
 		return health
 	}
@@ -803,7 +806,12 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 		_ = conn.Close()
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	if app.Type != "php" && app.Type != "static" {
+		health.Availability = runtimeAvailability(health.ProcessStatus, true, health.PortListening, activeAge(ctx, id))
+	}
+	if !health.PortListening { return health }
+	// Local HTTP diagnostics must never follow a redirect to a public site.
+	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(app.Port)+"/", nil)
 	if err != nil {
 		health.Error = err.Error()
@@ -820,6 +828,28 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 	health.HTTPStatus = resp.StatusCode
 	_ = resp.Body.Close()
 	return health
+}
+
+const StartupGrace = 90 * time.Second
+
+func runtimeAvailability(process string, hasPort, listening bool, age time.Duration) string {
+    if process != "active" || !hasPort || listening { return process }
+    if age >= 0 && age < StartupGrace { return "waiting-port" }
+    return "unavailable"
+}
+
+// Use the service's activation timestamp, not panel uptime or a sleep.
+// CLOCK_MONOTONIC is the clock used by systemd's *TimestampMonotonic properties.
+func activeAge(ctx context.Context,id int64) time.Duration {
+    out,err:=exec.CommandContext(ctx,"systemctl","show","--property=ActiveEnterTimestampMonotonic","--value",serviceName(id)).Output()
+    if err!=nil{return -1}
+    us,err:=strconv.ParseInt(strings.TrimSpace(string(out)),10,64)
+    if err!=nil||us<=0{return -1}
+    var ts unix.Timespec
+    if err:=unix.ClockGettime(unix.CLOCK_MONOTONIC,&ts);err!=nil{return -1}
+    age:=time.Duration(ts.Sec)*time.Second+time.Duration(ts.Nsec)-time.Duration(us)*time.Microsecond
+    if age<0{return -1}
+    return age
 }
 
 func (m *Manager) Delete(ctx context.Context, id int64) error {

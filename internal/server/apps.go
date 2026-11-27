@@ -18,6 +18,7 @@ import (
 )
 
 func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
+	registerAppDependencyRoutes(mux,store,cfg)
 	mux.Handle("GET /apps/{id}", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -31,9 +32,9 @@ func registerAppRoutes(mux *http.ServeMux, store *sessionStore, cfg Config) {
 			return
 		}
 
-		status := cfg.Apps.Status(r.Context(), id)
+		health := cfg.Apps.RuntimeHealth(r.Context(), id)
 		unit, _ := cfg.Apps.Unit(id)
-		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, status, unit, "", appHealthBlock(r, cfg, app), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app), cronBlock(r.Context(), cfg, app), mcpAppBlock(r.Context(),cfg,app)))
+		writeHTML(w, cfg.Logger, http.StatusOK, appPage(app, health.Availability, unit, "", appHealthBlock(cfg, app, health), dependencyBlock(r.Context(),app,unit!=""), appDomainBlock(cfg, app), databaseBlock(cfg, app), promotionBlock(cfg, app), deployBlock(cfg, app), cronBlock(r.Context(), cfg, app), mcpAppBlock(r.Context(),cfg,app)))
 	})))
 
 	mux.Handle("POST /apps/{id}/database", requireAuth(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -705,12 +706,17 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 
 	statusClass := "warn"
 	statusLabel := strings.TrimSpace(status)
+	processStatus:=status
+	if status=="waiting-port"||status=="unavailable"{processStatus="active"}
 	switch status {
 	case "active":
 		statusClass = "ok"
 		statusLabel = "Running"
-	case "activating":
+	case "activating", "waiting-port":
 		statusLabel = "Starting"
+	case "unavailable":
+		statusClass = "danger"
+		statusLabel = "Unavailable"
 	case "failed":
 		statusClass = "danger"
 		statusLabel = "Failed"
@@ -781,7 +787,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 		serviceName = "open-go-panel-app-" + fmt.Sprintf("%d", app.ID) + ".service"
 
 		primaryAction := `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/start"><button class="button">Start</button></form>`
-		if status == "active" {
+		if status == "active" || status == "waiting-port" || status == "unavailable" {
 			primaryAction = `<form method="post" action="/apps/` + fmt.Sprintf("%d", app.ID) + `/restart"><button class="button">Restart</button></form>`
 		}
 		runtimeActions = `
@@ -935,7 +941,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 				<div>
 					<p class="eyebrow">Runtime</p>
 					<div class="runtime-state"><strong>` + html.EscapeString(statusLabel) + `</strong></div>
-					<div class="runtime-status-line"><span class="state-text ` + statusClass + `"><i></i>` + html.EscapeString(defaultString(status, "unknown")) + `</span><code>` + html.EscapeString(serviceName) + `</code></div>
+					<div class="runtime-status-line"><span class="state-text ` + statusClass + `"><i></i>` + html.EscapeString(defaultString(processStatus, "unknown")) + `</span><code>` + html.EscapeString(serviceName) + `</code></div>
 				</div>
 				` + runtimeActions + `
 			</div>
@@ -1403,8 +1409,7 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
-	health := cfg.Apps.RuntimeHealth(r.Context(), app.ID)
+func appHealthBlock(cfg Config, app panelapp.App, health panelapp.RuntimeHealth) string {
 
 	statusCard := func(state, label, detail string) string {
 		className := "warn"
@@ -1449,36 +1454,16 @@ func appHealthBlock(r *http.Request, cfg Config, app panelapp.App) string {
 		localHTTPCard = statusCard(localState, "Local HTTP", localDetail)
 	}
 
-	publicCard := naCard("Public URL", "domain not connected")
+	publicCard := naCard("Domain", "not connected")
 	if cfg.Caddy != nil {
 		if site, ok, _ := cfg.Caddy.SiteForApp(app.ID); ok {
-			scheme := "https"
-			label := "Public HTTPS"
-			if settings, err := cfg.Caddy.GlobalSettings(); err == nil && !settings.HTTPS {
-				scheme = "http"
-				label = "Public HTTP"
-			}
-			client := &http.Client{Timeout: 4 * time.Second}
-			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, scheme+"://"+site.Domain+"/", nil)
-			state := "down"
-			detail := site.Domain + " · unreachable"
-			if err == nil {
-				resp, requestErr := client.Do(req)
-				if requestErr == nil {
-					detail = site.Domain + " · HTTP " + strconv.Itoa(resp.StatusCode)
-					if resp.StatusCode < 500 {
-						state = "ok"
-					}
-					_ = resp.Body.Close()
-				}
-			}
-			publicCard = statusCard(state, label, detail)
+			publicCard = naCard("Domain", site.Domain+" (not probed)")
 		}
 	}
 
 	return `
 		<section class="panel panel-pad app-card app-card-wide app-card-health" data-panel-tab="overview">
-			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Each layer is checked independently. HTTP 5xx is treated as unhealthy.</p></div></div>
+			<div class="section-title"><div><h2>Health</h2><p class="note" style="margin:6px 0 0">Systemd and the local TCP port are checked independently. Startup grace: 90 seconds. Public sites are not probed.</p></div></div>
 			<div class="health-grid">
 				` + processCard + portCard + localHTTPCard + publicCard + `
 			</div>
