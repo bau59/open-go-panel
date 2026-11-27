@@ -215,7 +215,9 @@ func main() {
 func serveMCP()error{
     store,err:=state.Open("/var/lib/open-go-panel/panel.db");if err!=nil{return err};defer store.Close()
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
-    srv:=&http.Server{Addr:mcpaccess.ListenAddr,Handler:mcpaccess.NewHandler(store,nil),
+    terminals:=mcpaccess.NewTerminalManager(store)
+    closeAdmin,err:=terminals.ServeAdmin(ctx);if err!=nil{return err};defer closeAdmin()
+    srv:=&http.Server{Addr:mcpaccess.ListenAddr,Handler:mcpaccess.NewHandlerWithTerminals(store,nil,terminals),
         ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:150*time.Second,IdleTimeout:60*time.Second,
         BaseContext:func(net.Listener)context.Context{return ctx}}
     done:=make(chan error,1)

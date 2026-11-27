@@ -74,15 +74,22 @@ func registerMCPRoutes(mux *http.ServeMux,sessions *sessionStore,cfg Config){
         cfg.State.Audit(r.Context(),"mcp.enable",fmt.Sprintf("app:%d",id),"awaiting authorization")
         return nil
     })
-    post("network",func(r *http.Request,id int64)error{
-        mysql,redis:=r.FormValue("mysql")=="1",r.FormValue("redis")=="1"
-        if err:=grants.SetNetworkAccess(r.Context(),id,mysql,redis);err!=nil{return err}
-        cfg.State.Audit(r.Context(),"mcp.network",fmt.Sprintf("app:%d",id),fmt.Sprintf("mysql=%t redis=%t",mysql,redis))
+    post("terminal-mode",func(r *http.Request,id int64)error{
+        mode:=r.FormValue("mode")
+        if (mode=="root"||mode=="sudo")&&r.FormValue("confirm")!="1"{return errors.New("confirm elevated terminal access")}
+        previous,err:=grants.SetTerminalMode(r.Context(),id,mode);if err!=nil{return err}
+        cfg.State.Audit(r.Context(),"mcp.terminal.mode",fmt.Sprintf("app:%d",id),"mode="+mode+"; old OAuth tokens invalidated")
+        if err:=mcpaccess.AdminTerminalPolicyChanged(r.Context(),previous);err!=nil{return fmt.Errorf("tokens invalidated; terminal stop not confirmed: %w",err)}
         return nil
     })
+    post("terminal-stop",func(r *http.Request,id int64)error{
+        return mcpaccess.AdminTerminalStop(r.Context(),id,r.FormValue("session_id"))
+    })
     post("revoke",func(r *http.Request,id int64)error{
+        c,err:=grants.Connection(r.Context(),id);if err!=nil{return err}
         if err:=grants.Revoke(r.Context(),id);err!=nil{return err}
         cfg.State.Audit(r.Context(),"mcp.revoke",fmt.Sprintf("app:%d",id),"access and refresh tokens revoked")
+        if err:=mcpaccess.AdminTerminalRevoke(r.Context(),c);err!=nil{return fmt.Errorf("tokens revoked; terminal stop not confirmed: %w",err)}
         return nil
     })
     post("decide",func(r *http.Request,id int64)error{
@@ -113,11 +120,14 @@ func mcpAppBlock(ctx context.Context,cfg Config,a panelapp.App)string{
     grants:=mcpaccess.New(cfg.State)
     c,err:=grants.Connection(ctx,a.ID)
     var out strings.Builder
-    fmt.Fprintf(&out,`<section id="chatgpt-access" class="panel panel-pad app-card-wide mcp-access-card" data-panel-tab="chatgpt"><div class="section-title"><div><h2>ChatGPT access</h2><p class="note">One plugin, one application. Commands and file operations run as %s, scoped to <code>%s</code>.</p></div></div>`,html.EscapeString(a.User),html.EscapeString(a.Root))
+    fmt.Fprintf(&out,`<section id="chatgpt-access" class="panel panel-pad app-card-wide mcp-access-card" data-panel-tab="chatgpt"><div class="section-title"><div><h2>ChatGPT access</h2><p class="note">One plugin per application. File operations run as %s, scoped to <code>%s</code>. Terminal commands use host permissions.</p></div></div>`,html.EscapeString(a.User),html.EscapeString(a.Root))
     if errors.Is(err,mcpaccess.ErrUnauthorized)||err==nil&&c.RevokedAt!=0{
         label:="Disabled"
         if err==nil{label="Revoked "+time.Unix(c.RevokedAt,0).UTC().Format("2006-01-02 15:04 UTC")}
-        fmt.Fprintf(&out,`<p><strong>%s</strong></p><form method="post" action="/apps/%d/chatgpt/enable"><button class="button">Enable connection</button></form><p class="note"><a href="/settings/chatgpt">Server MCP settings</a></p></section>`,html.EscapeString(label),a.ID)
+        fmt.Fprintf(&out,`<p><strong>%s</strong></p><form method="post" action="/apps/%d/chatgpt/enable"><button class="button">Enable connection</button></form><p class="note"><a href="/settings/chatgpt">Server MCP settings</a></p>`,html.EscapeString(label),a.ID)
+        // A failed revoke must not hide sessions that still need to be stopped.
+        if err==nil { out.WriteString(mcpTerminalSessions(ctx,a.ID)) }
+        out.WriteString("</section>")
         return out.String()
     }
     if err!=nil{out.WriteString(`<p class="alert">Unable to load connection status.</p></section>`);return out.String()}
@@ -126,18 +136,34 @@ func mcpAppBlock(ctx context.Context,cfg Config,a panelapp.App)string{
     pending,err:=grants.Pending(ctx,a.ID)
     if err!=nil{out.WriteString(`<p class="alert">Unable to load pending requests.</p>`)}else if len(pending)>0{label="Authorization request received"}
     fmt.Fprintf(&out,`<p><strong>%s</strong></p><div class="mcp-copy-fields"><div><label for="mcp-plugin-name">Plugin name</label><div class="mcp-copy-row"><input id="mcp-plugin-name" readonly value="%s" onclick="this.select()"><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('mcp-plugin-name').value)">Copy name</button></div></div><div><label for="mcp-plugin-url">MCP URL</label><div class="mcp-copy-row"><input id="mcp-plugin-url" readonly value="%s" onclick="this.select()"><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('mcp-plugin-url').value)">Copy URL</button></div></div></div><p class="note">In ChatGPT on the web: Plugins → + → Add custom MCP server. Use this URL, choose OAuth with dynamic registration, create and install the plugin. Approve only the request ID shown in the OAuth browser.</p>`,html.EscapeString(label),html.EscapeString("Open Go Panel — "+strings.ToUpper(a.Name)),html.EscapeString(c.Resource))
-    if access,err:=grants.NetworkAccess(c);err!=nil{
-        out.WriteString(`<p class="alert">Unable to load database network permissions.</p>`)
-    }else{
-        mysqlChecked,redisChecked:="",""
-        if access.MySQL{mysqlChecked=" checked"}
-        if access.Redis{redisChecked=" checked"}
-        fmt.Fprintf(&out,`<form method="post" action="/apps/%d/chatgpt/network" class="mcp-network-form"><h3>Database network access</h3><div class="settings-list"><label class="setting-row"><span><strong>MySQL</strong><small>127.0.0.1:3306</small></span><span class="switch"><input type="checkbox" name="mysql" value="1"%s><i></i></span></label><label class="setting-row"><span><strong>Redis</strong><small>127.0.0.1:6379</small></span><span class="switch"><input type="checkbox" name="redis" value="1"%s><i></i></span></label></div><p class="note">MySQL uses normal database credentials. Redis is shared by applications; enabling it may grant access to other applications' keys unless Redis ACLs are configured. No other network endpoints are opened. Changes apply to the next command.</p><button class="secondary">Save database access</button></form>`,a.ID,mysqlChecked,redisChecked)
-    }
+    mode:=c.TerminalMode()
+    selected:=func(value string)string{if mode==value{return " selected"};return ""}
+    fmt.Fprintf(&out,`<form method="post" action="/apps/%d/chatgpt/terminal-mode" class="mcp-network-form" onsubmit="return confirm('Changing terminal access revokes all current tokens and stops existing terminal sessions. Continue?')"><h3>Terminal access</h3><label>Access level<select name="mode"><option value="user"%s>Project user</option><option value="sudo"%s>Project user with system sudo</option><option value="root"%s>Server administrator (root)</option></select></label><p class="note">Terminal commands have normal host filesystem and network access. User and sudo modes run as the project owner; sudo is governed by existing sudoers policy and is not granted automatically. Root provides unrestricted server administration. Only file tools remain project-scoped. Changing mode requires a new OAuth authorization.</p><label><input type="checkbox" name="confirm" value="1"> I authorize elevated access if selected</label><button class="secondary">Change level and revoke tokens</button></form>`,a.ID,selected("user"),selected("sudo"),selected("root"))
+    out.WriteString(mcpTerminalSessions(ctx,a.ID))
     if c.LastSuccessAt>0{fmt.Fprintf(&out,`<p class="note">Last successful call: %s</p>`,time.Unix(c.LastSuccessAt,0).UTC().Format("2006-01-02 15:04:05 UTC"))}
     for _,req:=range pending{
-        fmt.Fprintf(&out,`<div class="snapshot-fact"><strong>Pending authorization</strong><code>%s</code><span>Expires %s. Permissions: read/write project files and isolated commands.</span><form method="post" action="/apps/%d/chatgpt/decide"><input type="hidden" name="request_id" value="%s"><div class="actions"><button class="button" name="decision" value="approve">Approve</button><button class="danger" name="decision" value="deny">Deny</button></div></form></div>`,html.EscapeString(req.ID),time.Unix(req.ExpiresAt,0).UTC().Format("15:04 UTC"),a.ID,html.EscapeString(req.ID))
+        fmt.Fprintf(&out,`<div class="snapshot-fact"><strong>Pending authorization</strong><code>%s</code><span>Expires %s. Permissions: read/write project files and host terminal (%s).</span><form method="post" action="/apps/%d/chatgpt/decide"><input type="hidden" name="request_id" value="%s"><div class="actions"><button class="button" name="decision" value="approve">Approve</button><button class="danger" name="decision" value="deny">Deny</button></div></form></div>`,html.EscapeString(req.ID),time.Unix(req.ExpiresAt,0).UTC().Format("15:04 UTC"),html.EscapeString(mode),a.ID,html.EscapeString(req.ID))
     }
     fmt.Fprintf(&out,`<div class="actions"><a class="secondary" href="/apps/%d#chatgpt-access">Refresh status</a><form method="post" action="/apps/%d/chatgpt/revoke" onsubmit="return confirm('Revoke all ChatGPT access for this application?')"><button class="danger">Revoke access</button></form></div></section>`,a.ID,a.ID)
+    return out.String()
+}
+
+
+func mcpTerminalSessions(ctx context.Context,appID int64)string{
+    var out strings.Builder
+    out.WriteString(`<div class="mcp-network-form"><h3>Terminal sessions</h3><p class="note">Sessions survive individual MCP requests. Stopping a session ends its managed process group.</p>`)
+    query,cancel:=context.WithTimeout(ctx,2*time.Second);defer cancel()
+    sessions,err:=mcpaccess.AdminTerminalList(query,appID)
+    if err!=nil{return out.String()+`<p class="note">Terminal session status unavailable. Check the MCP service.</p></div>`}
+    if len(sessions)==0{return out.String()+`<p class="note">No terminal sessions.</p></div>`}
+    out.WriteString(`<div class="table-scroll"><table data-no-pager="1"><thead><tr><th>Session</th><th>User / level</th><th>Started (UTC)</th><th>Status</th><th>Action</th></tr></thead><tbody>`)
+    for _,s:=range sessions{
+        status:=s.Status
+        if s.ExitCode!=nil{status+=fmt.Sprintf(" (%d)",*s.ExitCode)}
+        fmt.Fprintf(&out,`<tr><td><code title="%s">%s</code></td><td>%s / %s</td><td>%s</td><td>%s</td><td>`,html.EscapeString(s.ID),html.EscapeString(s.ID[:12]),html.EscapeString(s.User),html.EscapeString(s.Mode),s.StartedAt.UTC().Format("2006-01-02 15:04"),html.EscapeString(status))
+        if s.Status!="exited"{fmt.Fprintf(&out,`<form method="post" action="/apps/%d/chatgpt/terminal-stop" onsubmit="return confirm('Stop this terminal and its managed processes?')"><input type="hidden" name="session_id" value="%s"><button class="danger compact-action">Stop</button></form>`,appID,html.EscapeString(s.ID))}
+        out.WriteString("</td></tr>")
+    }
+    out.WriteString("</tbody></table></div></div>")
     return out.String()
 }

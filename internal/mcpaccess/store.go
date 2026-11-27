@@ -45,6 +45,8 @@ type Connection struct {
     AuthorizedAt int64
     LastSuccessAt int64
     RevokedAt int64
+    TerminalPolicy string
+    ClientID string
 }
 
 type PendingRequest struct {
@@ -122,12 +124,15 @@ func (s *Store) Enable(ctx context.Context,appID int64,origin string)(Connection
 
 // A matching current application row is required in addition to the grant.
 // Changing its identity or root invalidates the existing connection.
-const connectionQuery=`SELECT c.app_id,c.connection_id,c.resource,c.owner,c.root,c.app_created_at,c.enabled_at,c.authorized_at,c.last_success_at,c.revoked_at
-    FROM mcp_connections c JOIN apps a ON a.id=c.app_id AND a.owner=c.owner AND a.root=c.root AND a.created_at=c.app_created_at`
+const connectionFields=`SELECT c.app_id,c.connection_id,c.resource,c.owner,c.root,c.app_created_at,c.enabled_at,c.authorized_at,c.last_success_at,c.revoked_at,COALESCE((SELECT value FROM settings WHERE key='mcp.terminal.'||c.connection_id),'user')`
+const connectionFrom=` FROM mcp_connections c JOIN apps a ON a.id=c.app_id AND a.owner=c.owner AND a.root=c.root AND a.created_at=c.app_created_at`
+const connectionQuery=connectionFields+connectionFrom
 
-func readConnection(row *sql.Row)(Connection,error){
+func readConnection(row *sql.Row,authenticated ...bool)(Connection,error){
     var c Connection
-    err:=row.Scan(&c.AppID,&c.ID,&c.Resource,&c.Owner,&c.Root,&c.CreatedAt,&c.EnabledAt,&c.AuthorizedAt,&c.LastSuccessAt,&c.RevokedAt)
+    dest:=[]any{&c.AppID,&c.ID,&c.Resource,&c.Owner,&c.Root,&c.CreatedAt,&c.EnabledAt,&c.AuthorizedAt,&c.LastSuccessAt,&c.RevokedAt,&c.TerminalPolicy}
+    if len(authenticated)>0&&authenticated[0]{dest=append(dest,&c.ClientID)}
+    err:=row.Scan(dest...)
     if errors.Is(err,sql.ErrNoRows){return c,ErrUnauthorized}
     return c,err
 }
@@ -267,10 +272,10 @@ func (s *Store) Refresh(ctx context.Context,connectionID,clientID,resource,refre
 
 func (s *Store) Authenticate(ctx context.Context,connectionID,resource,access string)(Connection,error){
     if len(access)!=43{return Connection{},ErrUnauthorized}
-    return readConnection(s.db.QueryRowContext(ctx,connectionQuery+`
+    return readConnection(s.db.QueryRowContext(ctx,connectionFields+",cl.client_id"+connectionFrom+`
         JOIN mcp_clients cl ON cl.connection_id=c.connection_id JOIN mcp_tokens t ON t.client_id=cl.client_id
         WHERE c.connection_id=? AND c.resource=? AND c.revoked_at=0 AND c.authorized_at>0 AND t.access_hash=? AND t.access_expires_at>?`,
-        connectionID,resource,hash(access),time.Now().Unix()))
+        connectionID,resource,hash(access),time.Now().Unix()),true)
 }
 
 func (s *Store) RecordSuccess(ctx context.Context,conn Connection)error{
@@ -317,4 +322,46 @@ func (s *Store) SetNetworkAccess(ctx context.Context,appID int64,mysql,redis boo
     value:="off"
     if mysql&&redis{value="mysql,redis"}else if mysql{value="mysql"}else if redis{value="redis"}
     return s.state.SetSetting("mcp.network."+c.ID,value)
+}
+
+
+// TerminalMode is distinct from file-helper permissions. Existing grants
+// acquire the ordinary host-user terminal, never automatic root privileges.
+func (c Connection) TerminalMode() string {
+    mode,_,_:=strings.Cut(c.TerminalPolicy,":")
+    if mode=="" { return "user" }
+    return mode
+}
+
+func (c Connection) TerminalUser() (string,error) {
+    switch c.TerminalMode() {
+    case "user","sudo": if c.Owner=="root"||c.Owner=="" { return "",errors.New("invalid project owner") }; return c.Owner,nil
+    case "root": return "root",nil
+    default: return "",errors.New("invalid terminal access policy")
+    }
+}
+
+// Change policy and invalidate all authorization material in one transaction.
+// Keep the resource URL stable; the client must complete OAuth again.
+func (s *Store) SetTerminalMode(ctx context.Context,appID int64,mode string)(Connection,error){
+    if mode!="user"&&mode!="sudo"&&mode!="root" { return Connection{},errors.New("invalid terminal access level") }
+    tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return Connection{},err};defer tx.Rollback()
+    c,err:=readConnection(tx.QueryRowContext(ctx,connectionQuery+" WHERE c.app_id=? AND c.revoked_at=0",appID));if err!=nil{return Connection{},err}
+    if c.TerminalMode()==mode{return c,errors.New("terminal access level is already selected")}
+    generation,err:=secret();if err!=nil{return c,err}
+    if _,err=tx.ExecContext(ctx,"INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value","mcp.terminal."+c.ID,mode+":"+generation);err!=nil{return c,err}
+    if _,err=tx.ExecContext(ctx,"DELETE FROM mcp_clients WHERE connection_id=?",c.ID);err!=nil{return c,err}
+    if _,err=tx.ExecContext(ctx,"UPDATE mcp_connections SET authorized_at=0,last_success_at=0 WHERE connection_id=?",c.ID);err!=nil{return c,err}
+    return c,tx.Commit()
+}
+
+
+// Refresh rotation keeps a terminal tied to the same registered OAuth client,
+// not to a particular one-hour access token or another client on this grant.
+func (s *Store) HasClientRefresh(ctx context.Context,connectionID,clientID string)(bool,error){
+    var active bool
+    err:=s.db.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM mcp_tokens t JOIN mcp_clients cl ON cl.client_id=t.client_id
+        JOIN mcp_connections c ON c.connection_id=cl.connection_id WHERE c.connection_id=? AND cl.client_id=? AND c.revoked_at=0 AND t.refresh_expires_at>?)`,
+        connectionID,clientID,time.Now().Unix()).Scan(&active)
+    return active,err
 }

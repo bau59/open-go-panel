@@ -1,6 +1,6 @@
 # Open Go Panel
 
-**Self-hosted Linux server management and project-scoped AI access.**
+**Self-hosted Linux server management and explicitly authorized AI terminals.**
 
 Open Go Panel is a lightweight control panel written in Go for developers who manage their own Ubuntu VPS. It manages native Linux services, application deployments, databases, Docker workloads and disaster recovery from one interface. An independent Model Context Protocol (MCP) service lets ChatGPT work directly with an explicitly authorized application on the server.
 
@@ -8,7 +8,7 @@ The administrative panel is designed for a single administrator and normally sta
 
 [Download releases](https://github.com/bau59/open-go-panel/releases) · [Build and test status](https://github.com/bau59/open-go-panel/actions) · [Report an issue](https://github.com/bau59/open-go-panel/issues)
 
-> This is a privileged server-management tool for trusted administrators, not a public multi-tenant hosting platform. MCP isolates direct project tools; it is not a replacement for isolating deployed applications from one another.
+> This is a privileged server-management tool for trusted administrators, not a public multi-tenant hosting platform. MCP file helpers isolate direct project operations. Terminal access uses normal host permissions, not a project sandbox; an authorized root terminal can administer the entire server.
 
 ## Features at a glance
 
@@ -17,7 +17,7 @@ The administrative panel is designed for a single administrator and normally sta
 | Applications | Go, Node.js, PHP and static sites; Linux accounts, SSH keys, systemd lifecycle, environment, resource limits, health checks, journal logs |
 | Deployment | Git deploy, configurable auto-deploy intervals, staged atomic directory exchange, rollback, Go Air development → prebuilt production binary |
 | Files | Project-scoped editor, uploads/downloads, bulk move/delete, archive extraction, collision checks |
-| AI / MCP | Separate OAuth connection per app, eight project tools, version-checked editing, isolated shell commands, optional MySQL and Redis TCP access |
+| AI / MCP | Separate OAuth connection per app, seven scoped file tools, host command execution, persistent PTY terminals, user/system-sudo/root access levels, token revocation |
 | Automation | Per-app cron expressions backed by systemd timers, manual runs and task logs; independent background terminal commands |
 | Web infrastructure | Caddy domains, automatic TLS, static files, PHP FastCGI, reverse proxy, per-domain configuration and global defaults |
 | Data | MySQL and PostgreSQL provisioning, app attachments, SQL imports, safety backups, Adminer; Redis metrics, key browser and slow commands |
@@ -93,81 +93,93 @@ Existing installations keep their current `OGP_LISTEN_ADDR` during updates.
 
 ## AI access: ChatGPT and MCP
 
-Open Go Panel exposes a real remote MCP server, not an SSH command wrapper that gives an AI unrestricted server access. Each connection grants access to **one application**. The assistant can inspect a live project, read source files, make controlled edits, run local commands and, when separately permitted, work with local databases using the project's existing credentials.
+Open Go Panel exposes a remote MCP service with independent OAuth grants per application. The seven direct file tools remain project-scoped. The terminal tools deliberately use normal host filesystem and network permissions, as if the selected Linux account were working on the server.
+
+**Upgrade warning:** existing MCP grants now receive host terminal access as the ordinary project owner by default. Previous isolated command execution and per-grant MySQL/Redis relay settings are no longer used for terminal commands. Revoke existing grants before upgrading if you do not want that expanded access. Root is never selected automatically.
 
 ### Connect an application
 
-1. Open **Infrastructure → ChatGPT access** in the private panel. Set a dedicated HTTPS hostname (for example, `mcp.example.com`) with DNS pointing to the VPS. The panel configures Caddy; use **Test HTTPS connection** to verify it.
-2. Open the target application → **ChatGPT access** tab → **Enable connection**. Copy its plugin name and MCP URL.
-3. In ChatGPT on the web, open **Plugins → + → Add custom MCP server** (availability and UI labels depend on the account). Use the supplied MCP URL and OAuth with dynamic registration.
-4. Match the request ID on the OAuth browser page with the pending request shown in the private application panel. Approve that request, then click **Continue after approval** in the OAuth browser.
-5. Select the installed plugin with `@` in a chat. Start with a read-only inspection, and approve changes deliberately.
+1. Open **Infrastructure → ChatGPT access** in the private panel and configure a dedicated HTTPS domain with DNS pointing to the VPS.
+2. Open **Applications → ChatGPT access → Enable connection**. Select the intended terminal access level before approving OAuth. Copy the plugin name and MCP URL.
+3. In ChatGPT on the web, add a custom MCP server using the displayed URL and OAuth with dynamic registration (availability and UI labels depend on the account).
+4. Match the OAuth request ID with the private panel request and approve only the intended connection. Check its displayed terminal level. Continue the authorization flow.
+5. Select the installed plugin with `@` in a chat.
 
-Each additional project requires its own connection. The application's **Revoke access** action invalidates its authorization. Existing authorizations survive panel restarts and in-place updates.
+Each application has its own connection. Change the terminal level only in the private panel: this atomically invalidates all access tokens, refresh tokens, pending requests and registered clients for that grant. The URL stays the same, but the AI client must register and authorize again. Existing sessions are stopped. **Revoke access** invalidates the grant and stops associated managed sessions.
 
-### MCP tools: machine-readable contract
+### Terminal access levels
 
-The service advertises these eight tools through MCP `tools/list`. Tool arguments are JSON objects. Paths are relative to the selected application root, which is mounted at `/workspace` inside the sandbox. Use `.` for the root directory.
+| Level | Linux identity and permissions |
+| --- | --- |
+| Project user (default) | The application owner, with all permissions already available to that user |
+| Project user with system sudo | The same application owner; sudo is controlled by the server's existing sudoers configuration and can prompt for authentication |
+| Server administrator (root) | UID 0; unrestricted server administration |
+
+Selecting sudo does not add the account to a sudo group, edit sudoers, bypass authentication, or elevate the file-helper identity. If the project account already has sudo privileges, those are also available in the ordinary user mode because the terminal does not impose an additional security boundary. Do not select either user mode for an account whose existing Linux permissions are inappropriate for the AI client.
+
+All levels use the host's network, installed utilities, home directory and normal filesystem permissions. No MCP command allowlist, database-only relay or execution time limit is applied. Installations, downloads, Git operations and database access depend on ordinary OS rights, credentials and network configuration. A root or sudo-capable AI connection can make production-impacting changes.
+
+### File tools (unchanged)
+
+File tool paths are relative to the application root mounted at `/workspace` inside the existing file sandbox. Use `.` for the root. The file helper still runs as the project owner even when the terminal is configured as root.
 
 | Tool | Arguments | Behavior |
 | --- | --- | --- |
-| `list_directory` | `path?` | List directory entries; reports truncation (up to 400 entries) |
-| `search_files` | `query`, `path?`, `context_lines?` | Literal text search with paths, line numbers and up to three context lines; bounded scan and output |
-| `read_file` | `path`, `start_line?`, `end_line?` | Read UTF-8 text or a 1-based inclusive line range; returns a version for editing |
-| `create_file` | `path`, `content` | Create a new text file; never overwrite an existing file |
-| `edit_file` | `path`, `content`, `version` | Replace complete file content only if its read version still matches |
-| `create_directory` | `path` | Create one directory; parent must exist |
-| `delete_path` | `path`, `recursive?` | Delete a file or empty directory; recursive deletion requires explicit opt-in |
-| `run_command` | `command`, `workdir?`, `timeout_seconds?` | Run a noninteractive shell command as the Linux app owner; returns output, exit code, timeout and truncation flags |
+| `list_directory` | `path?` | List directory entries; reports truncation |
+| `search_files` | `query`, `path?`, `context_lines?` | Literal text search with line numbers |
+| `read_file` | `path`, `start_line?`, `end_line?` | UTF-8 text or 1-based inclusive lines; returns a version |
+| `create_file` | `path`, `content` | Create text file without overwriting |
+| `edit_file` | `path`, `content`, `version` | Replace file contents only if the version matches |
+| `create_directory` | `path` | Create one directory |
+| `delete_path` | `path`, `recursive?` | Delete file or empty directory; recursion requires explicit opt-in |
 
-`?` denotes an optional argument. The server rejects unknown parameters and paths that escape the project. Read/edit text files are limited to 2 MiB. Commands have a maximum 120-second runtime and 256 KiB output. Search results are bounded; a truncated result is not proof that there are no additional matches. There is no fixed total project-file limit. Shell startup still checks for preexisting hardlinks, and that check counts toward the timeout.
+File tools still reject paths outside the project, individual hardlinked files, and invalid input. Text editing is limited to 2 MiB. Concurrent file operations remain bounded. Those restrictions do not apply to the separately authorized host terminal.
 
-The HTTP transport uses JSON-RPC and JSON responses. The public resource URL is generated by the panel; it is not a generic root-shell endpoint. OAuth uses authorization code with S256 PKCE, dynamic registration, short-lived access tokens and rotating refresh tokens. The current implementation validates the ChatGPT callback rather than advertising unrestricted OAuth-client compatibility.
+### Terminal tools
 
-### Optional database network access
+MCP advertises 15 tools: the seven file tools above, `run_command` and seven terminal tools. Tool arguments are JSON objects; `?` denotes an optional argument.
 
-Open the application → **ChatGPT access → Database network access**. Enable only the required service, then save.
-
-| Permission | Endpoint inside sandbox | Scope |
+| Tool | Arguments | Behavior |
 | --- | --- | --- |
-| MySQL | `127.0.0.1:3306` | Host-local MySQL TCP service; database permissions depend on supplied credentials |
-| Redis | `127.0.0.1:6379` | Host-local Redis TCP service; actual key permissions depend on Redis ACLs |
+| `run_command` | `command`, `workdir?`, `timeout_seconds?` | Start a host command; return initial output and session ID. The wait argument is now an initial read window (0–10 seconds), not a process deadline |
+| `terminal_start` | `command?`, `workdir?` | Start a PTY shell or a single shell command |
+| `terminal_write` | `session_id`, `input` | Queue input, including a newline or terminal control characters |
+| `terminal_read` | `session_id`, `offset?` | Read the next output fragment by byte offset |
+| `terminal_list` | none | List sessions for the authenticated OAuth client and current permission generation |
+| `terminal_status` | `session_id` | Status, start/end timestamps and exit code when available |
+| `terminal_resize` | `session_id`, `rows`, `cols` | Change PTY size |
+| `terminal_stop` | `session_id` | Stop the managed unit and its processes |
 
-Both permissions are disabled by default. Settings are associated with the individual MCP grant and apply to subsequent commands. The sandbox uses a private network namespace and relays only the selected IPv4 TCP endpoints. There is no general host network, arbitrary Unix-socket access, Internet access or PostgreSQL relay.
+For terminals, the default working directory is the actual host project path (e.g. `/home/user/apps/example`), not `/workspace`. Absolute or project-relative host paths may be used. The existing `run_command` name remains available, but its sandbox/timeout behavior has changed. Refresh the MCP tool definitions after updating.
 
-Example **inside an authorized MCP command**, assuming the required CLI is installed:
+Example workflow:
 
-```bash
-mysql --protocol=TCP -h 127.0.0.1 -u APP_DB_USER -p
-redis-cli -h 127.0.0.1 -p 6379 PING
-```
+1. Call `terminal_start` with `{}` and retain the returned `session_id`.
+2. Call `terminal_write` with that ID and `{"input":"pwd\\n"}` (send an actual newline in the JSON string).
+3. Call `terminal_read` with `offset: 0`; use the returned `next_offset` in the following read.
+4. Send more shell commands, install a user-local dependency or launch a long-running process. Reconnect in a subsequent MCP request using the same session ID. OAuth refresh rotation does not change session ownership.
+5. Use `terminal_stop` when done.
 
-The MySQL example requires interactive password input and is intended as a connection reference: for actual noninteractive MCP commands, use the application's existing authorized credential configuration without printing passwords or passing them in the prompt. Prefer read-only SQL for diagnosis. For authenticated Redis, use the application's configured credentials.
+PTY output combines stdout and stderr. The response includes `stdout`, `stderr`, `merged_streams`, `output`, `output_base64`, `offset`, `next_offset`, `oldest_offset`, `end_offset`, `status`, `exit_code` and `truncated`. Base64 preserves binary or split UTF-8 sequences. The last 2 MiB of output is kept in memory per session, read in fragments of up to 64 KiB. If the reader falls behind, `truncated` indicates that earlier bytes were evicted. Up to 128 retained/active sessions are managed; completed session records are evicted as needed and after one hour on subsequent starts. Input fragments can be split into 64 KiB chunks. These limits bound transport and memory usage, not shell execution time.
 
-**Redis may be shared by multiple applications.** Enabling access does not provide key-level isolation by itself. Use Redis ACLs and least-privilege SQL accounts; selecting a Redis database number is not a security boundary. Do not enable these permissions if access to the shared service is unacceptable.
+### Service lifecycle and control
 
-### Suggested instructions for an AI working on a project
+The installer runs `open-go-panel-mcp.service` independently on `127.0.0.1:18443`. Caddy exposes only the intended public MCP and OAuth routes. OAuth uses authorization code + S256 PKCE, dynamic registration, short-lived access tokens and rotating refresh tokens. The administrative control socket is root-only and is never exposed by Caddy.
 
-Copy or adapt this prompt after selecting the appropriate project plugin:
+Each terminal runs in a transient systemd service with its own PTY and managed cgroup. Disconnecting from an MCP request or closing the admin panel does not terminate the session. Restarting/stopping the MCP service, rebooting, revoking the grant, changing its mode, deleting the app, or expiry of the registered client's refresh authorization stops managed sessions. Output and session IDs are not persisted across MCP service restarts. The panel lists sessions and can stop them independently of the AI client.
 
-> Work only in the connected application. Inspect the existing files and project conventions first. Use relative paths, read a file before editing, pass its current version, and preserve unrelated code. Do not expose .env values, credentials or private keys in responses. Start database diagnostics with read-only queries. Ask before destructive file operations, schema changes, data deletion or production-impacting commands. Run available local tests and report the files changed, checks performed and any failures. Do not claim success when tools return an error or truncated output.
+A root-capable shell can deliberately create processes or services outside its managed cgroup or change the panel itself. Revocation cannot undo earlier system changes or guarantee control of processes intentionally moved outside the managed unit. Treat root access as equivalent to handing over a root SSH session. Use the lowest suitable level and revoke access when finished.
 
-Useful first requests include inspecting `go.mod` or `package.json`, mapping application modules, diagnosing a build failure, reviewing a query, making a small version-checked change, or running an existing local test. Dependencies must already be available inside the project or read-only system runtime; ordinary network downloads and host-user caches are intentionally unavailable. The AI receives no panel-wide deployment, root terminal or administrator API through this plugin.
-
-### Isolation and service lifecycle
-
-The installer runs `open-go-panel-mcp.service` independently using the same Go binary in MCP mode, listening on `127.0.0.1:18443`. Caddy exposes only MCP, OAuth discovery/authorization and health routes on the dedicated HTTPS domain. The administrative panel remains private.
-
-Each command or file helper executes under the app's Linux UID/GID in separate mount, PID, network and IPC namespaces. Only the project, read-only system runtimes and private temporary files are exposed. File tools reject individual hardlinked files; shell commands check the project tree for hardlinks. There is no unisolated fallback. Concurrent operations are bounded (one operation per app, up to four globally). Audit records include operation, path, timing and result when audit logging is enabled, not command text or file contents.
-
-The plugin grants real read/write/execute access to project files, including secrets accessible to the owner. Use only trusted AI clients and grant access only to projects you intend to expose. Direct tool isolation is not isolation of the separately deployed application itself. Closing the panel does not stop MCP. OAuth grants are excluded from server snapshots so restoring a backup cannot reactivate revoked access; authorize again on a recovered server.
+When panel audit logging is enabled, audit records include the application, OAuth grant/client identifier, session, Linux user, access level, action, input byte count and exit status; raw command/input contents and output are not stored in the panel audit log. Ordinary OS logs, shell history and process metadata may still contain command text. Never send secrets in command arguments unless required and authorized. OAuth grants are excluded from server snapshots; reauthorize on a recovered host.
 
 ```bash
 systemctl status open-go-panel-mcp.service
 journalctl -u open-go-panel-mcp.service -n 100 --no-pager
 ```
 
-Use the panel to configure and revoke connections. Do not expose the local listener directly or disable sandbox checks to work around a connection failure.
+### Suggested AI project instructions
+
+> Inspect the current project before changing anything. Use the version-checked file tools for edits; keep unrelated files unchanged. Terminal access uses the configured Linux identity. Do not expose credentials or .env values. Start database diagnostics with read-only queries. Ask before destructive operations, privilege changes, system package installations and production-impacting commands. Retain the terminal session ID and output offset for long-running work. Report actual checks and failures.
 
 ## PHP 7.4 for legacy ionCube sites (per application)
 
@@ -554,7 +566,7 @@ During an update the previous binary is kept at:
 
 After replacement the installer restarts Open Go Panel and checks `/health`. If the new binary fails to start or does not become healthy, the previous binary is restored automatically.
 
-Release builds are gated by Go tests/vet, browser regression checks for section tabs and checkbox geometry, Ubuntu 24.04 production smoke tests, managed-server snapshot recovery tests and MCP integration tests. The production smoke exercises installation, authentication, managed users/apps, terminal assets, background commands, PHP extension checks, SQL imports and automatic binary rollback. MCP tests cover OAuth, filesystem isolation, large projects, revocation and permitted database TCP relays. These checks do not replace a restore drill or testing your own application.
+Release builds are gated by Go tests/vet, browser regression checks for section tabs and checkbox geometry, Ubuntu 24.04 production smoke tests, managed-server snapshot recovery tests and MCP integration tests. The production smoke exercises installation, authentication, managed users/apps, terminal assets, background commands, PHP extension checks, SQL imports and automatic binary rollback. MCP tests cover OAuth, file-helper isolation, large projects, host terminals, downloads, privilege levels and session revocation. These checks do not replace a restore drill or testing your own application.
 
 ## Application scheduled tasks (cron)
 
