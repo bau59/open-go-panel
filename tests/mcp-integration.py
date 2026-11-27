@@ -93,8 +93,8 @@ root_b = f"/home/{USER}/apps/svg4"
 sudo("-u",USER,"sh","-c",f"printf 'secret sibling\\n' > {root_b}/secret.txt; printf 'original\\n' > {root_a}/demo.txt; ln -s ../svg4/secret.txt {root_a}/escape-relative; ln -s {root_b}/secret.txt {root_a}/escape-absolute")
 sudo("sh","-c",f"printf 'read only\\n' > {root_a}/readonly.txt; chmod 0444 {root_a}/readonly.txt")
 
-def authorize(app_id):
-    post(f"/apps/{app_id}/chatgpt/enable")
+def authorize(app_id, enable=True):
+    if enable: post(f"/apps/{app_id}/chatgpt/enable")
     page, _ = request(PANEL, f"/apps/{app_id}")
     assert "Awaiting authorization" in page
     resource = re.search(r'id="mcp-plugin-url" readonly value="([^"]+)"',page).group(1)
@@ -146,48 +146,42 @@ def call(conn,name,args,failed=False):
         raise AssertionError(f"{name}: expected failure={failed}; got {detail}")
     return result["structuredContent"]
 
-# Test the real kernel namespace and TCP forwarding with disposable host
-# endpoints. No application credentials or live databases are used.
+# Ordinary host permissions, not the former network namespace.
 class DatabaseProbe(socketserver.BaseRequestHandler):
     def handle(self):
         self.request.sendall(str(self.server.server_address[1]).encode())
 
-def probe(port):
-    source=f"import socket; s=socket.create_connection(('127.0.0.1',{port}),2); print(s.recv(32).decode()); s.close()"
-    return {"command":"python3 -c "+shlex.quote(source)}
+def collect(conn, session_id, timeout=20):
+    end=time.monotonic()+timeout
+    offset=0
+    data=b""
+    while time.monotonic()<end:
+        result=call(conn,"terminal_read",{"session_id":session_id,"offset":offset})
+        assert not result["truncated"], "unexpected output loss"
+        data+=base64.b64decode(result["output_base64"])
+        offset=result["next_offset"]
+        if result["status"]=="exited" and offset==result["end_offset"]:
+            return data.decode(errors="replace"),result["exit_code"]
+        time.sleep(.15)
+    raise AssertionError("terminal did not finish")
 
-# Hosted runners sometimes start preinstalled database services.
-# These are disposable machines, guarded by the assertions at the top.
-for service in ("mysql.service","redis-server.service"):
-    subprocess.run(["sudo","systemctl","stop",service],check=False,capture_output=True)
-fixtures=[]
+def command(conn, text):
+    result=call(conn,"terminal_start",{"command":text})
+    out,code=collect(conn,result["session_id"])
+    assert code==0, f"terminal command failed: {out}"
+    return out
+
+endpoint=socketserver.ThreadingTCPServer(("127.0.0.1",0),DatabaseProbe)
+threading.Thread(target=endpoint.serve_forever,daemon=True).start()
 try:
-    for port in (3306,6379,19090):
-        endpoint=socketserver.ThreadingTCPServer(("127.0.0.1",port),DatabaseProbe)
-        fixtures.append(endpoint)
-        threading.Thread(target=endpoint.serve_forever,daemon=True).start()
-    call(a_conn,"run_command",probe(3306),failed=True)
-    post(f"/apps/{a}/chatgpt/network",{"mysql":"1"})
-    assert call(a_conn,"run_command",probe(3306))["output"].strip()=="3306"
-    call(a_conn,"run_command",probe(6379),failed=True)
-    call(a_conn,"run_command",probe(19090),failed=True)
-    call(b_conn,"run_command",probe(3306),failed=True)
-    post(f"/apps/{a}/chatgpt/network",{"mysql":"1","redis":"1"})
-    assert call(a_conn,"run_command",probe(6379))["output"].strip()=="6379"
-    for source in (
-        "import socket; socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)",
-        "import socket; socket.socket(socket.AF_INET,socket.SOCK_DGRAM)",
-        "import socket; socket.create_connection(('192.0.2.1',3306),1)",
-    ):
-        call(a_conn,"run_command",{"command":"python3 -c "+shlex.quote(source)},failed=True)
-    post(f"/apps/{a}/chatgpt/network",{})
-    call(a_conn,"run_command",probe(3306),failed=True)
+    port=endpoint.server_address[1]
+    source=f"import socket; s=socket.create_connection(('127.0.0.1',{port}),2); print(s.recv(32).decode()); s.close()"
+    assert str(port) in command(a_conn,"python3 -c "+shlex.quote(source))
 finally:
-    for endpoint in fixtures:
-        endpoint.shutdown()
-        endpoint.server_close()
+    endpoint.shutdown()
+    endpoint.server_close()
 
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==8
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
 assert rpc(a_conn,"initialize",{"protocolVersion":"2025-11-25"})["result"]["protocolVersion"]=="2025-11-25"
 data=call(a_conn,"read_file",{"path":"demo.txt"})
 assert data["content"]=="original\n"
@@ -207,21 +201,47 @@ call(a_conn,"create_directory",{"path":"empty"})
 call(a_conn,"delete_path",{"path":"empty"})
 for target in ["../svg4/secret.txt",root_b+"/secret.txt","escape-relative","escape-absolute"]:
     call(a_conn,"read_file",{"path":target},failed=True)
-    command="cat "+target
-    result=call(a_conn,"run_command",{"command":command},failed=True)
-    assert "secret sibling" not in result["output"]
-    call(a_conn,"run_command",{"command":"printf bad > "+target},failed=True)
 assert sudo("-u",USER,"cat",root_b+"/secret.txt")=="secret sibling"
 assert call(b_conn,"read_file",{"path":"secret.txt"})["content"]=="secret sibling\n"
-result=call(a_conn,"run_command",{"command":"id -u; pwd; printf ok > command.txt"})
-assert result["output"].splitlines()==[sudo("id","-u",USER),"/workspace"]
+out=command(a_conn,"id -u; pwd; printf ok > command.txt")
+assert sudo("id","-u",USER) in out and root_a in out
 assert sudo("stat","-c","%U",root_a+"/command.txt")==USER
-result=call(a_conn,"run_command",{"command":"yes a | head -c 500000"})
-assert result["truncated"] and len(result["output"])<=256*1024
-marker="mcp-timeout-"+secrets.token_hex(8)
-result=call(a_conn,"run_command",{"command":f"sh -c 'sleep 60; echo {marker}' & wait","timeout_seconds":1},failed=True)
-assert result["timed_out"]
-time.sleep(1)
+assert "secret sibling" in command(a_conn,"cat "+shlex.quote(root_b+"/secret.txt"))
+# Arbitrary host paths and network access now follow Linux permissions.
+result=call(a_conn,"run_command",{"command":"sleep 3; printf 'later-output\\n'","timeout_seconds":1})
+assert result["status"]!="exited", "run_command killed a long process"
+out,code=collect(a_conn,result["session_id"])
+assert code==0 and "later-output" in out
+
+# Actual interactive shell, repeated MCP requests, and isolated grant ownership.
+interactive=call(a_conn,"terminal_start",{})["session_id"]
+call(a_conn,"terminal_resize",{"session_id":interactive,"rows":32,"cols":110})
+call(b_conn,"terminal_read",{"session_id":interactive},failed=True)
+call(a_conn,"terminal_write",{"session_id":interactive,"input":"printf '%s%s\\n' 'interactive-' 'marker'; exit 0\n"})
+out,code=collect(a_conn,interactive)
+assert code==0 and "interactive-marker" in out
+assert any(s["session_id"]==interactive for s in call(a_conn,"terminal_list",{})["sessions"])
+
+# Download a previously unknown executable from a test HTTP endpoint.
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class ToolDownload(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body=b"#!/bin/sh\nprintf 'downloaded-tool-ok\\n'\n"
+        self.send_response(200); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self,*args): pass
+download=ThreadingHTTPServer(("127.0.0.1",0),ToolDownload)
+threading.Thread(target=download.serve_forever,daemon=True).start()
+try:
+    url=f"http://127.0.0.1:{download.server_address[1]}/unknown-tool"
+    assert "downloaded-tool-ok" in command(a_conn,"mkdir -p \"$HOME/.local/bin\"; curl -fsS "+shlex.quote(url)+" -o \"$HOME/.local/bin/ogp-test-tool\" && chmod +x \"$HOME/.local/bin/ogp-test-tool\" && \"$HOME/.local/bin/ogp-test-tool\"")
+finally:
+    download.shutdown();download.server_close()
+
+# Explicit stop also terminates managed children.
+marker="mcp-child-"+secrets.token_hex(8)
+session=call(a_conn,"terminal_start",{"command":f"sh -c 'sleep 60; echo {marker}' & wait"})["session_id"]
+call(a_conn,"terminal_stop",{"session_id":session})
+assert call(a_conn,"terminal_status",{"session_id":session})["status"]=="exited"
 assert subprocess.run(["sudo","pgrep","-u",USER,"-f",marker],capture_output=True).returncode==1, "orphan process"
 # Large projects must not be rejected before the requested operation starts.
 # Use one wide directory to also exercise the streaming directory traversal.
@@ -229,7 +249,7 @@ sudo("-u",USER,"python3","-c", "import os,sys; d=sys.argv[1]; os.mkdir(d); [open
 try:
     assert call(a_conn,"read_file",{"path":"demo.txt"})["content"]=="manual"
     assert call(a_conn,"list_directory",{"path":"large"})["truncated"]
-    assert call(a_conn,"run_command",{"command":"pwd && id -u"})["output"].splitlines()==["/workspace",sudo("id","-u",USER)]
+    assert root_a in command(a_conn,"pwd && id -u")
 finally:
     sudo("-u",USER,"rm","-rf",root_a+"/large")
 # Same-UID hardlinks remain blocked; unrelated file tools still work.
@@ -239,12 +259,11 @@ try:
     call(a_conn,"edit_file",{"path":"hardlink","content":"bad","version":hashlib.sha256(b"secret sibling\\n").hexdigest()},failed=True)
     call(a_conn,"delete_path",{"path":"hardlink"},failed=True)
     assert call(a_conn,"read_file",{"path":"demo.txt"})["content"]=="manual"
-    call(a_conn,"run_command",{"command":"cat hardlink"},failed=True)
     assert sudo("-u",USER,"cat",root_b+"/secret.txt")=="secret sibling"
 finally:
     sudo("-u",USER,"rm",root_a+"/hardlink")
 sudo("systemctl","stop","open-go-panel.service")
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==8
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
 sudo("systemctl","start","open-go-panel.service")
 wait_health(PANEL)
 request(PANEL, "/login", {"username":"admin","password":password}, expected=303)
@@ -252,11 +271,36 @@ page,_=request(PANEL,"/")
 csrf=re.search(r'name="ogp_csrf" value="([^"]+)"',page).group(1)
 sudo("systemctl","restart","open-go-panel-mcp.service")
 wait_health(MCP)
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==8
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
 sudo("systemctl","is-enabled","open-go-panel-mcp.service")
-post(f"/apps/{a}/chatgpt/revoke")
+# Grant policy changes revoke both OAuth tokens and all associated sessions.
+old=a_conn
+long=call(a_conn,"terminal_start",{"command":"sleep 120"})["session_id"]
+post(f"/apps/{a}/chatgpt/terminal-mode",{"mode":"root","confirm":"1"})
+rpc(old,"tools/list",expected=401)
+request(MCP,old[1]+"/token",{"grant_type":"refresh_token","client_id":old[3],"resource":old[2],"refresh_token":old[4]["refresh_token"]},expected=400)
+assert subprocess.run(["sudo","systemctl","is-active","--quiet",f"ogp-mcp-terminal-{long}.service"]).returncode!=0
+a_conn=authorize(a,enable=False)
+assert command(a_conn,"id -u").strip()=="0"
+# A root terminal must not change the file-tool identity.
+call(a_conn,"create_file",{"path":"still-user.txt","content":"user"})
+assert sudo("stat","-c","%U",root_a+"/still-user.txt")==USER
+post(f"/apps/{a}/chatgpt/terminal-mode",{"mode":"sudo","confirm":"1"})
 rpc(a_conn,"tools/list",expected=401)
-assert len(rpc(b_conn,"tools/list")["result"]["tools"])==8
+a_conn=authorize(a,enable=False)
+# sudo policy remains the server owner's explicit decision.
+sudo("tee","/etc/sudoers.d/ogpmcp-test",input=f"{USER} ALL=(root) NOPASSWD: /usr/bin/id -u\n")
+sudo("chmod","0440","/etc/sudoers.d/ogpmcp-test")
+try:
+    assert command(a_conn,"sudo -n /usr/bin/id -u").strip()=="0"
+    assert command(a_conn,"id -u").strip()==sudo("id","-u",USER)
+finally:
+    sudo("rm","-f","/etc/sudoers.d/ogpmcp-test")
+long=call(a_conn,"terminal_start",{"command":"sleep 120"})["session_id"]
+post(f"/apps/{a}/chatgpt/revoke")
+assert subprocess.run(["sudo","systemctl","is-active","--quiet",f"ogp-mcp-terminal-{long}.service"]).returncode!=0
+rpc(a_conn,"tools/list",expected=401)
+assert len(rpc(b_conn,"tools/list")["result"]["tools"])==15
 request(MCP,a_conn[1]+"/token",{"grant_type":"refresh_token","client_id":a_conn[3],"resource":a_conn[2],"refresh_token":a_conn[4]["refresh_token"]},expected=404)
 request(MCP,"/admin",expected=404)
-print("MCP authorization, file ownership, project isolation, timeout, restart and revocation passed")
+print("MCP OAuth, file isolation, host PTY, downloads, sudo/root, policy rotation and revocation passed")
