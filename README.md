@@ -170,7 +170,7 @@ Each terminal runs in a transient systemd service with its own PTY and managed c
 
 A root-capable shell can deliberately create processes or services outside its managed cgroup or change the panel itself. Revocation cannot undo earlier system changes or guarantee control of processes intentionally moved outside the managed unit. Treat root access as equivalent to handing over a root SSH session. Use the lowest suitable level and revoke access when finished.
 
-Audit records include the application, OAuth grant/client identifier, session, Linux user, access level, action, input byte count and exit status; raw command/input contents and output are not stored in the panel audit log. Ordinary OS logs, shell history and process metadata may still contain command text. Never send secrets in command arguments unless required and authorized. OAuth grants are excluded from server snapshots; reauthorize on a recovered host.
+When panel audit logging is enabled, audit records include the application, OAuth grant/client identifier, session, Linux user, access level, action, input byte count and exit status; raw command/input contents and output are not stored in the panel audit log. Ordinary OS logs, shell history and process metadata may still contain command text. Never send secrets in command arguments unless required and authorized. OAuth grants are excluded from server snapshots; reauthorize on a recovered host.
 
 ```bash
 systemctl status open-go-panel-mcp.service

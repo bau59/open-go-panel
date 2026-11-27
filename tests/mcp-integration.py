@@ -165,9 +165,9 @@ def collect(conn, session_id, timeout=20):
         time.sleep(.15)
     raise AssertionError(f"terminal did not finish; test output: {data[-4096:]!r}")
 
-def command(conn, text):
+def command(conn, text, timeout=20):
     result=call(conn,"terminal_start",{"command":text})
-    out,code=collect(conn,result["session_id"])
+    out,code=collect(conn,result["session_id"],timeout)
     assert code==0, f"terminal command failed: {out}"
     return out
 
@@ -237,6 +237,9 @@ try:
 finally:
     download.shutdown();download.server_close()
 
+# Real outbound HTTPS, independent of the runner-local test endpoint.
+assert "Copyright" in command(a_conn,"curl -fsSL --retry 2 --connect-timeout 5 --max-time 20 https://raw.githubusercontent.com/golang/go/master/LICENSE",timeout=75)
+
 # Explicit stop also terminates managed children.
 marker="mcp-child-"+secrets.token_hex(8)
 session=call(a_conn,"terminal_start",{"command":f"sh -c 'sleep 60; echo {marker}' & wait"})["session_id"]
@@ -262,8 +265,11 @@ try:
     assert sudo("-u",USER,"cat",root_b+"/secret.txt")=="secret sibling"
 finally:
     sudo("-u",USER,"rm",root_a+"/hardlink")
+live=call(a_conn,"terminal_start",{"command":"sleep 3; printf 'survived-panel-close\\n'"})["session_id"]
 sudo("systemctl","stop","open-go-panel.service")
 assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+out,code=collect(a_conn,live)
+assert code==0 and "survived-panel-close" in out
 sudo("systemctl","start","open-go-panel.service")
 wait_health(PANEL)
 request(PANEL, "/login", {"username":"admin","password":password}, expected=303)
@@ -282,6 +288,8 @@ request(MCP,old[1]+"/token",{"grant_type":"refresh_token","client_id":old[3],"re
 assert subprocess.run(["sudo","systemctl","is-active","--quiet",f"ogp-mcp-terminal-{long}.service"]).returncode!=0
 a_conn=authorize(a,enable=False)
 assert command(a_conn,"id -u").strip()=="0"
+# Package installation is tested only on the disposable hosted runner.
+assert "Hello, world!" in command(a_conn,"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends hello && /usr/bin/hello",timeout=120)
 # A root terminal must not change the file-tool identity.
 call(a_conn,"create_file",{"path":"still-user.txt","content":"user"})
 assert sudo("stat","-c","%U",root_a+"/still-user.txt")==USER

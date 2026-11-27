@@ -79,7 +79,7 @@ func registerMCPRoutes(mux *http.ServeMux,sessions *sessionStore,cfg Config){
         if (mode=="root"||mode=="sudo")&&r.FormValue("confirm")!="1"{return errors.New("confirm elevated terminal access")}
         previous,err:=grants.SetTerminalMode(r.Context(),id,mode);if err!=nil{return err}
         cfg.State.Audit(r.Context(),"mcp.terminal.mode",fmt.Sprintf("app:%d",id),"mode="+mode+"; old OAuth tokens invalidated")
-        if err:=mcpaccess.AdminTerminalRevoke(r.Context(),previous);err!=nil{return fmt.Errorf("tokens invalidated; terminal stop not confirmed: %w",err)}
+        if err:=mcpaccess.AdminTerminalPolicyChanged(r.Context(),previous);err!=nil{return fmt.Errorf("tokens invalidated; terminal stop not confirmed: %w",err)}
         return nil
     })
     post("terminal-stop",func(r *http.Request,id int64)error{

@@ -153,6 +153,8 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     cmd.Stdout=terminalOutput{s};cmd.Stderr=terminalOutput{s}
     if err=cmd.Start();err!=nil{closePTY();return nil,err}
     m.sessions[id]=s
+    kind:="shell";if command!=""{kind="command"}
+    m.audit(s,"start",fmt.Sprintf("kind=%s command_bytes=%d (content omitted)",kind,len(command)))
     drained:=make(chan struct{})
     go func(){defer close(drained);buf:=make([]byte,8192);for{n,err:=tty.Read(buf);if n>0{s.append(buf[:n])};if err!=nil{return}}}()
     go func(){for{select{case <-s.done:return;case data:=<-s.input:if _,err:=tty.Write(data);err!=nil{return}}}}()
@@ -171,12 +173,12 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     // This closes the start/stop race with grant revocation.
     readyCtx,cancel:=context.WithTimeout(context.Background(),8*time.Second);defer cancel()
     for {
-        select{case <-s.done:m.audit(s,"start","command exited");return s,nil;default:}
+        select{case <-s.done:return s,nil;default:}
         out,e:=exec.CommandContext(readyCtx,"systemctl","show","--property=ActiveState","--value",terminalUnit(id)).Output()
         if e==nil&&strings.TrimSpace(string(out))=="active" {
             _=slave.Close()
             s.mu.Lock();if s.info.Status=="starting"{s.info.Status="running"};s.mu.Unlock()
-            m.audit(s,"start","");return s,nil
+            return s,nil
         }
         select{case <-s.done:return s,nil;case <-readyCtx.Done():
             _=cmd.Process.Kill();_ = slave.Close();_ = s.tty.Close()
@@ -218,13 +220,13 @@ func (m *TerminalManager) stopAll(sessions []*terminalSession)error{
     for range sessions{if err:=<-errs;err!=nil{failures=append(failures,err)}}
     return errors.Join(failures...)
 }
-func (m *TerminalManager) stopMatching(appID int64,id,grant string)error{
+func (m *TerminalManager) stopMatching(appID int64,id,grant,policy string)error{
     // Serialize the lookup with startup, but never hold the manager lock
     // while waiting for systemd to terminate a process group.
     m.mu.Lock()
     var sessions []*terminalSession
     for _,s:=range m.sessions{
-        if s.conn.AppID==appID&&(id==""||s.info.ID==id)&&(grant==""||s.conn.ID==grant){sessions=append(sessions,s)}
+        if s.conn.AppID==appID&&(id==""||s.info.ID==id)&&(grant==""||s.conn.ID==grant)&&(policy==""||s.conn.TerminalPolicy==policy){sessions=append(sessions,s)}
     }
     m.mu.Unlock()
     if id!=""&&len(sessions)==0{return errors.New("terminal session not found")}
@@ -263,17 +265,17 @@ func (m *TerminalManager) ServeAdmin(ctx context.Context)(func(),error){
     if err:=os.Chmod(terminalSocket,0600);err!=nil{ln.Close();return nil,err}
     mux:=http.NewServeMux()
     mux.HandleFunc("POST /sessions",func(w http.ResponseWriter,r *http.Request){
-        var req struct{AppID int64; ID,Grant,Action string}
+        var req struct{AppID int64; ID,Grant,Policy,Action string}
         r.Body=http.MaxBytesReader(w,r.Body,4096)
         if json.NewDecoder(r.Body).Decode(&req)!=nil||req.AppID<=0{http.Error(w,"invalid request",400);return}
         switch req.Action{
         case "list":jsonResponse(w,200,m.list(req.AppID,"","",""))
         case "stop":
             if !challengeRE.MatchString(req.ID){http.Error(w,"invalid session",400);return}
-            if err:=m.stopMatching(req.AppID,req.ID,"");err!=nil{http.Error(w,err.Error(),500);return};jsonResponse(w,200,map[string]bool{"ok":true})
+            if err:=m.stopMatching(req.AppID,req.ID,"","");err!=nil{http.Error(w,err.Error(),500);return};jsonResponse(w,200,map[string]bool{"ok":true})
         case "revoke":
             if !challengeRE.MatchString(req.Grant){http.Error(w,"invalid grant",400);return}
-            if err:=m.stopMatching(req.AppID,"",req.Grant);err!=nil{http.Error(w,err.Error(),500);return};jsonResponse(w,200,map[string]bool{"ok":true})
+            if err:=m.stopMatching(req.AppID,"",req.Grant,req.Policy);err!=nil{http.Error(w,err.Error(),500);return};jsonResponse(w,200,map[string]bool{"ok":true})
         default:http.Error(w,"invalid action",400)
         }
     })
@@ -282,8 +284,8 @@ func (m *TerminalManager) ServeAdmin(ctx context.Context)(func(),error){
     go m.Monitor(ctx)
     return func(){_ = srv.Close();_ = os.Remove(terminalSocket)},nil
 }
-func terminalAdmin(ctx context.Context,appID int64,action,id,grant string,out any)error{
-    data,err:=json.Marshal(map[string]any{"AppID":appID,"Action":action,"ID":id,"Grant":grant});if err!=nil{return err}
+func terminalAdmin(ctx context.Context,appID int64,action,id,grant,policy string,out any)error{
+    data,err:=json.Marshal(map[string]any{"AppID":appID,"Action":action,"ID":id,"Grant":grant,"Policy":policy});if err!=nil{return err}
     tr:=&http.Transport{DialContext:func(ctx context.Context,_,_ string)(net.Conn,error){return (&net.Dialer{}).DialContext(ctx,"unix",terminalSocket)}}
     defer tr.CloseIdleConnections()
     req,err:=http.NewRequestWithContext(ctx,"POST","http://localhost/sessions",strings.NewReader(string(data)));if err!=nil{return err}
@@ -292,11 +294,18 @@ func terminalAdmin(ctx context.Context,appID int64,action,id,grant string,out an
     return json.NewDecoder(res.Body).Decode(out)
 }
 func AdminTerminalList(ctx context.Context,appID int64)([]TerminalInfo,error){
-    var out []TerminalInfo;err:=terminalAdmin(ctx,appID,"list","","",&out);return out,err
+    var out []TerminalInfo;err:=terminalAdmin(ctx,appID,"list","","","",&out);return out,err
 }
 func AdminTerminalStop(ctx context.Context,appID int64,id string)error{
-    var out map[string]bool;return terminalAdmin(ctx,appID,"stop",id,"",&out)
+    var out map[string]bool;return terminalAdmin(ctx,appID,"stop",id,"","",&out)
 }
 func AdminTerminalRevoke(ctx context.Context,c Connection)error{
-    var out map[string]bool;return terminalAdmin(ctx,c.AppID,"revoke","",c.ID,&out)
+    var out map[string]bool;return terminalAdmin(ctx,c.AppID,"revoke","",c.ID,"",&out)
+}
+
+
+// A policy change stops the old generation, never a concurrently reauthorized
+// client under the new mode. Full revoke still stops all generations.
+func AdminTerminalPolicyChanged(ctx context.Context,c Connection)error{
+    var out map[string]bool;return terminalAdmin(ctx,c.AppID,"revoke","",c.ID,c.TerminalPolicy,&out)
 }

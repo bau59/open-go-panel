@@ -46,3 +46,27 @@ func TestTerminalOutputOffsets(t *testing.T){
     got=s.read(0)
     if got["truncated"]!=true||got["oldest_offset"]!=int64(6){t.Fatalf("lost offset: %+v",got)}
 }
+
+
+func TestTerminalOwnershipIsClientAndPolicyScoped(t *testing.T){
+    c:=Connection{AppID:1,ID:"grant",ClientID:"client-a",TerminalPolicy:"user"}
+    session:=&terminalSession{conn:c,info:TerminalInfo{ID:"session",AppID:1}}
+    manager:=&TerminalManager{sessions:map[string]*terminalSession{"session":session}}
+    if _,err:=manager.get(c,"session");err!=nil{t.Fatal(err)}
+    for _,other:=range []Connection{
+        {AppID:1,ID:"grant",ClientID:"client-b",TerminalPolicy:"user"},
+        {AppID:1,ID:"grant",ClientID:"client-a",TerminalPolicy:"root:new"},
+        {AppID:2,ID:"other",ClientID:"client-a",TerminalPolicy:"user"},
+    }{
+        if _,err:=manager.get(other,"session");err==nil{t.Fatal("unrelated client or policy accessed terminal")}
+    }
+    if got:=manager.list(1,"grant","client-b","user");len(got)!=0{t.Fatal("unrelated client listed session")}
+}
+
+func TestTerminalBufferWrap(t *testing.T){
+    s:=&terminalSession{}
+    s.append([]byte(strings.Repeat("a",terminalHistory-2)))
+    s.append([]byte("bcde"))
+    if got:=s.read(terminalHistory-4);got["stdout"]!="aabcde"||got["next_offset"]!=int64(terminalHistory+2){t.Fatalf("incorrect wrap: %+v",got)}
+    if got:=s.read(0);got["oldest_offset"]!=int64(2)||got["truncated"]!=true{t.Fatal("missing truncation marker")}
+}
