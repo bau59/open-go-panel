@@ -36,7 +36,7 @@ def request(base, path, data=None, token=None, expected=200):
     if token:
         headers["Authorization"] = "Bearer " + token
     if isinstance(data, dict):
-        data = urllib.parse.urlencode(data).encode()
+        data = urllib.parse.urlencode(data,doseq=True).encode()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     elif isinstance(data, bytes):
         headers["Content-Type"] = "application/json"
@@ -328,3 +328,100 @@ assert len(rpc(b_conn,"tools/list")["result"]["tools"])==16
 request(MCP,a_conn[1]+"/token",{"grant_type":"refresh_token","client_id":a_conn[3],"resource":a_conn[2],"refresh_token":a_conn[4]["refresh_token"]},expected=404)
 request(MCP,"/admin",expected=404)
 print("MCP OAuth, file isolation, host PTY, downloads, sudo/root, policy rotation and revocation passed")
+
+
+# App dependency smoke on the same disposable systemd runner.
+# Actual compiled Go binary and an Air-shaped supervisor which keeps running
+# without a listener. No production service or real user application touched.
+import pathlib
+import tempfile
+import socket
+before=app_ids()
+post("/apps",{"user":USER,"name":"dependency-test","type":"go"})
+dep_id,=app_ids()-before
+dep_root=f"/home/{USER}/apps/dependency-test"
+app_unit=f"open-go-panel-app-{dep_id}.service"
+dropdir=f"/etc/systemd/system/{app_unit}.d"
+dropin=dropdir+"/50-ogp-dependencies.conf"
+custom=dropdir+"/90-test-custom.conf"
+ready="ogp-test-ready.service"
+failure="ogp-test-failure.service"
+cycle="ogp-test-cycle.service"
+marker="/run/ogp-dependency-ready"
+def unit_file(name,body):
+    sudo("tee","/etc/systemd/system/"+name,input=body)
+def dep_save(units,modes,expected=303):
+    request(PANEL,f"/apps/{dep_id}/dependencies",{"ogp_csrf":csrf,"dependency_unit":units,"dependency_mode":modes},expected=expected)
+def state_page():
+    return request(PANEL,f"/apps/{dep_id}")[0]
+def status_is(label):
+    return re.search(r'class="runtime-state"><strong[^>]*>'+label+r'</strong>',state_page()) is not None
+def service_settings(mode,command=""):
+    post(f"/apps/{dep_id}/service",{"mode":"form","run_mode":mode,"command":command,"restart":"no","auto_start":"1","path":dep_root+":/usr/local/go/bin:/usr/bin:/bin"})
+try:
+    with tempfile.TemporaryDirectory() as tmp:
+        source=pathlib.Path(tmp)/"main.go"
+        source.write_text('''package main
+import ("os";"net/http";"log")
+func main(){
+ if _,err:=os.Stat("/run/ogp-dependency-ready");err!=nil{log.Fatal(err)}
+ http.HandleFunc("/",func(w http.ResponseWriter,r *http.Request){w.Write([]byte("ready"))})
+ log.Fatal(http.ListenAndServe("127.0.0.1:"+os.Getenv("PORT"),nil))
+}
+''')
+        binary=str(pathlib.Path(tmp)/"app")
+        subprocess.run(["go","build","-o",binary,str(source)],check=True)
+        sudo("install","-o",USER,"-g",USER,"-m","0755",binary,dep_root+"/.ogp-app")
+    service_settings("go-binary")
+    unit_file(ready,f"[Unit]\nDescription=Test readiness\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/touch {marker}\nExecStop=/usr/bin/rm -f {marker}\n")
+    unit_file(failure,"[Unit]\nDescription=Test failure\n[Service]\nType=oneshot\nExecStart=/usr/bin/false\n")
+    unit_file(cycle,f"[Unit]\nDescription=Test cycle\nAfter={app_unit}\n[Service]\nType=oneshot\nExecStart=/usr/bin/true\n")
+    sudo("mkdir","-p",dropdir)
+    sudo("tee",custom,input="[Service]\nEnvironment=OGP_DEP_TEST=1\n")
+    sudo("systemctl","daemon-reload")
+    page=state_page()
+    assert "System service dependencies" in page and ready in page
+    dep_save([ready,failure,ready],["required","optional","optional"])
+    configured=sudo("cat",dropin)
+    assert f"Requires={ready}" in configured and f"Wants={failure}" in configured and configured.count(ready)==2
+    assert subprocess.run(["sudo","systemctl","is-active","--quiet",app_unit]).returncode!=0
+    post(f"/apps/{dep_id}/start")
+    for _ in range(40):
+        if status_is("Running"):break
+        time.sleep(.25)
+    else: raise AssertionError("compiled app did not become ready after dependencies")
+    assert sudo("test","-f",marker)==""
+    started=sudo("systemctl","show","--property=ActiveEnterTimestampMonotonic","--value",app_unit)
+    dep_save([ready,failure],["required","optional"])
+    assert sudo("systemctl","show","--property=ActiveEnterTimestampMonotonic","--value",app_unit)==started,"save restarted app"
+    service_settings("go-binary")
+    assert sudo("cat",dropin)==configured and ready in state_page()
+    for bad in ["ogp-does-not-exist.service",app_unit,cycle,"bad.service\nAfter=ssh.service"]:
+        dep_save([bad],["required"],expected=400)
+        assert sudo("cat",dropin)==configured, "invalid dependency overwrote valid config"
+    post(f"/apps/{dep_id}/stop")
+    dep_save([failure],["required"])
+    request(PANEL,f"/apps/{dep_id}/start",{"ogp_csrf":csrf},expected=400)
+    assert subprocess.run(["sudo","systemctl","is-active","--quiet",app_unit]).returncode!=0,"required failure did not block app"
+    dep_save([],[])
+    assert subprocess.run(["sudo","test","-e",dropin]).returncode!=0
+    assert "OGP_DEP_TEST=1" in sudo("cat",custom)
+    # The supervisor is deliberately a fixture, not a change to Air.
+    sudo("-u",USER,"tee",dep_root+"/air",input="#!/bin/sh\nexec /usr/bin/sleep infinity\n")
+    sudo("chmod","0755",dep_root+"/air")
+    service_settings("go-air")
+    post(f"/apps/{dep_id}/start")
+    assert status_is("Starting") and "systemd: active" in state_page()
+    # Observe expiry of the actual monotonic startup grace. This is a test
+    # wait, not an artificial delay in the application or unit.
+    deadline=time.monotonic()+105
+    while time.monotonic()<deadline:
+        if status_is("Unavailable"):break
+        time.sleep(3)
+    else:raise AssertionError("active supervisor without port was not marked unavailable")
+    assert sudo("systemctl","show","--property=ActiveState","--value",app_unit)=="active"
+    print("Systemd dependencies, required/optional failure semantics, no restart on save, binary and supervisor port health passed")
+finally:
+    subprocess.run(["sudo","systemctl","stop",app_unit,ready,failure,cycle],check=False,capture_output=True)
+    subprocess.run(["sudo","rm","-f",custom]+["/etc/systemd/system/"+name for name in (ready,failure,cycle)],check=False,capture_output=True)
+    subprocess.run(["sudo","systemctl","daemon-reload"],check=False,capture_output=True)
