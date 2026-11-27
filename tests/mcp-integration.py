@@ -36,7 +36,7 @@ def request(base, path, data=None, token=None, expected=200):
     if token:
         headers["Authorization"] = "Bearer " + token
     if isinstance(data, dict):
-        data = urllib.parse.urlencode(data).encode()
+        data = urllib.parse.urlencode(data,doseq=True).encode()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     elif isinstance(data, bytes):
         headers["Content-Type"] = "application/json"
@@ -181,7 +181,7 @@ finally:
     endpoint.shutdown()
     endpoint.server_close()
 
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==16
 assert rpc(a_conn,"initialize",{"protocolVersion":"2025-11-25"})["result"]["protocolVersion"]=="2025-11-25"
 data=call(a_conn,"read_file",{"path":"demo.txt"})
 assert data["content"]=="original\n"
@@ -203,6 +203,22 @@ for target in ["../svg4/secret.txt",root_b+"/secret.txt","escape-relative","esca
     call(a_conn,"read_file",{"path":target},failed=True)
 assert sudo("-u",USER,"cat",root_b+"/secret.txt")=="secret sibling"
 assert call(b_conn,"read_file",{"path":"secret.txt"})["content"]=="secret sibling\n"
+
+# MCP returns a real native image content block, not a JSON/base64 text tool.
+import struct
+import zlib
+def png_chunk(kind, data):
+    return struct.pack(">I",len(data))+kind+data+struct.pack(">I",zlib.crc32(kind+data)&0xffffffff)
+png=b"\x89PNG\r\n\x1a\n"+png_chunk(b"IHDR",struct.pack(">IIBBBBB",2,1,8,2,0,0,0))+png_chunk(b"IDAT",zlib.compress(b"\x00\xff\x00\x00\x00\xff\x00"))+png_chunk(b"IEND",b"")
+sudo("-u",USER,"python3","-c","import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))",root_a+"/shot.png",base64.b64encode(png).decode())
+response=rpc(a_conn,"tools/call",{"name":"view_image","arguments":{"path":"shot.png"}})["result"]
+assert not response["isError"] and len(response["content"])==1
+image=response["content"][0]
+assert image["type"]=="image" and image["mimeType"]=="image/png" and base64.b64decode(image["data"])==png
+for bad in ("demo.txt","../svg4/secret.txt","escape-relative"):
+    call(a_conn,"view_image",{"path":bad},failed=True)
+call(b_conn,"view_image",{"path":"shot.png"},failed=True)
+
 out=command(a_conn,"id -u; pwd; printf ok > command.txt")
 assert sudo("id","-u",USER) in out and root_a in out
 assert sudo("stat","-c","%U",root_a+"/command.txt")==USER
@@ -267,7 +283,7 @@ finally:
     sudo("-u",USER,"rm",root_a+"/hardlink")
 live=call(a_conn,"terminal_start",{"command":"sleep 3; printf 'survived-panel-close\\n'"})["session_id"]
 sudo("systemctl","stop","open-go-panel.service")
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==16
 out,code=collect(a_conn,live)
 assert code==0 and "survived-panel-close" in out
 sudo("systemctl","start","open-go-panel.service")
@@ -277,7 +293,7 @@ page,_=request(PANEL,"/")
 csrf=re.search(r'name="ogp_csrf" value="([^"]+)"',page).group(1)
 sudo("systemctl","restart","open-go-panel-mcp.service")
 wait_health(MCP)
-assert len(rpc(a_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(a_conn,"tools/list")["result"]["tools"])==16
 sudo("systemctl","is-enabled","open-go-panel-mcp.service")
 # Grant policy changes revoke both OAuth tokens and all associated sessions.
 old=a_conn
@@ -308,7 +324,104 @@ long=call(a_conn,"terminal_start",{"command":"sleep 120"})["session_id"]
 post(f"/apps/{a}/chatgpt/revoke")
 assert subprocess.run(["sudo","systemctl","is-active","--quiet",f"ogp-mcp-terminal-{long}.service"]).returncode!=0
 rpc(a_conn,"tools/list",expected=401)
-assert len(rpc(b_conn,"tools/list")["result"]["tools"])==15
+assert len(rpc(b_conn,"tools/list")["result"]["tools"])==16
 request(MCP,a_conn[1]+"/token",{"grant_type":"refresh_token","client_id":a_conn[3],"resource":a_conn[2],"refresh_token":a_conn[4]["refresh_token"]},expected=404)
 request(MCP,"/admin",expected=404)
 print("MCP OAuth, file isolation, host PTY, downloads, sudo/root, policy rotation and revocation passed")
+
+
+# App dependency smoke on the same disposable systemd runner.
+# Actual compiled Go binary and an Air-shaped supervisor which keeps running
+# without a listener. No production service or real user application touched.
+import pathlib
+import tempfile
+import socket
+before=app_ids()
+post("/apps",{"user":USER,"name":"dependency-test","type":"go"})
+dep_id,=app_ids()-before
+dep_root=f"/home/{USER}/apps/dependency-test"
+app_unit=f"open-go-panel-app-{dep_id}.service"
+dropdir=f"/etc/systemd/system/{app_unit}.d"
+dropin=dropdir+"/50-ogp-dependencies.conf"
+custom=dropdir+"/90-test-custom.conf"
+ready="ogp-test-ready.service"
+failure="ogp-test-failure.service"
+cycle="ogp-test-cycle.service"
+marker="/run/ogp-dependency-ready"
+def unit_file(name,body):
+    sudo("tee","/etc/systemd/system/"+name,input=body)
+def dep_save(units,modes,expected=303):
+    request(PANEL,f"/apps/{dep_id}/dependencies",{"ogp_csrf":csrf,"dependency_unit":units,"dependency_mode":modes},expected=expected)
+def state_page():
+    return request(PANEL,f"/apps/{dep_id}")[0]
+def status_is(label):
+    return re.search(r'class="runtime-state"><strong[^>]*>'+label+r'</strong>',state_page()) is not None
+def service_settings(mode,command=""):
+    post(f"/apps/{dep_id}/service",{"mode":"form","run_mode":mode,"command":command,"restart":"no","auto_start":"1","path":dep_root+":/usr/local/go/bin:/usr/bin:/bin"})
+try:
+    with tempfile.TemporaryDirectory() as tmp:
+        source=pathlib.Path(tmp)/"main.go"
+        source.write_text('''package main
+import ("os";"net/http";"log")
+func main(){
+ if _,err:=os.Stat("/run/ogp-dependency-ready");err!=nil{log.Fatal(err)}
+ http.HandleFunc("/",func(w http.ResponseWriter,r *http.Request){w.Write([]byte("ready"))})
+ log.Fatal(http.ListenAndServe("127.0.0.1:"+os.Getenv("PORT"),nil))
+}
+''')
+        binary=str(pathlib.Path(tmp)/"app")
+        subprocess.run(["go","build","-o",binary,str(source)],check=True)
+        sudo("install","-o",USER,"-g",USER,"-m","0755",binary,dep_root+"/.ogp-app")
+    service_settings("go-binary")
+    unit_file(ready,f"[Unit]\nDescription=Test readiness\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/touch {marker}\nExecStop=/usr/bin/rm -f {marker}\n")
+    unit_file(failure,"[Unit]\nDescription=Test failure\n[Service]\nType=oneshot\nExecStart=/usr/bin/false\n")
+    unit_file(cycle,f"[Unit]\nDescription=Test cycle\nAfter={app_unit}\n[Service]\nType=oneshot\nExecStart=/usr/bin/true\n")
+    sudo("mkdir","-p",dropdir)
+    sudo("tee",custom,input="[Service]\nEnvironment=OGP_DEP_TEST=1\n")
+    sudo("systemctl","daemon-reload")
+    page=state_page()
+    assert "System service dependencies" in page and ready in page
+    dep_save([ready,failure,ready],["required","optional","optional"])
+    configured=sudo("cat",dropin)
+    assert f"Requires={ready}" in configured and f"Wants={failure}" in configured and configured.count(ready)==2
+    assert subprocess.run(["sudo","systemctl","is-active","--quiet",app_unit]).returncode!=0
+    post(f"/apps/{dep_id}/start")
+    for _ in range(40):
+        if status_is("Running"):break
+        time.sleep(.25)
+    else: raise AssertionError("compiled app did not become ready after dependencies")
+    assert sudo("test","-f",marker)==""
+    started=sudo("systemctl","show","--property=ActiveEnterTimestampMonotonic","--value",app_unit)
+    dep_save([ready,failure],["required","optional"])
+    assert sudo("systemctl","show","--property=ActiveEnterTimestampMonotonic","--value",app_unit)==started,"save restarted app"
+    service_settings("go-binary")
+    assert sudo("cat",dropin)==configured and ready in state_page()
+    for bad in ["ogp-does-not-exist.service",app_unit,cycle,"bad.service\nAfter=ssh.service"]:
+        dep_save([bad],["required"],expected=400)
+        assert sudo("cat",dropin)==configured, "invalid dependency overwrote valid config"
+    post(f"/apps/{dep_id}/stop")
+    dep_save([failure],["required"])
+    request(PANEL,f"/apps/{dep_id}/start",{"ogp_csrf":csrf},expected=400)
+    assert subprocess.run(["sudo","systemctl","is-active","--quiet",app_unit]).returncode!=0,"required failure did not block app"
+    dep_save([],[])
+    assert subprocess.run(["sudo","test","-e",dropin]).returncode!=0
+    assert "OGP_DEP_TEST=1" in sudo("cat",custom)
+    # The supervisor is deliberately a fixture, not a change to Air.
+    sudo("-u",USER,"tee",dep_root+"/air",input="#!/bin/sh\nexec /usr/bin/sleep infinity\n")
+    sudo("chmod","0755",dep_root+"/air")
+    service_settings("go-air")
+    post(f"/apps/{dep_id}/start")
+    assert status_is("Starting") and "systemd: active" in state_page()
+    # Observe expiry of the actual monotonic startup grace. This is a test
+    # wait, not an artificial delay in the application or unit.
+    deadline=time.monotonic()+105
+    while time.monotonic()<deadline:
+        if status_is("Unavailable"):break
+        time.sleep(3)
+    else:raise AssertionError("active supervisor without port was not marked unavailable")
+    assert sudo("systemctl","show","--property=ActiveState","--value",app_unit)=="active"
+    print("Systemd dependencies, required/optional failure semantics, no restart on save, binary and supervisor port health passed")
+finally:
+    subprocess.run(["sudo","systemctl","stop",app_unit,ready,failure,cycle],check=False,capture_output=True)
+    subprocess.run(["sudo","rm","-f",custom]+["/etc/systemd/system/"+name for name in (ready,failure,cycle)],check=False,capture_output=True)
+    subprocess.run(["sudo","systemctl","daemon-reload"],check=False,capture_output=True)

@@ -232,7 +232,7 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 	if err:=writeTarBytes(tw,"running-commands.json",jobData);err!=nil{return err}
 	if err:=writeTarTree(ctx,tw,dbfile,"panel.db");err!=nil{return err}
 	paths:=[]string{"/etc/open-go-panel","/etc/caddy","/var/lib/open-go-panel/runners","/var/lib/open-go-panel/env","/usr/local/lib/open-go-panel/ioncube","/etc/mysql/mysql.conf.d/99-open-go-panel.cnf"}
-	for _,pattern:=range []string{"/etc/systemd/system/open-go-panel-*.service","/etc/systemd/system/open-go-panel-*.timer","/etc/systemd/journald@open-go-panel-*.conf","/etc/php/*/fpm/pool.d/ogp-app-*.conf","/etc/php/*/mods-available/*ioncube*.ini","/etc/php/*/fpm/conf.d/*ioncube*.ini"}{
+	for _,pattern:=range []string{"/etc/systemd/system/open-go-panel-*.service","/etc/systemd/system/open-go-panel-*.timer","/etc/systemd/system/open-go-panel-app-*.service.d/50-ogp-dependencies.conf","/etc/systemd/journald@open-go-panel-*.conf","/etc/php/*/fpm/pool.d/ogp-app-*.conf","/etc/php/*/mods-available/*ioncube*.ini","/etc/php/*/fpm/conf.d/*ioncube*.ini"}{
 		matches,err:=filepath.Glob(pattern)
 		if err!=nil{return err}
 		for _,name:=range matches{if snapshotSystemPath(strings.TrimPrefix(name,"/")){paths=append(paths,name)}}
@@ -245,6 +245,7 @@ func buildSnapshotConfig(ctx context.Context,cfg Config,dir string)(err error){
 	for _,name:=range paths{
 		if !strings.HasPrefix(name,"/etc/systemd/system/"){continue}
 		unit:=filepath.Base(name)
+		if !managedUnitRE.MatchString(unit){continue}
 		units=append(units,snapshotUnit{Name:unit,Enabled:exec.CommandContext(ctx,"systemctl","is-enabled","--quiet",unit).Run()==nil,Active:exec.CommandContext(ctx,"systemctl","is-active","--quiet",unit).Run()==nil})
 	}
 	unitData,err:=json.Marshal(units);if err!=nil{return err}

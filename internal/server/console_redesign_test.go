@@ -40,7 +40,7 @@ func TestDashboardLoadsResourcesAfterInitialPage(t *testing.T){
  page:=dashboardPage(systeminfo.Info{},0,0,0)
  for _,value:=range []string{
   "Runtime resources","/dashboard/resources",
-  "Apps running","Docker containers",
+  "Active app units","Docker containers",
   "Process memory","Container resources",
  }{
   if !strings.Contains(page,value){t.Errorf("missing dashboard element %s",value)}

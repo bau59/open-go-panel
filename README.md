@@ -17,7 +17,7 @@ The administrative panel is designed for a single administrator and normally sta
 | Applications | Go, Node.js, PHP and static sites; Linux accounts, SSH keys, systemd lifecycle, environment, resource limits, health checks, journal logs |
 | Deployment | Git deploy, configurable auto-deploy intervals, staged atomic directory exchange, rollback, Go Air development → prebuilt production binary |
 | Files | Project-scoped editor, uploads/downloads, bulk move/delete, archive extraction, collision checks |
-| AI / MCP | Separate OAuth connection per app, seven scoped file tools, host command execution, persistent PTY terminals, user/system-sudo/root access levels, token revocation |
+| AI / MCP | Separate OAuth connection per app, eight scoped file tools, host command execution, persistent PTY terminals, user/system-sudo/root access levels, token revocation |
 | Automation | Per-app cron expressions backed by systemd timers, manual runs and task logs; independent background terminal commands |
 | Web infrastructure | Caddy domains, automatic TLS, static files, PHP FastCGI, reverse proxy, per-domain configuration and global defaults |
 | Data | MySQL and PostgreSQL provisioning, app attachments, SQL imports, safety backups, Adminer; Redis metrics, key browser and slow commands |
@@ -93,7 +93,7 @@ Existing installations keep their current `OGP_LISTEN_ADDR` during updates.
 
 ## AI access: ChatGPT and MCP
 
-Open Go Panel exposes a remote MCP service with independent OAuth grants per application. The seven direct file tools remain project-scoped. The terminal tools deliberately use normal host filesystem and network permissions, as if the selected Linux account were working on the server.
+Open Go Panel exposes a remote MCP service with independent OAuth grants per application. The eight direct file tools remain project-scoped. The terminal tools deliberately use normal host filesystem and network permissions, as if the selected Linux account were working on the server.
 
 **Upgrade warning:** existing MCP grants now receive host terminal access as the ordinary project owner by default. Previous isolated command execution and per-grant MySQL/Redis relay settings are no longer used for terminal commands. Revoke existing grants before upgrading if you do not want that expanded access. Root is never selected automatically.
 
@@ -119,7 +119,7 @@ Selecting sudo does not add the account to a sudo group, edit sudoers, bypass au
 
 All levels use the host's network, installed utilities, home directory and normal filesystem permissions. No MCP command allowlist, database-only relay or execution time limit is applied. Installations, downloads, Git operations and database access depend on ordinary OS rights, credentials and network configuration. A root or sudo-capable AI connection can make production-impacting changes.
 
-### File tools (unchanged)
+### File tools
 
 File tool paths are relative to the application root mounted at `/workspace` inside the existing file sandbox. Use `.` for the root. The file helper still runs as the project owner even when the terminal is configured as root.
 
@@ -128,16 +128,19 @@ File tool paths are relative to the application root mounted at `/workspace` ins
 | `list_directory` | `path?` | List directory entries; reports truncation |
 | `search_files` | `query`, `path?`, `context_lines?` | Literal text search with line numbers |
 | `read_file` | `path`, `start_line?`, `end_line?` | UTF-8 text or 1-based inclusive lines; returns a version |
+| `view_image` | `path` | Native MCP `ImageContent` for PNG, JPEG or GIF; original raster bytes (up to 2 MiB / 16 megapixels) |
 | `create_file` | `path`, `content` | Create text file without overwriting |
 | `edit_file` | `path`, `content`, `version` | Replace file contents only if the version matches |
 | `create_directory` | `path` | Create one directory |
 | `delete_path` | `path`, `recursive?` | Delete file or empty directory; recursion requires explicit opt-in |
 
+For design review, generate a screenshot with a terminal tool into the project directory (for example `screenshots/page.png`), then call `view_image` with that relative path. The result is a native MCP image content block with `type: image`, `mimeType` and base64 `data`, not text containing base64. Image contents are not executed. Client support for MCP image rendering is required; resize/compress larger screenshots before opening them.
+
 File tools still reject paths outside the project, individual hardlinked files, and invalid input. Text editing is limited to 2 MiB. Concurrent file operations remain bounded. Those restrictions do not apply to the separately authorized host terminal.
 
 ### Terminal tools
 
-MCP advertises 15 tools: the seven file tools above, `run_command` and seven terminal tools. Tool arguments are JSON objects; `?` denotes an optional argument.
+MCP advertises 16 tools: the eight file tools above, `run_command` and seven terminal tools. Tool arguments are JSON objects; `?` denotes an optional argument.
 
 | Tool | Arguments | Behavior |
 | --- | --- | --- |
@@ -594,6 +597,16 @@ container; the runner first checks the panel-specific Docker labels. PHP 8.x
 and other app types execute as the managed Linux user on the host. Switching
 the PHP runtime refreshes scheduled command runners.
 
+
+## Application dependencies and readiness
+
+Open **Applications → Settings → System service dependencies** after configuring a managed Go, Node.js or worker service. Search installed systemd services by unit name, select one or more services and choose **Required** (default: `Requires` + `After`) or **Optional** (`Wants` + `After`).
+
+The list comes from systemd, not a fixed allowlist. Settings are stored in the application's existing service JSON. The panel validates existing units, resolves aliases, rejects self-dependencies and dependency/ordering cycles, and writes only `/etc/systemd/system/open-go-panel-app-ID.service.d/50-ogp-dependencies.conf`. Saving verifies the unit, reloads systemd and rolls back on error; it does not restart the application. Removing all dependencies removes only this file. Server snapshots include the managed drop-in; other drop-ins are not modified.
+
+The application runtime card separates the systemd process state from local TCP port availability. Active services with configured ports are **Starting** during a 90-second grace period if the port has not opened, then **Unavailable** while the port remains closed. A listening port is **Running**. Inactive and failed services retain their normal status. This works independently of Air or a compiled binary; the panel does not automatically restart an unavailable application. Public websites are not probed for readiness. Services without dedicated app units (static/PHP) are unchanged.
+
+`After` guarantees ordering, not universal service readiness. A local dependency that signals readiness via systemd (such as a correctly configured `Type=notify` MySQL/Redis service) can be awaited; an arbitrary `Type=simple` process may still need its own readiness contract. No sleeps are inserted into app startup.
 
 ## Background commands
 

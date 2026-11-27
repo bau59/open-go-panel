@@ -59,6 +59,14 @@ post /terminal/background/start -d 'user=ogprecovery' -d "app=$APP_ID" --data-ur
 BG_ID="$(curl -fsS -b /tmp/recovery-cookies "$BASE/terminal/background" | grep -oE '/terminal/background/[0-9a-f]{24}/stop' | sed -n '1s#^.*/\([0-9a-f]\{24\}\)/stop#\1#p')"
 test -n "$BG_ID"
 sudo systemctl is-active --quiet "ogp-bg-$BG_ID.service"
+# Verify a real installed MySQL dependency is captured and restored.
+post /apps -d 'user=ogprecovery&name=dep-recovery&type=worker'
+DEP_APP_ID="$((APP_ID + 1))"
+DEP_UNIT="open-go-panel-app-$DEP_APP_ID.service"
+DEP_FILE="/etc/systemd/system/$DEP_UNIT.d/50-ogp-dependencies.conf"
+post "/apps/$DEP_APP_ID/service" -d 'mode=form&run_mode=custom&restart=no&auto_start=1' --data-urlencode 'command=exec /usr/bin/sleep 600'
+post "/apps/$DEP_APP_ID/dependencies" --data-urlencode 'dependency_unit=mysql.service' -d 'dependency_mode=required'
+sudo grep -qx 'Requires=mysql.service' "$DEP_FILE"
 post /backup/snapshots/create
 ROOT=/var/lib/open-go-panel/backups/server
 for i in $(seq 1 90); do
@@ -79,6 +87,8 @@ fi
 sudo systemctl stop open-go-panel-mcp.service open-go-panel.service "ogp-bg-$BG_ID.service" "open-go-panel-cron-$TASK_ID.timer"
 sudo systemctl disable "open-go-panel-cron-$TASK_ID.timer"
 sudo rm -f "/etc/systemd/system/open-go-panel-cron-$TASK_ID.timer" "/etc/systemd/system/open-go-panel-cron-$TASK_ID.service"
+sudo systemctl disable "$DEP_UNIT"
+sudo rm -f "/etc/systemd/system/$DEP_UNIT" "$DEP_FILE"
 sudo systemctl daemon-reload
 sudo userdel -r ogprecovery
 sudo env MYSQL_PWD=root mysql -uroot -e "DROP DATABASE ogprecoverydb; DROP USER 'ogprecoverydbuser'@'localhost';"
@@ -93,6 +103,8 @@ sudo -u caddy cat /home/ogprecovery/apps/recovery/proof.txt | grep -qx recovery-
 test "$(sudo env MYSQL_PWD=root mysql -uroot -N -e 'SELECT id FROM ogprecoverydb.proof')" = 42
 sudo systemctl is-enabled --quiet "open-go-panel-cron-$TASK_ID.timer"
 sudo systemctl is-active --quiet "ogp-bg-$BG_ID.service"
+sudo grep -qx 'Requires=mysql.service' "$DEP_FILE"
+sudo systemctl is-enabled --quiet "$DEP_UNIT"
 curl -fsS "$BASE/health" | grep -qx ok
 login
 curl -fsS -b /tmp/recovery-cookies "$BASE/apps/$APP_ID" | grep -q 'Recovery timer'

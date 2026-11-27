@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/bau59/open-go-panel/internal/journal"
 	"github.com/bau59/open-go-panel/internal/linuxuser"
 	"github.com/bau59/open-go-panel/internal/phpfpm"
@@ -41,6 +43,7 @@ var (
 )
 
 type ServiceConfig struct {
+	Dependencies []ServiceDependency `json:"dependencies,omitempty"`
 	Mode             string `json:"mode,omitempty"`
 	RunMode          string `json:"run_mode,omitempty"`
 	Command          string `json:"command,omitempty"`
@@ -94,6 +97,7 @@ type DeployKeyInfo struct {
 }
 
 type RuntimeHealth struct {
+	Availability string
 	ProcessStatus string
 	PortListening bool
 	HTTPReachable bool
@@ -790,6 +794,7 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 		return RuntimeHealth{Error: err.Error()}
 	}
 	health := RuntimeHealth{ProcessStatus: m.Status(ctx, id)}
+	health.Availability = health.ProcessStatus
 	if app.Port <= 0 {
 		return health
 	}
@@ -801,7 +806,12 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 		_ = conn.Close()
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	if app.Type != "php" && app.Type != "static" && health.ProcessStatus=="active" && !health.PortListening {
+		health.Availability = runtimeAvailability(health.ProcessStatus, true, false, activeAge(ctx, id))
+	}
+	if !health.PortListening { return health }
+	// Local HTTP diagnostics must never follow a redirect to a public site.
+	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(app.Port)+"/", nil)
 	if err != nil {
 		health.Error = err.Error()
@@ -818,6 +828,28 @@ func (m *Manager) RuntimeHealth(ctx context.Context, id int64) RuntimeHealth {
 	health.HTTPStatus = resp.StatusCode
 	_ = resp.Body.Close()
 	return health
+}
+
+const StartupGrace = 90 * time.Second
+
+func runtimeAvailability(process string, hasPort, listening bool, age time.Duration) string {
+    if process != "active" || !hasPort || listening { return process }
+    if age >= 0 && age < StartupGrace { return "waiting-port" }
+    return "unavailable"
+}
+
+// Use the service's activation timestamp, not panel uptime or a sleep.
+// CLOCK_MONOTONIC is the clock used by systemd's *TimestampMonotonic properties.
+func activeAge(ctx context.Context,id int64) time.Duration {
+    out,err:=exec.CommandContext(ctx,"systemctl","show","--property=ActiveEnterTimestampMonotonic","--value",serviceName(id)).Output()
+    if err!=nil{return -1}
+    us,err:=strconv.ParseInt(strings.TrimSpace(string(out)),10,64)
+    if err!=nil||us<=0{return -1}
+    var ts unix.Timespec
+    if err:=unix.ClockGettime(unix.CLOCK_MONOTONIC,&ts);err!=nil{return -1}
+    age:=time.Duration(ts.Sec)*time.Second+time.Duration(ts.Nsec)-time.Duration(us)*time.Microsecond
+    if age<0{return -1}
+    return age
 }
 
 func (m *Manager) Delete(ctx context.Context, id int64) error {
@@ -854,6 +886,7 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	if app.Type != "static" && app.Type != "php" {
 		_ = exec.CommandContext(ctx, "systemctl", "disable", "--now", serviceName(id)).Run()
 	}
+	if err := m.removeDependencyFile(id); err != nil { return err }
 	_ = os.Remove(filepath.Join(m.serviceDir, serviceName(id)))
 	_ = os.Remove(runnerPath(m.runnerDir, id))
 	_ = os.Remove(envPath(m.envDir, id))
@@ -1142,6 +1175,8 @@ func (m *Manager) SetServiceConfig(ctx context.Context, id int64, cfg ServiceCon
 		return errors.New("static and PHP apps do not use per-app systemd services")
 	}
 
+	// Dependency settings are edited independently of the service form.
+	cfg.Dependencies = apps[index].Service.Dependencies
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
 	if cfg.Mode == "" {
 		cfg.Mode = "form"
