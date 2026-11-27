@@ -56,3 +56,9 @@ func TestSnapshotConfigRejectsTraversal(t *testing.T){
 		})
 	}
 }
+
+
+func TestSnapshotDependencyDropInAllowlist(t *testing.T){
+    if !snapshotSystemPath("etc/systemd/system/open-go-panel-app-1.service.d/50-ogp-dependencies.conf"){t.Fatal("dependency drop-in excluded from recovery")}
+    for _,name:=range []string{"etc/systemd/system/open-go-panel-app-1.service.d/90-custom.conf","etc/systemd/system/mysql.service.d/50-ogp-dependencies.conf","etc/systemd/system/open-go-panel-app-1.service.d"}{if snapshotSystemPath(name){t.Fatalf("unexpected snapshot path %s",name)}}
+}

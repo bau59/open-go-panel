@@ -19,10 +19,31 @@ type ServiceDependency struct {
 }
 type SystemService struct { Name, State string }
 const dependencyFilename = "50-ogp-dependencies.conf"
-var serviceUnitName = regexp.MustCompile(`^[A-Za-z0-9_:][A-Za-z0-9_.:@-]{0,246}\.service$`)
+var serviceUnitName = regexp.MustCompile(`^(?:[A-Za-z0-9_.:@-]|\\x[0-9a-fA-F]{2})+\.servicepackage app
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "regexp"
+    "sort"
+    "strings"
+    "time"
+)
+
+type ServiceDependency struct {
+    Unit string `json:"unit"`
+    Required bool `json:"required"`
+}
+type SystemService struct { Name, State string }
+const dependencyFilename = "50-ogp-dependencies.conf"
+)
 
 func validServiceUnit(name string)bool {
-    return serviceUnitName.MatchString(name)&&!strings.HasSuffix(name,"@.service")
+    return len(name)<=255&&serviceUnitName.MatchString(name)&&strings.Count(name,"@")<=1&&!strings.HasPrefix(name,"@")&&!strings.HasSuffix(name,"@.service")
 }
 
 func SystemServices(ctx context.Context)([]SystemService,error){

@@ -203,6 +203,22 @@ for target in ["../svg4/secret.txt",root_b+"/secret.txt","escape-relative","esca
     call(a_conn,"read_file",{"path":target},failed=True)
 assert sudo("-u",USER,"cat",root_b+"/secret.txt")=="secret sibling"
 assert call(b_conn,"read_file",{"path":"secret.txt"})["content"]=="secret sibling\n"
+
+# MCP returns a real native image content block, not a JSON/base64 text tool.
+import struct
+import zlib
+def png_chunk(kind, data):
+    return struct.pack(">I",len(data))+kind+data+struct.pack(">I",zlib.crc32(kind+data)&0xffffffff)
+png=b"\x89PNG\r\n\x1a\n"+png_chunk(b"IHDR",struct.pack(">IIBBBBB",2,1,8,2,0,0,0))+png_chunk(b"IDAT",zlib.compress(b"\x00\xff\x00\x00\x00\xff\x00"))+png_chunk(b"IEND",b"")
+sudo("-u",USER,"python3","-c","import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))",root_a+"/shot.png",base64.b64encode(png).decode())
+response=rpc(a_conn,"tools/call",{"name":"view_image","arguments":{"path":"shot.png"}})["result"]
+assert not response["isError"] and len(response["content"])==1
+image=response["content"][0]
+assert image["type"]=="image" and image["mimeType"]=="image/png" and base64.b64decode(image["data"])==png
+for bad in ("demo.txt","../svg4/secret.txt","escape-relative"):
+    call(a_conn,"view_image",{"path":bad},failed=True)
+call(b_conn,"view_image",{"path":"shot.png"},failed=True)
+
 out=command(a_conn,"id -u; pwd; printf ok > command.txt")
 assert sudo("id","-u",USER) in out and root_a in out
 assert sudo("stat","-c","%U",root_a+"/command.txt")==USER

@@ -1170,3 +1170,5 @@ label:has(>input:is([type="checkbox"],[type="radio"])){
 
 /* Application service dependencies. */
 .dependency-rows{display:grid;gap:10px;margin-top:12px}.dependency-row{display:grid;grid-template-columns:minmax(170px,2fr) minmax(110px,1fr) minmax(95px,1fr) auto;gap:10px;align-items:end}.dependency-row label{margin:0}.dependency-row .dependency-state{align-self:center;overflow-wrap:anywhere}.dependency-row button{align-self:end;margin-bottom:1px}@media(max-width:720px){.dependency-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.dependency-row>label:first-child{grid-column:1/-1}}
+
+.runtime-label.danger{color:#b91c1c}.runtime-label.warn{color:var(--text)}

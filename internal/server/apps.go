@@ -705,6 +705,7 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 	}
 
 	statusClass := "warn"
+	processClass := "warn"
 	statusLabel := strings.TrimSpace(status)
 	processStatus:=status
 	if status=="waiting-port"||status=="unavailable"{processStatus="active"}
@@ -727,6 +728,8 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			statusLabel = "Unknown"
 		}
 	}
+
+	if processStatus=="active"{processClass="ok"}else if processStatus=="failed"{processClass="danger"}
 
 	svc := app.Service
 	if svc.Mode == "" {
@@ -940,8 +943,8 @@ func appPage(app panelapp.App, status, unit, message string, extras ...string) s
 			<div class="runtime-head">
 				<div>
 					<p class="eyebrow">Runtime</p>
-					<div class="runtime-state"><strong>` + html.EscapeString(statusLabel) + `</strong></div>
-					<div class="runtime-status-line"><span class="state-text ` + statusClass + `"><i></i>` + html.EscapeString(defaultString(processStatus, "unknown")) + `</span><code>` + html.EscapeString(serviceName) + `</code></div>
+					<div class="runtime-state"><strong class="runtime-label ` + statusClass + `">` + html.EscapeString(statusLabel) + `</strong></div>
+					<div class="runtime-status-line"><span class="state-text ` + processClass + `"><i></i>` + html.EscapeString("systemd: "+defaultString(processStatus, "unknown")) + `</span><code>` + html.EscapeString(serviceName) + `</code></div>
 				</div>
 				` + runtimeActions + `
 			</div>
