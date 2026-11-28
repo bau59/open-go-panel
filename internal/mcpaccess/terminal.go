@@ -119,12 +119,13 @@ func (s *terminalSession) metadata()map[string]any{
 }
 // systemd-run's own diagnostics are not shell output. The shell writes
 // directly to the PTY, so a failed launcher can be reported separately.
-type terminalDiagnostics struct{bytes.Buffer}
+type terminalDiagnostics struct{buffer bytes.Buffer}
 func (d *terminalDiagnostics) Write(p []byte)(int,error){
     n:=len(p)
-    if left:=8192-d.Len();left>0{_,_=d.Buffer.Write(p[:min(left,n)])}
+    if left:=8192-d.buffer.Len();left>0{_,_=d.buffer.Write(p[:min(left,n)])}
     return n,nil
 }
+func (d *terminalDiagnostics) String()string{return d.buffer.String()}
 func (s *terminalSession) executionError()error{
     s.mu.Lock();defer s.mu.Unlock()
     if s.runError!=""{return errors.New(s.runError)}
