@@ -43,6 +43,7 @@ type TerminalInfo struct {
 type terminalSession struct {
     conn Connection
     info TerminalInfo
+    runError string
     cmd *exec.Cmd
     tty *os.File
     mu sync.Mutex
@@ -116,8 +117,28 @@ func (s *terminalSession) metadata()map[string]any{
         "started_at":s.info.StartedAt,"ended_at":s.info.EndedAt,"status":s.info.Status,"exit_code":s.info.ExitCode,
         "oldest_offset":s.base,"end_offset":s.base+int64(len(s.data))}
 }
-type terminalOutput struct{s *terminalSession}
-func (w terminalOutput) Write(p []byte)(int,error){w.s.append(p);return len(p),nil}
+// systemd-run's own diagnostics are not shell output. The shell writes
+// directly to the PTY, so a failed launcher can be reported separately.
+type terminalDiagnostics struct{bytes.Buffer}
+func (d *terminalDiagnostics) Write(p []byte)(int,error){
+    n:=len(p)
+    if left:=8192-d.Len();left>0{_,_=d.Buffer.Write(p[:min(left,n)])}
+    return n,nil
+}
+func (s *terminalSession) executionError()error{
+    s.mu.Lock();defer s.mu.Unlock()
+    if s.runError!=""{return errors.New(s.runError)}
+    return nil
+}
+func terminalExecutionError(waitErr error,diagnostic string)string{
+    if waitErr==nil{return ""}
+    var exit *exec.ExitError
+    if errors.As(waitErr,&exit)&&exit.ExitCode()>=0&&strings.TrimSpace(diagnostic)==""{return ""}
+    diagnostic=strings.TrimSpace(diagnostic)
+    if diagnostic==""{diagnostic=waitErr.Error()}
+    if len(diagnostic)>2048{diagnostic=diagnostic[:2048]}
+    return "terminal launcher failed: "+diagnostic
+}
 
 func terminalUnit(id string) string {return "ogp-mcp-terminal-"+id+".service"}
 func terminalArgs(c Connection,id,command,workdir,ttyPath string)([]string,error){
@@ -167,8 +188,8 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     cmd:=exec.Command("systemd-run",args...)
     cmd.Env=[]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","TERM=xterm-256color"}
     s:=&terminalSession{conn:current,info:TerminalInfo{ID:id,AppID:c.AppID,User:username,Mode:current.TerminalMode(),StartedAt:time.Now().UTC(),Status:"starting"},cmd:cmd,tty:tty,done:make(chan struct{}),input:make(chan []byte,16)}
-    // Keep diagnostic output from systemd-run, not in the service journal.
-    cmd.Stdout=terminalOutput{s};cmd.Stderr=terminalOutput{s}
+    diagnostics:=&terminalDiagnostics{}
+    cmd.Stdout=diagnostics;cmd.Stderr=diagnostics
     if err=cmd.Start();err!=nil{closePTY();return nil,err}
     m.sessions[id]=s
     kind:="shell";if command!=""{kind="command"}
@@ -183,22 +204,27 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
         _=tty.Close()
         code:=0;if err!=nil{code=-1;var exit *exec.ExitError;if errors.As(err,&exit){code=exit.ExitCode()}}
         ended:=time.Now().UTC()
-        s.mu.Lock();s.info.Status="exited";s.info.ExitCode=&code;s.info.EndedAt=&ended;s.mu.Unlock()
+        runError:=terminalExecutionError(err,diagnostics.String())
+        s.mu.Lock();s.info.Status="exited";s.info.ExitCode=&code;s.info.EndedAt=&ended;s.runError=runError;s.mu.Unlock()
         close(s.done)
         m.audit(s,"exit",fmt.Sprintf("exit_code=%d",code))
     }()
     // Wait until systemd has accepted the unit, or a short command exits.
     // This closes the start/stop race with grant revocation.
     readyCtx,cancel:=context.WithTimeout(context.Background(),8*time.Second);defer cancel()
+    completed:=func()(*terminalSession,error){
+        if err:=s.executionError();err!=nil{delete(m.sessions,id);return nil,err}
+        return s,nil
+    }
     for {
-        select{case <-s.done:return s,nil;default:}
+        select{case <-s.done:return completed();default:}
         out,e:=exec.CommandContext(readyCtx,"systemctl","show","--property=ActiveState","--value",terminalUnit(id)).Output()
         if e==nil&&strings.TrimSpace(string(out))=="active" {
             _=slave.Close()
             s.mu.Lock();if s.info.Status=="starting"{s.info.Status="running"};s.mu.Unlock()
             return s,nil
         }
-        select{case <-s.done:return s,nil;case <-readyCtx.Done():
+        select{case <-s.done:return completed();case <-readyCtx.Done():
             _=cmd.Process.Kill();_ = slave.Close();_ = s.tty.Close()
             stopCtx,stopCancel:=context.WithTimeout(context.Background(),10*time.Second)
             _=exec.CommandContext(stopCtx,"systemctl","stop",terminalUnit(id)).Run();stopCancel()

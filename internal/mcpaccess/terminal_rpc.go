@@ -53,6 +53,7 @@ func (s *Server) callTerminal(w http.ResponseWriter,r *http.Request,req rpcReque
         if name=="run_command" {
             if wait==0{wait=2}
             select{case <-session.done:case <-time.After(time.Duration(wait)*time.Second):case <-r.Context().Done():}
+            if err:=session.executionError();err!=nil{toolFailure(w,req.ID,err.Error());return}
             output:=session.read(0,limit,encoding,format)
             output["timed_out"]=false
             result=output
@@ -63,8 +64,11 @@ func (s *Server) callTerminal(w http.ResponseWriter,r *http.Request,req rpcReque
     }else{
         session,e:=m.get(current,text("session_id"));if e!=nil{toolFailure(w,req.ID,e.Error());return}
         switch name{
-        case "terminal_status":result=session.metadata()
+        case "terminal_status":
+            if err:=session.executionError();err!=nil{toolFailure(w,req.ID,err.Error());return}
+            result=session.metadata()
         case "terminal_read":
+            if err:=session.executionError();err!=nil{toolFailure(w,req.ID,err.Error());return}
             offset:=number("offset");if offset<0{toolFailure(w,req.ID,"invalid offset");return}
             result=session.read(int64(offset),limit,encoding,format)
         case "terminal_write":

@@ -165,7 +165,7 @@ func encodePreview(preview image.Image)(map[string]any,error){
         if err==nil{return result,nil}
         if !errors.Is(err,errImageSize){return nil,err}
         b:=preview.Bounds()
-        if b.Dx()<2||b.Dy()<2{return nil,err}
+        if b.Dx()<2&&b.Dy()<2{return nil,err}
         dst:=image.NewNRGBA(image.Rect(0,0,max(1,b.Dx()*3/4),max(1,b.Dy()*3/4)))
         xdraw.ApproxBiLinear.Scale(dst,dst.Bounds(),preview,b,draw.Src,nil)
         preview=dst

@@ -239,6 +239,7 @@ assert not response["isError"] and response["content"]==[]
 result=response["structuredContent"]
 assert result["status"]=="exited" and result["exit_code"]==127 and "not found" in result["output"]
 assert "stdout" not in result and "stderr" not in result and "output_base64" not in result
+call(a_conn,"run_command",{"command":"true","workdir":"/ogp-nonexistent-directory-for-test-9e83a"},failed=True)
 
 response=rpc(a_conn,"tools/call",{"name":"run_command","arguments":{"command":"printf 'compact-unique-marker'","timeout_seconds":5,"response_format":"text"}})["result"]
 assert "structuredContent" not in response and json.loads(response["content"][0]["text"])["output"]=="compact-unique-marker"
