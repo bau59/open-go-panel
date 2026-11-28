@@ -166,13 +166,14 @@ func tools()[]any{
     return append([]any{
         tool("list_directory","List files and directories; reports truncation.",true,false,map[string]any{"path":p()}),
         tool("search_files","Find literal text with file paths, line numbers and nearby lines.",true,false,map[string]any{"path":p(),"query":property("string","Literal search text"),"context_lines":property("integer","Nearby lines, 0–3")},"query"),
-        tool("view_image","Return a project-relative PNG, JPEG or GIF as native MCP ImageContent. Up to 2 MiB and 16 megapixels.",true,false,map[string]any{"path":p()},"path"),
+        tool("view_image","View a project-relative PNG, JPEG, GIF or WebP as native ImageContent. WebP and transformed images return PNG. Input and output capped at 2 MiB; source at 16 megapixels.",true,false,map[string]any{"path":p(),"max_width":property("integer","Maximum width in pixels; 0 or omitted means original"),"max_height":property("integer","Maximum height in pixels; 0 or omitted means original"),"background":property("string","Optional opaque #RRGGBB background for transparent images")},"path"),
+        tool("view_images","View 1–12 project images in a single labeled PNG contact sheet; individual errors appear in their cells. Defaults: 300×300 cells, three columns, white background.",true,false,map[string]any{"paths":map[string]any{"type":"array","items":p(),"minItems":1,"maxItems":12,"description":"Ordered project-relative image paths"},"max_width":property("integer","Cell maximum width, default 300, max 2048"),"max_height":property("integer","Cell maximum height, default 300, max 2048"),"background":property("string","Image cell #RRGGBB background, default white"),"columns":property("integer","Grid columns 1–12, default 3")},"paths"),
         tool("read_file","Read a UTF-8 file or line range; returns the version required for edits.",true,false,map[string]any{"path":p(),"start_line":property("integer","First line, starting at 1"),"end_line":property("integer","Last line, inclusive")},"path"),
         tool("create_file","Create a new UTF-8 file; refuses to overwrite.",false,false,map[string]any{"path":p(),"content":property("string","Complete new file content")},"path","content"),
         tool("edit_file","Replace file content only if its read_file version still matches.",false,true,map[string]any{"path":p(),"content":property("string","Complete replacement file content"),"version":property("string","Version returned by read_file")},"path","content","version"),
         tool("create_directory","Create one new directory under the project.",false,false,map[string]any{"path":p()},"path"),
         tool("delete_path","Delete one file or empty directory. Recursive deletion must be explicitly enabled.",false,true,map[string]any{"path":p(),"recursive":property("boolean","Explicit recursive deletion")},"path"),
-        terminalTool("run_command","Start a host shell command in a managed terminal session. Returns initial output and session ID; a running command is not killed when the response returns.",false,true,map[string]any{"command":property("string","Shell command"),"workdir":property("string","Absolute or project-relative host working directory"),"timeout_seconds":property("integer","Initial output wait in seconds, 0–10 (not an execution timeout)")},"command"),
+        terminalTool("run_command","Start a host shell command in a managed terminal session. Returns initial output and session ID; a running command is not killed when the response returns.",false,true,map[string]any{"command":property("string","Shell command"),"workdir":property("string","Absolute or project-relative host working directory"),"timeout_seconds":property("integer","Initial output wait in seconds, 0–10 (not an execution timeout)"),"max_output_bytes":property("integer","Maximum bytes in this read, 1–65536; default 16384"),"output_encoding":property("string","auto (default) or base64"),"response_format":property("string","compact (default), text or legacy")},"command"),
     },terminalTools()...)
 }
 
@@ -219,6 +220,7 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
         case "string":if _,ok:=decoded.(string);!ok{rpcError(w,req.ID,-32602,"expected string");return}
         case "integer":var n int;if err:=json.Unmarshal(value,&n);err!=nil{rpcError(w,req.ID,-32602,"expected integer");return}
         case "boolean":if _,ok:=decoded.(bool);!ok{rpcError(w,req.ID,-32602,"expected boolean");return}
+        case "array":var values []string;if err:=json.Unmarshal(value,&values);err!=nil||len(values)<1||len(values)>12{rpcError(w,req.ID,-32602,"expected 1–12 strings");return};for _,v:=range decoded.([]any){if _,ok:=v.(string);!ok{rpcError(w,req.ID,-32602,"expected string array");return}}
         }
     }
     for _,key:=range schema["required"].([]string){if _,ok:=args[key];!ok{rpcError(w,req.ID,-32602,"missing required argument");return}}
@@ -247,7 +249,7 @@ func (s *Server) call(w http.ResponseWriter,r *http.Request,req rpcRequest,c Con
     var value map[string]any
     if err:=json.Unmarshal([]byte(result.Output),&value);err!=nil||value==nil{toolFailure(w,req.ID,"invalid file helper response");return}
     _=s.grants.RecordSuccess(auditCtx,current)
-    if params.Name=="view_image"{
+    if params.Name=="view_image"||params.Name=="view_images"{
         mime,ok:=value["mimeType"].(string);data,valid:=value["data"].(string)
         if !ok||!valid||data==""||(mime!="image/png"&&mime!="image/jpeg"&&mime!="image/gif"){toolFailure(w,req.ID,"invalid image helper response");return}
         rpcResult(w,req.ID,map[string]any{"content":[]any{map[string]any{"type":"image","data":data,"mimeType":mime}},"isError":false})

@@ -1,13 +1,7 @@
 package filemanager
 
 import (
-    "bytes"
-    "encoding/base64"
     "encoding/json"
-    "image"
-    _ "image/png"
-    _ "image/jpeg"
-    _ "image/gif"
     "errors"
     "fmt"
     "io"
@@ -18,6 +12,11 @@ import (
 
 type MCPArgs struct{
     Path string `json:"path"`
+    Paths []string `json:"paths"`
+    MaxWidth int `json:"max_width"`
+    MaxHeight int `json:"max_height"`
+    Background string `json:"background"`
+    Columns int `json:"columns"`
     Query string `json:"query"`
     StartLine int `json:"start_line"`
     EndLine int `json:"end_line"`
@@ -63,12 +62,14 @@ func mcpOperation(m *Manager,operation string,args MCPArgs)(any,error){
         return map[string]any{"entries":entries,"truncated":limited},err
     case "search_files":
         return mcpSearch(m,args)
+    case "view_images":
+        return mcpViewImages(m,args)
     }
     folder,name,err:=splitMCPPath(args.Path)
     if err!=nil{return nil,err}
     switch operation{
     case "view_image":
-        return mcpViewImage(m,folder,name)
+        return mcpViewImage(m,folder,name,args)
     case "read_file":
         content,err:=m.ReadText(folder,name);if err!=nil{return nil,err}
         lines:=strings.Split(content,"\n")
@@ -145,19 +146,3 @@ func mcpSearch(m *Manager,args MCPArgs)(any,error){
 }
 
 
-// Return original raster bytes, never execute active SVG/HTML content.
-// The sandbox's 4 MiB output budget includes base64 and JSON overhead.
-func mcpViewImage(m *Manager,folder,name string)(any,error){
-    const maxBytes=2<<20
-    f,info,err:=m.Download(folder,name);if err!=nil{return nil,err};defer f.Close()
-    if info.Size()>maxBytes{return nil,errors.New("image exceeds 2 MiB limit; resize or compress it first")}
-    data,err:=io.ReadAll(io.LimitReader(f,maxBytes+1));if err!=nil{return nil,err}
-    if len(data)>maxBytes{return nil,errors.New("image exceeds 2 MiB limit")}
-    cfg,format,err:=image.DecodeConfig(bytes.NewReader(data))
-    if err!=nil{return nil,errors.New("expected a PNG, JPEG or GIF image")}
-    if cfg.Width<=0||cfg.Height<=0||cfg.Width>16000000/cfg.Height{return nil,errors.New("image exceeds 16 megapixel limit")}
-    mime:=map[string]string{"png":"image/png","jpeg":"image/jpeg","gif":"image/gif"}[format]
-    if mime==""{return nil,errors.New("unsupported raster image format")}
-    if _,_,err:=image.Decode(bytes.NewReader(data));err!=nil{return nil,errors.New("invalid or truncated image")}
-    return map[string]any{"mimeType":mime,"data":base64.StdEncoding.EncodeToString(data)},nil
-}

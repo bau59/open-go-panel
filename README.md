@@ -17,7 +17,7 @@ The administrative panel is designed for a single administrator and normally sta
 | Applications | Go, Node.js, PHP and static sites; Linux accounts, SSH keys, systemd lifecycle, environment, resource limits, health checks, journal logs |
 | Deployment | Git deploy, configurable auto-deploy intervals, staged atomic directory exchange, rollback, Go Air development → prebuilt production binary |
 | Files | Project-scoped editor, uploads/downloads, bulk move/delete, archive extraction, collision checks |
-| AI / MCP | Separate OAuth connection per app, eight scoped file tools, host command execution, persistent PTY terminals, user/system-sudo/root access levels, token revocation |
+| AI / MCP | Separate OAuth connection per app, nine scoped file tools, host command execution, persistent PTY terminals, user/system-sudo/root access levels, token revocation |
 | Automation | Per-app cron expressions backed by systemd timers, manual runs and task logs; independent background terminal commands |
 | Web infrastructure | Caddy domains, automatic TLS, static files, PHP FastCGI, reverse proxy, per-domain configuration and global defaults |
 | Data | MySQL and PostgreSQL provisioning, app attachments, SQL imports, safety backups, Adminer; Redis metrics, key browser and slow commands |
@@ -93,7 +93,7 @@ Existing installations keep their current `OGP_LISTEN_ADDR` during updates.
 
 ## AI access: ChatGPT and MCP
 
-Open Go Panel exposes a remote MCP service with independent OAuth grants per application. The eight direct file tools remain project-scoped. The terminal tools deliberately use normal host filesystem and network permissions, as if the selected Linux account were working on the server.
+Open Go Panel exposes a remote MCP service with independent OAuth grants per application. The nine direct file tools remain project-scoped. The terminal tools deliberately use normal host filesystem and network permissions, as if the selected Linux account were working on the server.
 
 **Upgrade warning:** existing MCP grants now receive host terminal access as the ordinary project owner by default. Previous isolated command execution and per-grant MySQL/Redis relay settings are no longer used for terminal commands. Revoke existing grants before upgrading if you do not want that expanded access. Root is never selected automatically.
 
@@ -128,28 +128,31 @@ File tool paths are relative to the application root mounted at `/workspace` ins
 | `list_directory` | `path?` | List directory entries; reports truncation |
 | `search_files` | `query`, `path?`, `context_lines?` | Literal text search with line numbers |
 | `read_file` | `path`, `start_line?`, `end_line?` | UTF-8 text or 1-based inclusive lines; returns a version |
-| `view_image` | `path` | Native MCP `ImageContent` for PNG, JPEG or GIF; original raster bytes (up to 2 MiB / 16 megapixels) |
+| `view_image` | `path`, `max_width?`, `max_height?`, `background?` | Native MCP `ImageContent` for PNG, JPEG, GIF or WebP; WebP and transformed images return PNG |
+| `view_images` | `paths`, `max_width?`, `max_height?`, `background?`, `columns?` | Ordered contact sheet of 1–12 images with filenames and per-cell errors |
 | `create_file` | `path`, `content` | Create text file without overwriting |
 | `edit_file` | `path`, `content`, `version` | Replace file contents only if the version matches |
 | `create_directory` | `path` | Create one directory |
 | `delete_path` | `path`, `recursive?` | Delete file or empty directory; recursion requires explicit opt-in |
 
-For design review, generate a screenshot with a terminal tool into the project directory (for example `screenshots/page.png`), then call `view_image` with that relative path. The result is a native MCP image content block with `type: image`, `mimeType` and base64 `data`, not text containing base64. Image contents are not executed. Client support for MCP image rendering is required; resize/compress larger screenshots before opening them.
+For design review, generate a screenshot with a terminal tool into the project directory (for example `screenshots/page.png`), then call `view_image` with that relative path. The result is a native MCP image content block with `type: image`, `mimeType` and base64 `data`, not text containing base64. Image contents are not executed. Client support for native MCP image rendering is required. WebP is decoded in Go and returned as PNG for compatibility; transparency is preserved unless an opaque `#RRGGBB` background is requested. Use `max_width` and/or `max_height` to reduce dimensions proportionally without upscaling. Original PNG/JPEG/GIF bytes are preserved when no transformation is needed; transformed GIFs use the first frame. Source files are limited to 2 MiB / 16 megapixels; converted PNGs are also bounded to 2 MiB and proportionally reduced if needed. No temporary files or OS image packages are used.
+
+Example: `view_image` with `{"path":"public/icon.webp","max_width":300,"background":"#ffffff"}`. For multiple icons use `view_images` with `{"paths":["public/a.webp","public/b.webp"],"max_width":300,"max_height":300,"background":"#ffffff","columns":2}`. Contact sheets default to 300×300 image bounds, three columns, and white backgrounds. Equal cells are automatically reduced to fit the 1.5-megapixel sheet and 2 MiB PNG budget. Long labels may be abbreviated; unavailable/invalid files get error cells without exposing host paths.
 
 File tools still reject paths outside the project, individual hardlinked files, and invalid input. Text editing is limited to 2 MiB. Concurrent file operations remain bounded. Those restrictions do not apply to the separately authorized host terminal.
 
 ### Terminal tools
 
-MCP advertises 16 tools: the eight file tools above, `run_command` and seven terminal tools. Tool arguments are JSON objects; `?` denotes an optional argument.
+MCP advertises 17 tools: the nine file tools above, `run_command` and seven terminal tools. Tool arguments are JSON objects; `?` denotes an optional argument.
 
 | Tool | Arguments | Behavior |
 | --- | --- | --- |
-| `run_command` | `command`, `workdir?`, `timeout_seconds?` | Start a host command; return initial output and session ID. The wait argument is now an initial read window (0–10 seconds), not a process deadline |
+| `run_command` | `command`, `workdir?`, `timeout_seconds?`, `max_output_bytes?`, `output_encoding?`, `response_format?` | Start a host command; return initial output and session ID. The wait argument is now an initial read window (0–10 seconds), not a process deadline |
 | `terminal_start` | `command?`, `workdir?` | Start a PTY shell or a single shell command |
-| `terminal_write` | `session_id`, `input` | Queue input, including a newline or terminal control characters |
-| `terminal_read` | `session_id`, `offset?` | Read the next output fragment by byte offset |
+| `terminal_write` | `session_id`, `input`, `response_format?` | Queue input, including a newline or terminal control characters |
+| `terminal_read` | `session_id`, `offset?`, `max_output_bytes?`, `output_encoding?`, `response_format?` | Read the next output fragment by byte offset |
 | `terminal_list` | none | List sessions for the authenticated OAuth client and current permission generation |
-| `terminal_status` | `session_id` | Status, start/end timestamps and exit code when available |
+| `terminal_status` | `session_id`, `response_format?` | Status, start/end timestamps and exit code when available |
 | `terminal_resize` | `session_id`, `rows`, `cols` | Change PTY size |
 | `terminal_stop` | `session_id` | Stop the managed unit and its processes |
 
@@ -163,7 +166,11 @@ Example workflow:
 4. Send more shell commands, install a user-local dependency or launch a long-running process. Reconnect in a subsequent MCP request using the same session ID. OAuth refresh rotation does not change session ownership.
 5. Use `terminal_stop` when done.
 
-PTY output combines stdout and stderr. The response includes `stdout`, `stderr`, `merged_streams`, `output`, `output_base64`, `offset`, `next_offset`, `oldest_offset`, `end_offset`, `status`, `exit_code` and `truncated`. Base64 preserves binary or split UTF-8 sequences. The last 2 MiB of output is kept in memory per session, read in fragments of up to 64 KiB. If the reader falls behind, `truncated` indicates that earlier bytes were evicted. Up to 128 retained/active sessions are managed; completed session records are evicted as needed and after one hour on subsequent starts. Input fragments can be split into 64 KiB chunks. These limits bound transport and memory usage, not shell execution time.
+PTY output combines stdout and stderr. By default `run_command`, `terminal_read`, `terminal_status` and `terminal_write` return one compact JSON object in `structuredContent` with an empty `content` array. Read results include `session_id`, `status`, `exit_code`, `offset`, `next_offset`, `oldest_offset`, `end_offset`, `has_more`, `truncated`, `merged_streams` and either `output` (UTF-8 text) or `output_base64` (binary, split UTF-8, or explicitly requested `output_encoding: "base64"`). Set `max_output_bytes` to 1–65536 bytes (default 16384). Continue reading using `next_offset` until the session is exited and `has_more` is false. Nonzero shell exit codes are ordinary results with `isError: false`; actual tool failures remain errors.
+
+Existing OAuth connections remain valid. Clients which only consume text can set `response_format: "text"` (single JSON text block, no structured duplicate). Integrations that depend on the old v0.1.58 fields or duplicated text/structured output can explicitly request `response_format: "legacy"` (old 64 KiB default and aliases); this intentionally uses more context. Refresh tool definitions to discover the new optional arguments and image tool.
+
+The last 2 MiB of output is kept in memory per session. `truncated` indicates that unread bytes were evicted; no guarantee is made for output exceeding the retained history if the reader falls behind. Up to 128 retained/active sessions are managed; completed records are evicted as needed and after one hour on subsequent starts. Input fragments can be split into 64 KiB chunks. These limits bound transport and memory usage, not shell execution time.
 
 ### Service lifecycle and control
 
