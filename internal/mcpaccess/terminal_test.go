@@ -7,6 +7,7 @@ import (
     "net/http/httptest"
     "bytes"
     "errors"
+    "os"
     "path/filepath"
     "strings"
     "testing"
@@ -30,14 +31,15 @@ func TestTerminalPolicyInvalidatesTokens(t *testing.T){
 }
 func TestTerminalCommandArguments(t *testing.T){
     c:=Connection{Owner:"demo",Root:"/home/demo/apps/app",TerminalPolicy:"user"}
-    args,err:=terminalArgs(c,strings.Repeat("a",43),"echo $HOME; sleep 600","../other","/dev/pts/4")
+    workdir,err:=resolveTerminalWorkdir(c.Root,"../other");if err!=nil{t.Fatal(err)}
+    args,err:=terminalArgs(c,strings.Repeat("a",43),"echo $HOME; sleep 600",workdir,"/dev/pts/4")
     if err!=nil{t.Fatal(err)}
     joined:=strings.Join(args,"\n")
     for _,want:=range []string{"--property=User=demo","--property=WorkingDirectory=/home/demo/apps/other","--expand-environment=no","--property=KillMode=control-group","--property=StandardInput=tty-force","--property=TTYPath=/dev/pts/4","echo $HOME; sleep 600"}{
         if !strings.Contains(joined,want){t.Fatalf("missing argument %s",want)}
     }
     c.TerminalPolicy="root:random"
-    args,err=terminalArgs(c,strings.Repeat("a",43),"","","/dev/pts/4");if err!=nil{t.Fatal(err)}
+    args,err=terminalArgs(c,strings.Repeat("a",43),"",c.Root,"/dev/pts/4");if err!=nil{t.Fatal(err)}
     if !strings.Contains(strings.Join(args,"\n"),"--property=User=root"){t.Fatal("root not selected")}
 }
 func TestTerminalOutputOffsets(t *testing.T){
@@ -107,4 +109,33 @@ func TestCompactTerminalOutput(t *testing.T){
         if format=="compact"&&(len(body.Result.Content)!=0||body.Result.StructuredContent["output"]!="unique-marker"){t.Fatal("compact result invalid")}
         if format=="text"&&(len(body.Result.Content)!=1||body.Result.StructuredContent!=nil){t.Fatal("text result invalid")}
     }
+}
+
+
+func TestTerminalWorkdirResolution(t *testing.T){
+    root:="/home/demo/apps/app"
+    for input,want:=range map[string]string{
+        "":root,".":root,"/workspace":root,"/workspace/":root,"/workspace/app":root+"/app",
+        "public":root+"/public","../other":"/home/demo/apps/other","/tmp":"/tmp",
+        "/workspace-other":"/workspace-other",
+    }{
+        got,err:=resolveTerminalWorkdir(root,input);if err!=nil||got!=want{t.Fatalf("%q -> %q %v; want %q",input,got,err,want)}
+    }
+    if _,err:=resolveTerminalWorkdir(root,"bad\npath");err==nil{t.Fatal("invalid path accepted")}
+    if _,err:=resolveTerminalWorkdir("relative","");err==nil{t.Fatal("relative app root accepted")}
+}
+func TestTerminalWorkdirPreflight(t *testing.T){
+    dir:=t.TempDir()
+    missing:=filepath.Join(dir,"missing")
+    err:=checkTerminalWorkdir(context.Background(),"unused",missing)
+    if !errors.Is(err,os.ErrNotExist)||!strings.Contains(err.Error(),missing){t.Fatalf("missing directory: %v",err)}
+    file:=filepath.Join(dir,"file")
+    if err:=os.WriteFile(file,[]byte("x"),0600);err!=nil{t.Fatal(err)}
+    if err:=checkTerminalWorkdir(context.Background(),"unused",file);err==nil||!strings.Contains(err.Error(),"not a directory"){t.Fatalf("file accepted: %v",err)}
+}
+func TestTerminalCHDIRDiagnostic(t *testing.T){
+    got:=formatTerminalStartDiagnostic("/home/demo/missing","launcher failed","Failed at step CHDIR spawning /bin/bash: No such file or directory")
+    for _,want:=range []string{"200/CHDIR","/home/demo/missing","No such file or directory"}{if !strings.Contains(got,want){t.Fatalf("missing %q: %s",want,got)}}
+    got=formatTerminalStartDiagnostic("/tmp","launcher failed","unrelated journal output")
+    if strings.Contains(got,"unrelated")||strings.Contains(got,"200/CHDIR")||!strings.Contains(got,"/tmp"){t.Fatal(got)}
 }

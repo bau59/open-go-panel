@@ -239,7 +239,27 @@ assert not response["isError"] and response["content"]==[]
 result=response["structuredContent"]
 assert result["status"]=="exited" and result["exit_code"]==127 and "not found" in result["output"]
 assert "stdout" not in result and "stderr" not in result and "output_base64" not in result
-call(a_conn,"run_command",{"command":"true","workdir":"/ogp-nonexistent-directory-for-test-9e83a"},failed=True)
+missing="/ogp-nonexistent-directory-for-test-9e83a"
+for tool_name in ("run_command","terminal_start"):
+    error=call(a_conn,tool_name,{"command":"true","workdir":missing},failed=True)["error"]
+    assert missing in error and "CHDIR" in error
+    error=call(a_conn,tool_name,{"command":"true","workdir":root_a+"/demo.txt"},failed=True)["error"]
+    assert "not a directory" in error
+    error=call(a_conn,tool_name,{"command":"true","workdir":"/root"},failed=True)["error"]
+    assert "/root" in error and "inaccessible" in error
+    result=call(a_conn,tool_name,{"command":"pwd","workdir":"/workspace"})
+    assert result["workdir"]==root_a
+    if tool_name=="terminal_start":
+        out,code=collect(a_conn,result["session_id"])
+        assert code==0 and out.strip()==root_a
+    else:
+        assert result["exit_code"]==0 and result["output"].strip()==root_a
+sudo("-u",USER,"mkdir","-p",root_a+"/test subdir")
+result=call(a_conn,"run_command",{"command":"pwd","workdir":"/workspace/test subdir"})
+assert result["exit_code"]==0 and result["output"].strip()==root_a+"/test subdir"
+assert result["workdir"]==root_a+"/test subdir"
+result=call(a_conn,"run_command",{"command":"exit 200","workdir":"/workspace"})
+assert result["status"]=="exited" and result["exit_code"]==200
 
 response=rpc(a_conn,"tools/call",{"name":"run_command","arguments":{"command":"printf 'compact-unique-marker'","timeout_seconds":5,"response_format":"text"}})["result"]
 assert "structuredContent" not in response and json.loads(response["content"][0]["text"])["output"]=="compact-unique-marker"
