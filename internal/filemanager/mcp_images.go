@@ -54,7 +54,9 @@ func loadMCPImage(m *Manager,folder,name string)(image.Image,[]byte,string,error
     if cfg.Width<=0||cfg.Height<=0||cfg.Width>maxImagePixels/cfg.Height{return nil,nil,"",errors.New("image exceeds 16 megapixels")}
     if format!="png"&&format!="jpeg"&&format!="gif"&&format!="webp"{return nil,nil,"",errors.New("unsupported raster image")}
     img,decoded,err:=image.Decode(bytes.NewReader(data))
-    if err!=nil||decoded!=format||img.Bounds().Dx()!=cfg.Width||img.Bounds().Dy()!=cfg.Height{return nil,nil,"",errors.New("invalid or truncated image")}
+    if err!=nil||decoded!=format{return nil,nil,"",errors.New("invalid or truncated image")}
+    w,h:=img.Bounds().Dx(),img.Bounds().Dy()
+    if w<=0||h<=0||w>maxImagePixels/h||w>cfg.Width||h>cfg.Height{return nil,nil,"",errors.New("invalid decoded image dimensions")}
     return img,data,format,nil
 }
 // Compute bounded integer dimensions without upscaling. Only the limiting
@@ -88,11 +90,11 @@ func mcpViewImage(m *Manager,folder,name string,args MCPArgs)(any,error){
         mime:=map[string]string{"png":"image/png","jpeg":"image/jpeg","gif":"image/gif"}[format]
         return imageResult(data,mime),nil
     }
-    if o.background==nil&&w==img.Bounds().Dx()&&h==img.Bounds().Dy(){return encodeImage(img)}
+    if o.background==nil&&w==img.Bounds().Dx()&&h==img.Bounds().Dy(){return encodePreview(img)}
     dst:=image.NewNRGBA(image.Rect(0,0,w,h))
     if o.background!=nil{draw.Draw(dst,dst.Bounds(),image.NewUniform(*o.background),image.Point{},draw.Src)}
     xdraw.ApproxBiLinear.Scale(dst,dst.Bounds(),img,img.Bounds(),draw.Over,nil)
-    return encodeImage(dst)
+    return encodePreview(dst)
 }
 
 // Render a fixed grid, decoding one source at a time. All file opens go
@@ -108,6 +110,10 @@ func mcpViewImages(m *Manager,args MCPArgs)(any,error){
     w,h:=o.width,o.height
     if w==0{w=300};if h==0{h=300}
     if w>2048||h>2048{return nil,errors.New("contact sheet cell dimensions must not exceed 2048")}
+    // The preview area has a minimum size so labels and errors remain readable
+    // even if the requested image bound is only a few pixels.
+    imageW,imageH:=w,h
+    w=max(160,w);h=max(80,h)
     const pad=8
     const labelH=46
     // Bound the composite independently from the per-image decode limit.
@@ -131,13 +137,14 @@ func mcpViewImages(m *Manager,args MCPArgs)(any,error){
         draw.Draw(sheet,rect,image.NewUniform(bg),image.Point{},draw.Src)
         folder,name,e:=splitMCPPath(relative)
         var img image.Image
+        if len(relative)>4096{e=errors.New("invalid project path")}
         if e==nil{img,_,_,e=loadMCPImage(m,folder,name)}
         if e!=nil{
             // Never disclose host paths from failed file opens.
             draw.Draw(sheet,rect,image.NewUniform(color.NRGBA{R:255,G:235,B:235,A:255}),image.Point{},draw.Src)
             labelLines(sheet,face,red,rect.Min.X+3,rect.Min.Y+14,max(1,w-6),max(1,h/15), "Error: "+e.Error())
         }else{
-            iw,ih:=fitImage(img.Bounds().Dx(),img.Bounds().Dy(),w,h)
+            iw,ih:=fitImage(img.Bounds().Dx(),img.Bounds().Dy(),min(w,imageW),min(h,imageH))
             left,top:=rect.Min.X+(w-iw)/2,rect.Min.Y+(h-ih)/2
             xdraw.ApproxBiLinear.Scale(sheet,image.Rect(left,top,left+iw,top+ih),img,img.Bounds(),draw.Over,nil)
         }
@@ -147,7 +154,12 @@ func mcpViewImages(m *Manager,args MCPArgs)(any,error){
     }
     // Highly noisy previews can exceed the encoded byte budget. Reduce the
     // entire sheet in memory, retaining the grid and ordering.
-    var preview image.Image=sheet
+    return encodePreview(sheet)
+}
+
+// A compressed WebP can decode into a PNG larger than the transport limit.
+// Reduce only transformed images, keeping proportions and alpha intact.
+func encodePreview(preview image.Image)(map[string]any,error){
     for {
         result,err:=encodeImage(preview)
         if err==nil{return result,nil}
