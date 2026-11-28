@@ -35,6 +35,7 @@ type TerminalInfo struct {
     AppID int64 `json:"app_id"`
     User string `json:"user"`
     Mode string `json:"mode"`
+    Workdir string `json:"workdir"`
     StartedAt time.Time `json:"started_at"`
     EndedAt *time.Time `json:"ended_at,omitempty"`
     Status string `json:"status"`
@@ -99,7 +100,7 @@ func (s *terminalSession) read(offset int64, limit int, encoding, format string)
         n:=copy(data,s.data[start:])
         copy(data[n:],s.data)
     }
-    result:=map[string]any{"session_id":s.info.ID,"status":s.info.Status,"exit_code":s.info.ExitCode,
+    result:=map[string]any{"session_id":s.info.ID,"status":s.info.Status,"exit_code":s.info.ExitCode,"workdir":s.info.Workdir,
         "merged_streams":true,"offset":offset,"next_offset":next,"oldest_offset":s.base,"end_offset":end,"truncated":lost,"has_more":next<end}
     if format=="legacy"{
         result["stdout"]=string(data);result["stderr"]="";result["output"]=string(data)
@@ -113,7 +114,7 @@ func (s *terminalSession) read(offset int64, limit int, encoding, format string)
 }
 func (s *terminalSession) metadata()map[string]any{
     s.mu.Lock();defer s.mu.Unlock()
-    return map[string]any{"session_id":s.info.ID,"app_id":s.info.AppID,"user":s.info.User,"mode":s.info.Mode,
+    return map[string]any{"session_id":s.info.ID,"app_id":s.info.AppID,"user":s.info.User,"mode":s.info.Mode,"workdir":s.info.Workdir,
         "started_at":s.info.StartedAt,"ended_at":s.info.EndedAt,"status":s.info.Status,"exit_code":s.info.ExitCode,
         "oldest_offset":s.base,"end_offset":s.base+int64(len(s.data))}
 }
@@ -148,8 +149,7 @@ func terminalUnit(id string) string {return "ogp-mcp-terminal-"+id+".service"}
 func terminalArgs(c Connection,id,command,workdir,ttyPath string)([]string,error){
     if !challengeRE.MatchString(id){return nil,errors.New("invalid session ID")}
     username,err:=c.TerminalUser();if err!=nil{return nil,err}
-    if workdir==""{workdir=c.Root}else if !filepath.IsAbs(workdir){workdir=filepath.Join(c.Root,workdir)}
-    if strings.ContainsAny(workdir,"\x00\r\n")||strings.ContainsRune(command,0){return nil,errors.New("invalid command or working directory")}
+    if !filepath.IsAbs(workdir)||strings.ContainsAny(workdir,"\x00\r\n")||strings.ContainsRune(command,0){return nil,errors.New("invalid command or working directory")}
     // Disable systemd's variable/specifier expansion on user-provided arguments.
     // The target service receives the selected user's normal host permissions.
     args:=[]string{"--wait","--collect","--service-type=exec","--expand-environment=no","--description=Open Go Panel MCP terminal",
@@ -178,6 +178,15 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     }
     id,err:=secret();if err!=nil{return nil,err}
     username,err:=current.TerminalUser();if err!=nil{return nil,err}
+    requested:=workdir
+    workdir,err=resolveTerminalWorkdir(current.Root,requested)
+    if err==nil{err=checkTerminalWorkdir(ctx,username,workdir)}
+    if err!=nil{
+        auditCtx,cancel:=context.WithTimeout(context.Background(),3*time.Second)
+        defer cancel()
+        m.state.Audit(auditCtx,"mcp.terminal.start_failed",fmt.Sprintf("app:%d",current.AppID),fmt.Sprintf("user=%s requested_workdir=%q resolved_workdir=%q reason=%q",username,requested,workdir,err.Error()))
+        return nil,err
+    }
     account,err:=user.Lookup(username);if err!=nil{return nil,err}
     uid,err:=strconv.Atoi(account.Uid);if err!=nil{return nil,err}
     gid,err:=strconv.Atoi(account.Gid);if err!=nil{return nil,err}
@@ -191,13 +200,13 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     args,err:=terminalArgs(current,id,command,workdir,slave.Name());if err!=nil{closePTY();return nil,err}
     cmd:=exec.Command("systemd-run",args...)
     cmd.Env=[]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","TERM=xterm-256color","LC_ALL=C","SYSTEMD_LOG_COLOR=0","SYSTEMD_LOG_TARGET=console"}
-    s:=&terminalSession{conn:current,info:TerminalInfo{ID:id,AppID:c.AppID,User:username,Mode:current.TerminalMode(),StartedAt:time.Now().UTC(),Status:"starting"},cmd:cmd,tty:tty,done:make(chan struct{}),input:make(chan []byte,16)}
+    s:=&terminalSession{conn:current,info:TerminalInfo{ID:id,AppID:c.AppID,User:username,Mode:current.TerminalMode(),Workdir:workdir,StartedAt:time.Now().UTC(),Status:"starting"},cmd:cmd,tty:tty,done:make(chan struct{}),input:make(chan []byte,16)}
     diagnostics:=&terminalDiagnostics{}
     cmd.Stdout=diagnostics;cmd.Stderr=diagnostics
     if err=cmd.Start();err!=nil{closePTY();return nil,err}
     m.sessions[id]=s
     kind:="shell";if command!=""{kind="command"}
-    m.audit(s,"start",fmt.Sprintf("kind=%s command_bytes=%d (content omitted)",kind,len(command)))
+    m.audit(s,"start",fmt.Sprintf("kind=%s requested_workdir=%q workdir=%q command_bytes=%d (content omitted)",kind,requested,workdir,len(command)))
     drained:=make(chan struct{})
     go func(){defer close(drained);buf:=make([]byte,8192);for{n,err:=tty.Read(buf);if n>0{s.append(buf[:n])};if err!=nil{return}}}()
     go func(){for{select{case <-s.done:return;case data:=<-s.input:if _,err:=tty.Write(data);err!=nil{return}}}}()
@@ -209,9 +218,10 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
         code:=0;if err!=nil{code=-1;var exit *exec.ExitError;if errors.As(err,&exit){code=exit.ExitCode()}}
         ended:=time.Now().UTC()
         runError:=terminalExecutionError(err,diagnostics.String())
+        if runError!=""{runError=terminalStartDiagnostic(id,workdir,runError)}
         s.mu.Lock();s.info.Status="exited";s.info.ExitCode=&code;s.info.EndedAt=&ended;s.runError=runError;s.mu.Unlock()
         close(s.done)
-        m.audit(s,"exit",fmt.Sprintf("exit_code=%d",code))
+        m.audit(s,"exit",fmt.Sprintf("exit_code=%d workdir=%q launcher_failed=%t",code,workdir,runError!=""))
     }()
     // Wait until systemd has accepted the unit, or a short command exits.
     // This closes the start/stop race with grant revocation.
@@ -232,7 +242,7 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
             _=cmd.Process.Kill();_ = slave.Close();_ = s.tty.Close()
             stopCtx,stopCancel:=context.WithTimeout(context.Background(),10*time.Second)
             _=exec.CommandContext(stopCtx,"systemctl","stop",terminalUnit(id)).Run();stopCancel()
-            return nil,errors.New("terminal unit failed to start")
+            return nil,fmt.Errorf("terminal unit failed to start; workdir=%q",workdir)
         case <-time.After(100*time.Millisecond):}
     }
 }

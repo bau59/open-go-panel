@@ -156,7 +156,7 @@ MCP advertises 17 tools: the nine file tools above, `run_command` and seven term
 | `terminal_resize` | `session_id`, `rows`, `cols` | Change PTY size |
 | `terminal_stop` | `session_id` | Stop the managed unit and its processes |
 
-For terminals, the default working directory is the actual host project path (e.g. `/home/user/apps/example`), not `/workspace`. Absolute or project-relative host paths may be used. The existing `run_command` name remains available, but its sandbox/timeout behavior has changed. Refresh the MCP tool definitions after updating.
+For terminals, the default working directory is the actual host project path (e.g. `/home/user/apps/example`), not `/workspace`. Absolute or project-relative host paths may be used. Omit `workdir` for the real app root; `/workspace` and `/workspace/...` are compatibility aliases mapped to that root and its relative paths. Before creating a terminal, the panel verifies the resolved directory exists and can be entered by the selected Linux account. Results include `workdir`; invalid directories return a tool error with the resolved path, and systemd 200/CHDIR startup failures include the cause when available in the unit journal. The audit records requested and resolved paths without command contents. Ordinary shell exit 200 is still a command result. The existing `run_command` name remains available, but its sandbox/timeout behavior has changed. Refresh the MCP tool definitions after updating.
 
 Example workflow:
 
