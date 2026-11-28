@@ -134,7 +134,10 @@ func (s *terminalSession) executionError()error{
 func terminalExecutionError(waitErr error,diagnostic string)string{
     if waitErr==nil{return ""}
     var exit *exec.ExitError
-    if errors.As(waitErr,&exit)&&exit.ExitCode()>=0&&strings.TrimSpace(diagnostic)==""{return ""}
+    // systemd-run --wait reports a successful start and a completion
+    // summary separately from the service's PTY. A failed start job
+    // cannot emit both markers. Locale and log target are fixed above.
+    if errors.As(waitErr,&exit)&&exit.ExitCode()>=0&&strings.Contains(diagnostic,"Running as unit:")&&strings.Contains(diagnostic,"Finished with result:"){return ""}
     diagnostic=strings.TrimSpace(diagnostic)
     if diagnostic==""{diagnostic=waitErr.Error()}
     if len(diagnostic)>2048{diagnostic=diagnostic[:2048]}
@@ -149,7 +152,7 @@ func terminalArgs(c Connection,id,command,workdir,ttyPath string)([]string,error
     if strings.ContainsAny(workdir,"\x00\r\n")||strings.ContainsRune(command,0){return nil,errors.New("invalid command or working directory")}
     // Disable systemd's variable/specifier expansion on user-provided arguments.
     // The target service receives the selected user's normal host permissions.
-    args:=[]string{"--quiet","--wait","--collect","--service-type=exec","--expand-environment=no","--description=Open Go Panel MCP terminal",
+    args:=[]string{"--wait","--collect","--service-type=exec","--expand-environment=no","--description=Open Go Panel MCP terminal",
         "--unit="+terminalUnit(id),"--property=User="+username,"--property=WorkingDirectory="+strings.ReplaceAll(workdir,"%","%%"),
         "--property=KillMode=control-group","--property=TimeoutStopSec=5s","--property=BindsTo=open-go-panel-mcp.service",
         "--property=After=open-go-panel-mcp.service","--setenv=TERM=xterm-256color",
@@ -187,7 +190,7 @@ func (m *TerminalManager) start(ctx context.Context,c Connection,token,command,w
     if err=pty.Setsize(tty,&pty.Winsize{Rows:24,Cols:120});err!=nil{closePTY();return nil,err}
     args,err:=terminalArgs(current,id,command,workdir,slave.Name());if err!=nil{closePTY();return nil,err}
     cmd:=exec.Command("systemd-run",args...)
-    cmd.Env=[]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","TERM=xterm-256color"}
+    cmd.Env=[]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","TERM=xterm-256color","LC_ALL=C","SYSTEMD_LOG_COLOR=0","SYSTEMD_LOG_TARGET=console"}
     s:=&terminalSession{conn:current,info:TerminalInfo{ID:id,AppID:c.AppID,User:username,Mode:current.TerminalMode(),StartedAt:time.Now().UTC(),Status:"starting"},cmd:cmd,tty:tty,done:make(chan struct{}),input:make(chan []byte,16)}
     diagnostics:=&terminalDiagnostics{}
     cmd.Stdout=diagnostics;cmd.Stderr=diagnostics
