@@ -19,6 +19,8 @@ import (
     "syscall"
     "sync"
     "time"
+    "unicode/utf8"
+    "bytes"
 
     "github.com/creack/pty"
     "github.com/bau59/open-go-panel/internal/state"
@@ -81,22 +83,38 @@ func (s *terminalSession) append(p []byte){
     s.head=(s.head+len(p))%terminalHistory
     s.base+=int64(len(p))
 }
-func (s *terminalSession) read(offset int64) map[string]any {
+// read returns a single byte-exact representation. Binary or split UTF-8
+// chunks use base64 automatically, without a second lossy text copy.
+func (s *terminalSession) read(offset int64, limit int, encoding, format string) map[string]any {
     s.mu.Lock();defer s.mu.Unlock()
     lost:=offset<s.base
     if offset<s.base {offset=s.base}
     end:=s.base+int64(len(s.data))
     if offset>end {offset=end}
-    next:=offset+terminalChunk;if next>end{next=end}
+    next:=offset+int64(limit);if next>end{next=end}
     data:=make([]byte,int(next-offset))
     if len(data)>0{
         start:=(s.head+int(offset-s.base))%len(s.data)
         n:=copy(data,s.data[start:])
         copy(data[n:],s.data)
     }
-    return map[string]any{"session_id":s.info.ID,"status":s.info.Status,"exit_code":s.info.ExitCode,
-        "stdout":string(data),"stderr":"","output":string(data),"output_base64":base64.StdEncoding.EncodeToString(data),
-        "merged_streams":true,"offset":offset,"next_offset":next,"oldest_offset":s.base,"end_offset":end,"truncated":lost}
+    result:=map[string]any{"session_id":s.info.ID,"status":s.info.Status,"exit_code":s.info.ExitCode,
+        "merged_streams":true,"offset":offset,"next_offset":next,"oldest_offset":s.base,"end_offset":end,"truncated":lost,"has_more":next<end}
+    if format=="legacy"{
+        result["stdout"]=string(data);result["stderr"]="";result["output"]=string(data)
+        result["output_base64"]=base64.StdEncoding.EncodeToString(data)
+    }else if encoding=="base64"||!utf8.Valid(data)||bytes.IndexByte(data,0)>=0{
+        result["output_base64"]=base64.StdEncoding.EncodeToString(data)
+    }else{
+        result["output"]=string(data)
+    }
+    return result
+}
+func (s *terminalSession) metadata()map[string]any{
+    s.mu.Lock();defer s.mu.Unlock()
+    return map[string]any{"session_id":s.info.ID,"app_id":s.info.AppID,"user":s.info.User,"mode":s.info.Mode,
+        "started_at":s.info.StartedAt,"ended_at":s.info.EndedAt,"status":s.info.Status,"exit_code":s.info.ExitCode,
+        "oldest_offset":s.base,"end_offset":s.base+int64(len(s.data))}
 }
 type terminalOutput struct{s *terminalSession}
 func (w terminalOutput) Write(p []byte)(int,error){w.s.append(p);return len(p),nil}

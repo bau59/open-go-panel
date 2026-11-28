@@ -2,6 +2,10 @@ package mcpaccess
 
 import (
     "context"
+    "encoding/base64"
+    "encoding/json"
+    "net/http/httptest"
+    "bytes"
     "errors"
     "path/filepath"
     "strings"
@@ -40,10 +44,10 @@ func TestTerminalOutputOffsets(t *testing.T){
     s:=&terminalSession{}
     s.append([]byte("abc"))
     s.append([]byte("def"))
-    got:=s.read(2)
-    if got["stdout"]!="cdef"||got["next_offset"]!=int64(6){t.Fatalf("unexpected result %+v",got)}
+    got:=s.read(2,terminalChunk,"auto","compact")
+    if got["output"]!="cdef"||got["next_offset"]!=int64(6){t.Fatalf("unexpected result %+v",got)}
     s.append([]byte(strings.Repeat("x",terminalHistory)))
-    got=s.read(0)
+    got=s.read(0,terminalChunk,"auto","compact")
     if got["truncated"]!=true||got["oldest_offset"]!=int64(6){t.Fatalf("lost offset: %+v",got)}
 }
 
@@ -67,6 +71,40 @@ func TestTerminalBufferWrap(t *testing.T){
     s:=&terminalSession{}
     s.append([]byte(strings.Repeat("a",terminalHistory-2)))
     s.append([]byte("bcde"))
-    if got:=s.read(terminalHistory-4);got["stdout"]!="aabcde"||got["next_offset"]!=int64(terminalHistory+2){t.Fatalf("incorrect wrap: %+v",got)}
-    if got:=s.read(0);got["oldest_offset"]!=int64(2)||got["truncated"]!=true{t.Fatal("missing truncation marker")}
+    if got:=s.read(terminalHistory-4,terminalChunk,"auto","compact");got["output"]!="aabcde"||got["next_offset"]!=int64(terminalHistory+2){t.Fatalf("incorrect wrap: %+v",got)}
+    if got:=s.read(0,terminalChunk,"auto","compact");got["oldest_offset"]!=int64(2)||got["truncated"]!=true{t.Fatal("missing truncation marker")}
+}
+
+
+func TestCompactTerminalOutput(t *testing.T){
+    s:=&terminalSession{info:TerminalInfo{ID:"test",Status:"exited"}}
+    original:=[]byte("hello\nworld\x00\xff")
+    s.append(original)
+    var combined []byte
+    var offset int64
+    for offset<int64(len(original)){
+        result:=s.read(offset,4,"auto","compact")
+        if _,ok:=result["stdout"];ok{t.Fatal("duplicate stdout")}
+        if _,ok:=result["stderr"];ok{t.Fatal("duplicate stderr")}
+        if data,ok:=result["output_base64"].(string);ok{
+            if _,ok:=result["output"];ok{t.Fatal("duplicate binary output")}
+            decoded,err:=base64.StdEncoding.DecodeString(data);if err!=nil{t.Fatal(err)}
+            combined=append(combined,decoded...)
+        }else{combined=append(combined,[]byte(result["output"].(string))...)}
+        offset=result["next_offset"].(int64)
+    }
+    if !bytes.Equal(combined,original){t.Fatal("chunked output lost bytes")}
+    if got:=s.read(0,5,"base64","compact");got["output_base64"]!="aGVsbG8="{t.Fatal("explicit base64 not honored")}
+    if got:=s.read(0,5,"auto","legacy");got["stdout"]!="hello"||got["output_base64"]!="aGVsbG8="{t.Fatal("legacy format not preserved")}
+    for _,format:=range []string{"compact","text","legacy"}{
+        rec:=httptest.NewRecorder()
+        terminalResult(rec,json.RawMessage("1"),map[string]any{"output":"unique-marker","exit_code":127},format)
+        var body struct{Result struct{Content []any;StructuredContent map[string]any;IsError bool}}
+        if err:=json.Unmarshal(rec.Body.Bytes(),&body);err!=nil{t.Fatal(err)}
+        if body.Result.IsError{t.Fatal("nonzero shell exit marked MCP error")}
+        count:=strings.Count(rec.Body.String(),"unique-marker")
+        if format!="legacy"&&count!=1{t.Fatalf("%s duplicated output: %s",format,rec.Body.String())}
+        if format=="compact"&&(len(body.Result.Content)!=0||body.Result.StructuredContent["output"]!="unique-marker"){t.Fatal("compact result invalid")}
+        if format=="text"&&(len(body.Result.Content)!=1||body.Result.StructuredContent!=nil){t.Fatal("text result invalid")}
+    }
 }
